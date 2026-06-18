@@ -28,12 +28,15 @@ python server.py            # 启动后打开 http://localhost:5001
 
 ## 数据说明
 
-- **数据库 `pboc_data.db` 不入库**（约 500MB，可重建）。首次克隆后数据为空，由各模块的爬取/回填重新生成：
-  ```bash
-  # A* 雷达建库示例
-  python scripts/update_abdc_astar.py --mode backfill_since --since-year 2020
-  python scripts/update_abdc_astar.py --enrich-abstracts
-  ```
+- **数据库 `pboc_data.db` 不入库**（约 500MB 二进制、持续变动，超 GitHub 100MB 单文件上限）。
+  两种获取方式：
+  - **下载全量快照**（推荐快速上手）：见 [Releases](https://github.com/Zenith1874/research-tools-suite/releases)
+    的 `pboc_data_snapshot.db.gz`（压缩 107MB / 解压约 517MB），解压后重命名为 `pboc_data.db` 放到根目录。
+  - **自行重建**（数据可由公开 API 再生）：
+    ```bash
+    python scripts/update_abdc_astar.py --mode backfill_since --since-year 2020
+    python scripts/update_abdc_astar.py --enrich-abstracts
+    ```
 - 不抓取付费全文、不绕过付费墙；缺失字段诚实标记（如 `abstract_status=missing`），不使用 mock 数据。
 
 ## 数据来源与致谢
