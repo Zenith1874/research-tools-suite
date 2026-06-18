@@ -4,6 +4,8 @@
 *.db-shm
 *.sqlite
 *.sqlite3
+*.db.gz
+data_snapshot.*
 
 # ── 备份 / 临时 ──
 *.bak
