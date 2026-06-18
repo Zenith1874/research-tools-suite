@@ -1612,9 +1612,9 @@ def scheduler_thread():
         time.sleep(30)
 
 
-def astar_scheduler_thread(interval_hours=6):
+def astar_scheduler_thread(interval_hours=24):
     """A* 研究雷达持续更新：启动后等待 10 分钟，之后每 interval_hours 抓最近 14 天增量。
-    让数据集'持续不断地'增长，无需手动点按钮。"""
+    顶刊发文较慢，每天一次足够（抓 14 天窗口留出漏跑余量，去重处理重复）。"""
     log.info(f'A* 雷达调度器启动，每 {interval_hours}h 增量抓取最近 14 天')
     time.sleep(600)   # 启动后先让位给首页/财政模块，10 分钟后再开始
     while True:
