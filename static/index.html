@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>研究工具集</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #060c1a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; color: #f1f5f9; }
+  .subtitle { font-size: 0.88rem; color: #64748b; margin-bottom: 48px; }
+  .cards { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
+  .card {
+    background: #0d1626;
+    border: 1px solid #1e2d45;
+    border-radius: 14px;
+    padding: 32px 28px;
+    width: 260px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .card:hover {
+    border-color: #4f8fff;
+    transform: translateY(-3px);
+    box-shadow: 0 8px 32px rgba(79,143,255,0.12);
+  }
+  .card-icon { font-size: 2rem; }
+  .card-title { font-size: 1.05rem; font-weight: 700; color: #f1f5f9; }
+  .card-desc { font-size: 0.82rem; color: #64748b; line-height: 1.6; }
+  .card-tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-top: auto;
+  }
+  .tag-blue { background: rgba(79,143,255,0.15); color: #4f8fff; }
+  .tag-green { background: rgba(0,212,170,0.12); color: #00d4aa; }
+  .tag-amber { background: rgba(245,166,35,0.14); color: #f5a623; }
+  .tag-purple { background: rgba(167,139,250,0.15); color: #a78bfa; }
+  .footer { margin-top: 48px; font-size: 0.78rem; color: #334155; }
+</style>
+</head>
+<body>
+  <h1>研究工具集</h1>
+  <p class="subtitle">localhost:5001</p>
+
+  <div class="cards">
+    <a class="card" href="/dashboard">
+      <span class="card-icon">📊</span>
+      <div class="card-title">央行金融统计</div>
+      <div class="card-desc">中国人民银行月度数据监控，涵盖 M2、M1、贷款、存款、社融、利率等核心指标，自动爬取更新。</div>
+      <span class="card-tag tag-blue">实时数据</span>
+    </a>
+    <a class="card" href="/abdc">
+      <span class="card-icon">📚</span>
+      <div class="card-title">ABDC 期刊查询</div>
+      <div class="card-desc">澳大利亚商学院院长理事会期刊质量列表，支持按名称、ISSN、FoR 代码搜索，涵盖 2010–2025 六个版本。</div>
+      <span class="card-tag tag-green">2651 种期刊</span>
+    </a>
+    <a class="card" href="/fiscal-debt">
+      <span class="card-icon">🏛️</span>
+      <div class="card-title">政府债务监控</div>
+      <div class="card-desc">分开追踪国债、地方政府债、城投债、财政缺口与到期还本压力。</div>
+      <span class="card-tag tag-amber">财政债务</span>
+    </a>
+    <a class="card" href="/abdc-astar-research">
+      <span class="card-icon">🛰️</span>
+      <div class="card-title">A* 研究动态</div>
+      <div class="card-desc">追踪 ABDC A* 期刊最新文章，识别研究主题、方法、数据和与你研究方向相关的机会。</div>
+      <span class="card-tag tag-purple">A* Research Radar</span>
+    </a>
+  </div>
+
+  <div class="footer">http://localhost:5001</div>
+</body>
+</html>

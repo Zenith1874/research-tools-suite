@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>财政债务数据 Debug</title>
+<script src="/vendor/react.min.js"></script>
+<script src="/vendor/react-dom.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
+<style>
+body{margin:0;background:#07111f;color:#e5edf7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1460px;margin:0 auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}h1{font-size:20px;margin:0}h2{font-size:14px;margin:0 0 10px}.btn{background:#111d31;border:1px solid #22324b;color:#e5edf7;border-radius:6px;padding:8px 12px;text-decoration:none;font-size:12px;cursor:pointer}.card{background:#0d1728;border:1px solid #22324b;border-radius:8px;padding:14px;margin-bottom:12px}.warn{border-color:rgba(245,166,35,.45);background:rgba(245,166,35,.08)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.muted{color:#8ea0b8;font-size:12px;line-height:1.6}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:7px;border-bottom:1px solid rgba(34,50,75,.7);text-align:left;vertical-align:top}th{color:#8ea0b8}.source{max-width:430px;word-break:break-all}.num{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow:auto}.scroll table{min-width:1200px}.ok{color:#a9efd8}.bad{color:#ffc1cb}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column;gap:10px}}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const {useEffect,useState}=React;
+function Link({url}){return url?<a className="btn" href={url} target="_blank">查看原文</a>:<span>—</span>}
+function App(){
+  const [debug,setDebug]=useState(null),[data,setData]=useState(null),[err,setErr]=useState(null);
+  async function load(){setErr(null);try{const [d,a]=await Promise.all([fetch('/api/fiscal-debt/debug'),fetch('/api/fiscal-debt/data')]);if(!d.ok||!a.ok)throw new Error('API failed');setDebug(await d.json());setData(await a.json())}catch(e){setErr(e.message)}}
+  useEffect(()=>{load()},[]);
+  const modules=debug?.modules||{};
+  return <div className="wrap">
+    <div className="top"><h1>财政债务数据 Debug</h1><div><button className="btn" onClick={load}>刷新</button> <a className="btn" href="/fiscal-debt">返回 fiscal-debt</a></div></div>
+    {err&&<div className="card warn bad">{err}</div>}
+    <div className="grid">
+      <Coverage title="地方政府债" c={{records:debug?.tables?.fiscal_debt_observations, latest_period:data?.sections?.local_government_debt?.latest_period}}/>
+      <Coverage title="央行资产负债表" c={modules.pboc_balance_sheet?.coverage}/>
+      <Coverage title="央行国债买卖" c={modules.pboc_gov_bond_omo?.coverage}/>
+      <Coverage title="买断式逆回购公告全集" c={modules.pboc_buyout_reverse_repo?.coverage?.announcements}/>
+      <Coverage title="买断式逆回购逐笔" c={modules.pboc_buyout_reverse_repo?.coverage?.operations}/>
+      <Coverage title="买断式逆回购月末存量" c={modules.pboc_buyout_reverse_repo?.coverage?.monthly_stock}/>
+      <Coverage title="财政部国债发行明细" c={modules.mof_treasury_bonds?.coverage}/>
+    </div>
+    <div className="card warn"><h2>Parser Errors</h2>{(debug?.parser_errors||[]).length? <Table rows={debug.parser_errors} cols={['source_type','source_title','source_url','status','error','updated_at']}/>:<div className="muted ok">当前没有 parser error。</div>}</div>
+    <Module title="央行资产负债表指标覆盖" rows={modules.pboc_balance_sheet?.by_indicator||[]} cols={['indicator_code','count','earliest_period','latest_period','data_statuses']}/>
+    <Module title="央行资产负债表 status 分布" rows={modules.pboc_balance_sheet?.status_distribution||[]} cols={['indicator_code','data_status','count']}/>
+    <Module title="央行国债买卖 status 分布" rows={modules.pboc_gov_bond_omo?.status_distribution||[]} cols={['operation_status','data_status','count']}/>
+    <Module title="买断式逆回购公告类型分布" rows={modules.pboc_buyout_reverse_repo?.announcement_kind_distribution||[]} cols={['announcement_kind','parse_status','count']}/>
+    <Module title="买断式逆回购 status 分布" rows={modules.pboc_buyout_reverse_repo?.status_distribution||[]} cols={['data_status','maturity_date_status','count']}/>
+    <Module title="财政部国债发行 status / 类型分布" rows={modules.mof_treasury_bonds?.status_distribution||[]} cols={['data_status','bond_type','issue_kind','count','actual_issue_amount']}/>
+    <Module title="最近 20 条 source 记录" rows={debug?.recent_source_records||[]} cols={['source_type','status','source_title','published_date','source_url','parsed_indicators','error','updated_at']} linkCol="source_url"/>
+    <Module title="最近 20 条央行资产负债表 observations" rows={debug?.recent_observations?.pboc_balance_sheet||[]} cols={['indicator_code','indicator_name','period','value','unit','data_status','source_url','formula','updated_at']} linkCol="source_url"/>
+    <Module title="最近 20 条央行国债买卖 observations" rows={debug?.recent_observations?.pboc_gov_bond_omo||[]} cols={['period','operation_status','net_purchase_amount','cumulative_net_purchase_amount','source_title','published_date','source_url','data_status']} linkCol="source_url"/>
+    <Module title="买断式逆回购公告全集" rows={debug?.recent_observations?.pboc_buyout_reverse_repo_announcements||[]} cols={['list_page_no','list_order','announcement_kind','source_title','listed_date','published_date','parsed_operation_count','parse_status','source_url','error']} linkCol="source_url"/>
+    <Module title="买断式逆回购逐笔买入/操作" rows={debug?.recent_observations?.pboc_buyout_reverse_repo_operations||[]} cols={['buy_date','buy_time','maturity_date','maturity_date_status','amount','term_months','term_days','source_title','published_date','source_url','data_status']} linkCol="source_url"/>
+    <Module title="买断式逆回购月末存量" rows={debug?.recent_observations?.pboc_buyout_reverse_repo_monthly_stock||[]} cols={['period','month_end_date','outstanding_amount','operation_count','active_operation_dates','derived_maturity_count','data_status','formula']}/>
+    <Module title="财政部国债逐只发行明细" rows={debug?.recent_observations?.mof_treasury_bonds||[]} cols={['issue_date','bond_name','bond_type','issue_kind','term_days','term_years','planned_issue_amount','actual_issue_amount','coupon_rate','yield_rate','issue_price','maturity_date','data_status','source_title','published_date','source_url']} linkCol="source_url"/>
+  </div>
+}
+function Coverage({title,c}){return <div className="card"><h2>{title}</h2><div className="muted">records: {c?.records??'—'}</div><div className="muted">earliest: {c?.earliest_period||c?.earliest||'—'}</div><div className="muted">latest: {c?.latest_period||c?.latest||'—'}</div><div className="muted">missing_source_url: {c?.missing_source_url??'—'}</div></div>}
+function Table({rows,cols,linkCol}){return <div className="scroll"><table><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{cols.map(c=><td key={c} className={typeof r[c]==='number'?'num':(c==='source_url'?'source':'')}>{c===linkCol?<Link url={r[c]}/>:String(r[c]??'')}</td>)}</tr>)}</tbody></table></div>}
+function Module({title,rows,cols,linkCol}){return <div className="card"><h2>{title}</h2>{rows.length?<Table rows={rows} cols={cols} linkCol={linkCol}/>:<div className="muted">暂无记录。</div>}</div>}
+ReactDOM.render(<App/>,document.getElementById('root'));
+</script>
+</body>
+</html>

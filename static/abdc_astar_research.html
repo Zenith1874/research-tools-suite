@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A* 研究动态 · ABDC Research Radar</title>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#060c1a;--s1:#0d1626;--s2:#111d30;--bd:#1e2d45;
+  --green:#00d4aa;--gd:rgba(0,212,170,.12);
+  --red:#ff4d6a;--blue:#4f8fff;--ld:rgba(79,143,255,.12);
+  --yellow:#f5a623;--purple:#a78bfa;--orange:#fb923c;
+  --text:#e2e8f0;--dim:#94a3b8;--muted:#64748b;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;min-height:100vh;overflow-x:hidden}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:0 22px;height:56px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:100}
+.hdr-l{display:flex;align-items:center;gap:12px}
+.hdr-title{font-size:15px;font-weight:700}
+.hdr-sub{font-size:10px;color:var(--muted)}
+.hdr-r{display:flex;align-items:center;gap:10px;font-size:11px}
+.pill{padding:3px 9px;border-radius:5px;font-size:11px;font-weight:600}
+.pill-live{background:var(--gd);color:var(--green)}
+.pill-cache{background:rgba(245,166,35,.14);color:var(--yellow)}
+.pill-err{background:rgba(255,77,106,.14);color:var(--red)}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;padding:16px 22px}
+.kpi{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:12px 14px}
+.kpi-v{font-size:21px;font-weight:700;font-variant-numeric:tabular-nums}
+.kpi-l{font-size:10.5px;color:var(--muted);margin-top:3px}
+.kpi.hl .kpi-v{color:var(--green)}
+
+.actions{display:flex;flex-wrap:wrap;gap:8px;padding:0 22px 14px}
+.btn{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:7px;padding:7px 13px;font-size:12.5px;cursor:pointer;transition:all .15s}
+.btn:hover{border-color:var(--blue);background:var(--ld)}
+.btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-primary:hover{opacity:.9}
+
+.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto}
+.tab{padding:11px 16px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
+
+.filters{display:flex;flex-wrap:wrap;gap:8px;padding:14px 22px;align-items:center}
+.filters input,.filters select{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:6px 10px;font-size:12.5px;outline:none}
+.filters input:focus,.filters select:focus{border-color:var(--blue)}
+.filters input[type=text]{width:240px}
+.chip-row{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--s2);border:1px solid var(--bd);color:var(--dim);border-radius:20px;padding:4px 11px;font-size:11.5px;cursor:pointer}
+.chip:hover{color:var(--text)}
+.chip.active{background:var(--ld);border-color:var(--blue);color:var(--blue)}
+
+.content{padding:6px 22px 60px}
+
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:16px 18px;margin-bottom:12px}
+.card-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}
+.card-title{font-size:15px;font-weight:600;line-height:1.45;color:#f1f5f9}
+.card-title a{color:#f1f5f9}
+.card-journal{display:inline-block;font-size:12px;font-weight:700;color:var(--yellow);background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.25);border-radius:5px;padding:2px 9px;margin-top:6px}
+.list-badge{display:inline-block;font-size:10px;font-weight:800;border-radius:4px;padding:2px 6px;margin-left:5px;letter-spacing:.3px}
+.lb-ft50{background:rgba(0,212,170,.16);color:var(--green);border:1px solid rgba(0,212,170,.35)}
+.lb-utd24{background:rgba(167,139,250,.18);color:var(--purple);border:1px solid rgba(167,139,250,.4)}
+.card-meta{font-size:12px;color:var(--dim);margin-top:5px}
+.card-authors{font-size:11.5px;color:var(--muted);margin-top:3px}
+.card-abstract{font-size:12.5px;color:var(--dim);line-height:1.6;margin-top:9px;max-height:0;overflow:hidden;transition:max-height .2s}
+.card.open .card-abstract{max-height:600px}
+.tag-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.tag{font-size:10.5px;padding:2px 8px;border-radius:5px;font-weight:600}
+.tag-topic{background:rgba(79,143,255,.13);color:var(--blue)}
+.tag-method{background:rgba(167,139,250,.14);color:var(--purple)}
+.tag-data{background:rgba(251,146,60,.14);color:var(--orange)}
+.tag-theory{background:rgba(0,212,170,.12);color:var(--green)}
+.tag-area{background:var(--s2);color:var(--dim);border:1px solid var(--bd)}
+.relscore{font-size:12px;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap}
+.rel-hi{background:var(--gd);color:var(--green)}
+.rel-mid{background:rgba(245,166,35,.14);color:var(--yellow)}
+.rel-lo{background:var(--s2);color:var(--muted)}
+.abs-missing{color:var(--red);font-style:italic;font-size:11.5px}
+.card-foot{display:flex;gap:14px;margin-top:11px;font-size:11.5px;align-items:center}
+.card-foot .why{color:var(--muted);flex:1}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--bd);position:sticky;top:56px;background:var(--bg)}
+td{padding:9px 10px;border-bottom:1px solid rgba(30,45,69,.5);vertical-align:top}
+tr:hover td{background:var(--s1)}
+
+.digest-sec{margin-bottom:22px}
+.digest-h{font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between}
+.digest-h .cnt{color:var(--muted);font-weight:400;font-size:12px}
+.digest-item{padding:9px 0;border-bottom:1px solid rgba(30,45,69,.4)}
+.digest-item .dt{font-size:13px;font-weight:600;color:#e2e8f0}
+.digest-item .dm{font-size:11.5px;color:var(--muted);margin-top:3px}
+.digest-item .dw{font-size:11.5px;color:var(--blue);margin-top:3px}
+.evidence{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--s2);color:var(--muted);margin-left:6px}
+
+.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty .big{font-size:15px;color:var(--dim);margin-bottom:6px}
+.loading{text-align:center;padding:50px;color:var(--muted)}
+.spinner{display:inline-block;width:26px;height:26px;border:3px solid var(--bd);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.toast{position:fixed;bottom:20px;right:20px;background:var(--s2);border:1px solid var(--blue);color:var(--text);padding:12px 18px;border-radius:8px;font-size:13px;z-index:300;max-width:420px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+
+.footer{padding:18px 22px;font-size:11px;color:var(--muted);border-top:1px solid var(--bd);line-height:1.7}
+pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:14px;font-size:11.5px;color:var(--dim);overflow:auto;max-height:600px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="hdr-l">
+    <a href="/" style="color:var(--muted)">← 首页</a>
+    <div>
+      <div class="hdr-title">A* 研究动态 · Research Radar</div>
+      <div class="hdr-sub">追踪 ABDC A* 期刊最新文章 · OpenAlex + Crossref</div>
+    </div>
+  </div>
+  <div class="hdr-r">
+    <span id="versionPill" class="pill pill-cache">ABDC —</span>
+    <span id="modePill" class="pill pill-cache">加载中</span>
+  </div>
+</div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="actions">
+  <button class="btn btn-primary" onclick="runUpdate('recent',30)">更新最近 30 天</button>
+  <button class="btn" onclick="runUpdate('weekly_incremental',30)">更新本周</button>
+  <button class="btn" onclick="runUpdate('backfill_90_days',90)">回填 90 天</button>
+  <button class="btn" onclick="runUpdate('backfill_current_year',0)">回填今年</button>
+  <button class="btn" onclick="enrich()">补全摘要/引用 (S2)</button>
+  <button class="btn" onclick="reclassify()">重新分类</button>
+  <button class="btn" onclick="exportCsv()">导出 CSV</button>
+  <button class="btn" onclick="switchTab('debug')">打开 Debug</button>
+</div>
+
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="latest">最新文章</div>
+  <div class="tab" data-tab="related">与我相关</div>
+  <div class="tab" data-tab="digest">本周 Digest</div>
+  <div class="tab" data-tab="topics">主题地图</div>
+  <div class="tab" data-tab="trends">趋势</div>
+  <div class="tab" data-tab="journals">期刊覆盖</div>
+  <div class="tab" data-tab="saved">已保存</div>
+  <div class="tab" data-tab="debug">Debug</div>
+</div>
+
+<div id="filterBar"></div>
+<div class="content" id="content"><div class="loading"><div class="spinner"></div></div></div>
+
+<div class="footer">
+  文章元数据来自 OpenAlex、Crossref、Semantic Scholar 或出版社公开元数据。系统不抓取付费全文。
+  摘要可能由公开元数据提供；若无公开摘要，则仅显示标题和元数据（标记 abstract missing），不编造内容。
+  <br>历史数据不是全量，当前以持续增量追踪为主（首次建议「回填 90 天」）。
+</div>
+
+<script>
+const API = '';
+let STATE = { tab:'latest', filters:{}, relatedChip:'all', journalFilter:null };
+let JCACHE = [];   // 期刊覆盖列表缓存，供下钻按索引引用，避免行内 onclick 引号冲突
+
+const RELATED_CHIPS = [
+  ['all','All A*'],['related','与我相关'],
+  ['ft50','★ FT50'],['utd24','★ UTD24'],
+  ['AI_in_organizations','AI / Organizations'],['remote_work','WFH / RTO'],
+  ['NLP','Digital trace / NLP'],['OB / HR','OB / HR'],
+  ['Information Systems','IS'],['Operations / Supply Chain','OM / Supply chain'],
+  ['Marketing','Marketing / reviews'],['labor_market','Job postings / labor'],
+];
+
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),5000)}
+async function getJSON(u){const r=await fetch(API+u);return r.json()}
+async function postJSON(u,b){const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+
+function relClass(s){s=s||0;return s>=60?'rel-hi':(s>=35?'rel-mid':'rel-lo')}
+
+// ── 顶部 KPI + 状态 ──
+async function loadStatus(){
+  try{
+    const dbg = await getJSON('/api/abdc/astar/debug');
+    const recent7 = await getJSON('/api/abdc/astar/recent?days=7');
+    const recent30 = await getJSON('/api/abdc/astar/recent?days=30');
+    const related = await getJSON('/api/abdc/astar/articles?related_only=true&limit=1');
+    document.getElementById('versionPill').textContent = 'ABDC '+(dbg.abdc_version||'—');
+    const last = (dbg.last_update_logs&&dbg.last_update_logs[0])||null;
+    const mp = document.getElementById('modePill');
+    if(dbg.articles_total>0){mp.className='pill pill-live';mp.textContent='cache · '+(last?last.finished_at:'')}
+    else{mp.className='pill pill-cache';mp.textContent='空 · 待首次抓取'}
+    const kpis = [
+      ['A* 期刊', dbg.astar_journal_count, false],
+      ['有 ISSN', dbg.with_issn_count, false],
+      ['库内文章', dbg.articles_total, false],
+      ['近 7 天', recent7.total, false],
+      ['近 30 天', recent30.total, false],
+      ['高相关', related.total, true],
+      ['缺摘要', dbg.articles_without_abstract, false],
+      ['去重', dbg.duplicates, false],
+    ];
+    document.getElementById('kpis').innerHTML = kpis.map(k=>
+      `<div class="kpi${k[2]?' hl':''}"><div class="kpi-v">${k[1]==null?'—':k[1]}</div><div class="kpi-l">${k[0]}</div></div>`).join('');
+  }catch(e){
+    document.getElementById('modePill').className='pill pill-err';
+    document.getElementById('modePill').textContent='后端未连接';
+  }
+}
+
+// ── Tab 路由 ──
+function switchTab(t){
+  STATE.tab=t;
+  document.querySelectorAll('.tab').forEach(el=>el.classList.toggle('active',el.dataset.tab===t));
+  render();
+}
+document.querySelectorAll('.tab').forEach(el=>el.onclick=()=>{STATE.journalFilter=null; switchTab(el.dataset.tab)});
+
+function openJournal(title,p,o){
+  STATE.journalFilter={title:title, issns:[p,o].filter(Boolean)};
+  STATE.tab='latest';
+  document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab==='latest'));
+  render();
+}
+function openJournalIdx(i){
+  const j=JCACHE[i]; if(!j) return;
+  openJournal(j.journal_title, j.issn_print||'', j.issn_online||'');
+}
+function clearJournalFilter(){STATE.journalFilter=null; switchTab('journals');}
+
+function render(){
+  const fb=document.getElementById('filterBar'), c=document.getElementById('content');
+  fb.innerHTML=''; c.innerHTML='<div class="loading"><div class="spinner"></div></div>';
+  if(STATE.tab==='latest') renderArticles(false);
+  else if(STATE.tab==='related') renderArticles(true);
+  else if(STATE.tab==='digest') renderDigest();
+  else if(STATE.tab==='topics') renderTopics();
+  else if(STATE.tab==='trends') renderTrends();
+  else if(STATE.tab==='journals') renderJournals();
+  else if(STATE.tab==='saved') renderSaved();
+  else if(STATE.tab==='debug') renderDebug();
+}
+
+// ── 文章列表（最新 / 与我相关）──
+async function renderArticles(relatedDefault){
+  const fb=document.getElementById('filterBar');
+  fb.innerHTML = `<div class="filters">
+    <input type="text" id="q" placeholder="搜索标题 / 摘要 / 期刊…" value="${esc(STATE.filters.q||'')}">
+    <select id="sort">
+      <option value="date_desc">最新优先</option>
+      <option value="relevance_desc">相关性优先</option>
+      <option value="citations_desc">引用优先</option>
+    </select>
+    <input type="number" id="minrel" placeholder="最低相关分" style="width:110px" value="${esc(STATE.filters.min_relevance||'')}">
+    <button class="btn" onclick="applyFilters()">应用</button>
+    <div class="chip-row" id="chips"></div>
+  </div>`;
+  document.getElementById('chips').innerHTML = RELATED_CHIPS.map(([k,l])=>
+    `<div class="chip${STATE.relatedChip===k?' active':''}" onclick="setChip('${k}')">${l}</div>`).join('');
+  document.getElementById('q').onkeydown=e=>{if(e.key==='Enter')applyFilters()};
+
+  const p = new URLSearchParams();
+  p.set('limit','100');
+  p.set('sort', document.getElementById('sort').value || (relatedDefault?'relevance_desc':'date_desc'));
+  if(STATE.filters.q) p.set('q',STATE.filters.q);
+  if(STATE.filters.min_relevance) p.set('min_relevance',STATE.filters.min_relevance);
+  if(relatedDefault || STATE.relatedChip==='related') p.set('related_only','true');
+  const chip=STATE.relatedChip;
+  if(chip && chip!=='all' && chip!=='related'){
+    if(['AI_in_organizations','remote_work','labor_market'].includes(chip)) p.set('topic',chip);
+    else if(chip==='NLP') p.set('method','NLP');
+    else if(chip==='ft50') p.set('list','ft50');
+    else if(chip==='utd24') p.set('list','utd24');
+    else p.set('broad_area',chip);
+  }
+
+  if(STATE.journalFilter && STATE.journalFilter.issns.length){
+    p.set('journal_issns', STATE.journalFilter.issns.join(','));
+    p.set('limit','300');
+  }
+
+  const data = await getJSON('/api/abdc/astar/articles?'+p.toString());
+  const c=document.getElementById('content');
+  if(!data.success){c.innerHTML='<div class="empty"><div class="big">后端未连接</div></div>';return}
+  const banner = STATE.journalFilter
+    ? `<div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px;padding:9px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px">
+         <span style="font-weight:700;color:var(--yellow)">📓 ${esc(STATE.journalFilter.title)}</span>
+         <span style="color:var(--muted);font-size:12px">${data.total} 篇</span>
+         <a href="#" onclick="clearJournalFilter();return false" style="margin-left:auto;font-size:12px">← 返回期刊覆盖</a></div>`
+    : `<div style="color:var(--muted);font-size:12px;margin:6px 0 12px">共 ${data.total} 篇 · 数据 ${data.metadata.data_mode} · 最近更新 ${esc(data.metadata.last_update||'—')}</div>`;
+  if(!data.articles.length){
+    c.innerHTML=banner+`<div class="empty"><div class="big">暂无文章</div>该筛选下没有结果。</div>`;return;
+  }
+  c.innerHTML = banner + data.articles.map(articleCard).join('');
+}
+
+function articleCard(a){
+  const cls=a.classification||{};
+  const topics=(cls.research_topic||[]).map(t=>`<span class="tag tag-topic">${esc(t)}</span>`).join('');
+  const methods=(cls.method_tags||[]).map(t=>`<span class="tag tag-method">${esc(t)}</span>`).join('');
+  const dts=(cls.data_type_tags||[]).map(t=>`<span class="tag tag-data">${esc(t)}</span>`).join('');
+  const theories=(cls.theory_tags||[]).map(t=>`<span class="tag tag-theory">${esc(t)}</span>`).join('');
+  const area=cls.broad_area?`<span class="tag tag-area">${esc(cls.broad_area)}</span>`:'';
+  const rel=cls.relevance_score||0;
+  const authors=(a.authors||[]).slice(0,5).join(', ')+((a.authors||[]).length>5?' 等':'');
+  const absHtml = a.abstract
+    ? `<div class="card-abstract">${esc(a.abstract.slice(0,600))}${a.abstract.length>600?'…':''}</div>`
+    : `<div class="card-abstract"><span class="abs-missing">无公开摘要（abstract missing）· 仅基于标题和元数据</span></div>`;
+  const doiUrl = a.doi?`https://doi.org/${esc(a.doi)}`:(a.url||'#');
+  return `<div class="card" onclick="this.classList.toggle('open')">
+    <div class="card-top">
+      <div style="flex:1">
+        <div class="card-title">${esc(a.title)}</div>
+        <div><span class="card-journal">${esc(a.journal_title||'未知期刊')}</span>${a.is_ft50?'<span class="list-badge lb-ft50">FT50</span>':''}${a.is_utd24?'<span class="list-badge lb-utd24">UTD24</span>':''}</div>
+        <div class="card-meta">${esc(a.publication_date||'')} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}</div>
+        <div class="card-authors">${esc(authors)}</div>
+      </div>
+      <span class="relscore ${relClass(rel)}">${rel}</span>
+    </div>
+    ${absHtml}
+    <div class="tag-row">${area}${topics}${methods}${dts}${theories}</div>
+    <div class="card-foot" onclick="event.stopPropagation()">
+      <span class="why">${esc(cls.classification_notes||'')}</span>
+      <a href="${doiUrl}" target="_blank">查看原文 ↗</a>
+      ${a.openalex_id?`<a href="https://openalex.org/${esc(a.openalex_id)}" target="_blank">OpenAlex</a>`:''}
+      <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
+    </div>
+  </div>`;
+}
+
+function setChip(k){STATE.relatedChip=k;render()}
+function applyFilters(){
+  STATE.filters.q=document.getElementById('q').value.trim();
+  STATE.filters.min_relevance=document.getElementById('minrel').value.trim();
+  render();
+}
+
+// ── Digest ──
+async function renderDigest(){
+  const data=await getJSON('/api/abdc/astar/digest?period=this_week');
+  const c=document.getElementById('content');
+  if(!data.success || data.total_new===0){
+    c.innerHTML=`<div class="empty"><div class="big">本周暂无新文章</div>抓取后这里会按主题分块汇总。</div>`;return;
+  }
+  const SEC=[
+    ['this_week_in_astar','本周 A* 顶刊新文'],['highly_relevant','与我研究高度相关'],
+    ['ai_organization','AI / 组织研究'],['wfh_rto','WFH / RTO / 混合办公'],
+    ['digital_trace_nlp','Digital trace / NLP / 文本方法'],['ob_hr_mechanisms','OB / HR 机制'],
+    ['cross_field','跨领域机会 (IS / OM)'],['interesting_titles_no_abstract','有趣标题但缺摘要'],
+  ];
+  c.innerHTML = `<div style="color:var(--muted);font-size:12px;margin:6px 0 16px">${esc(data.note)}<br>统计起始：${esc(data.from_date)} · 本周新增 ${data.total_new} 篇</div>` +
+    SEC.map(([key,title])=>{
+      const items=data.sections[key]||[];
+      if(!items.length) return '';
+      return `<div class="digest-sec"><div class="digest-h">${title}<span class="cnt">${items.length}</span></div>`+
+        items.map(it=>`<div class="digest-item">
+          <div class="dt"><a href="${it.doi?'https://doi.org/'+esc(it.doi):(it.url||'#')}" target="_blank">${esc(it.title)}</a>
+            <span class="evidence">${esc(it.evidence_basis)}</span></div>
+          <div class="dm">${esc(it.journal_title||'')} · ${esc(it.publication_date||'')} · 相关分 ${it.relevance_score||0}</div>
+          <div class="dw">${esc(it.why_it_matters||'')}</div>
+        </div>`).join('')+`</div>`;
+    }).join('');
+}
+
+// ── 主题地图（聚合统计）──
+async function renderTopics(){
+  const data=await getJSON('/api/abdc/astar/articles?limit=500&sort=date_desc');
+  const c=document.getElementById('content');
+  if(!data.articles.length){c.innerHTML='<div class="empty"><div class="big">暂无数据</div></div>';return}
+  const topicCount={}, methodCount={}, areaCount={};
+  data.articles.forEach(a=>{
+    const cl=a.classification||{};
+    (cl.research_topic||[]).forEach(t=>topicCount[t]=(topicCount[t]||0)+1);
+    (cl.method_tags||[]).forEach(t=>methodCount[t]=(methodCount[t]||0)+1);
+    if(cl.broad_area) areaCount[cl.broad_area]=(areaCount[cl.broad_area]||0)+1;
+  });
+  const block=(title,obj,cls)=>{
+    const items=Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+    const max=items.length?items[0][1]:1;
+    return `<div class="digest-sec"><div class="digest-h">${title}<span class="cnt">${items.length}</span></div>`+
+      items.map(([k,v])=>`<div style="display:flex;align-items:center;gap:10px;margin:5px 0">
+        <span style="width:200px;font-size:12px">${esc(k)}</span>
+        <div style="flex:1;background:var(--s2);border-radius:4px;height:16px"><div style="width:${v/max*100}%;height:100%;background:var(--blue);border-radius:4px;opacity:.7"></div></div>
+        <span style="font-size:12px;color:var(--dim);width:30px;text-align:right">${v}</span></div>`).join('')+`</div>`;
+  };
+  c.innerHTML = `<div style="color:var(--muted);font-size:12px;margin:6px 0 14px">基于最近 ${data.articles.length} 篇文章的标签聚合</div>`+
+    block('研究主题分布',topicCount)+block('方法分布',methodCount)+block('学科领域分布',areaCount);
+}
+
+// ── 趋势（按月）──
+async function renderTrends(){
+  const data=await getJSON('/api/abdc/astar/trends?months=18');
+  const c=document.getElementById('content');
+  if(!data.success || !data.months.length){c.innerHTML='<div class="empty"><div class="big">暂无趋势数据</div>抓取更多月份后这里会显示主题/方法随时间的变化。</div>';return}
+  const months=data.months;
+  const sparkRow=(item,color)=>{
+    const mx=Math.max(...item.series,1);
+    const bars=item.series.map((v,i)=>`<div title="${months[i]}: ${v}" style="flex:1;display:flex;align-items:flex-end;height:40px"><div style="width:100%;height:${v/mx*100}%;min-height:${v?2:0}px;background:${color};opacity:.75;border-radius:2px 2px 0 0"></div></div>`).join('');
+    return `<div style="display:flex;align-items:center;gap:12px;margin:7px 0">
+      <span style="width:180px;font-size:12px;color:#e2e8f0">${esc(item.label)}</span>
+      <div style="flex:1;display:flex;gap:2px">${bars}</div>
+      <span style="width:36px;text-align:right;font-size:12px;color:var(--dim)">${item.total}</span></div>`;
+  };
+  const block=(title,items,color)=>`<div class="digest-sec"><div class="digest-h">${title}<span class="cnt">${months[0]} → ${months[months.length-1]}</span></div>${items.map(it=>sparkRow(it,color)).join('')}</div>`;
+  c.innerHTML = `<div style="color:var(--muted);font-size:12px;margin:6px 0 14px">按文章发表月份聚合（最近 ${months.length} 个月）· 每行是一个标签的月度计数迷你柱状图</div>`+
+    block('研究主题趋势', data.topics, 'var(--blue)')+
+    block('方法趋势', data.methods, 'var(--purple)')+
+    block('学科领域趋势', data.areas, 'var(--green)');
+}
+
+// ── 期刊覆盖 ──
+async function renderJournals(){
+  const data=await getJSON('/api/abdc/astar/journals');
+  const c=document.getElementById('content');
+  // 按已抓文章数降序，0 篇的排最后，方便发现真正缺口
+  const journals=[...data.journals].sort((a,b)=>(b.articles_in_db||0)-(a.articles_in_db||0));
+  JCACHE=journals;
+  const zero=journals.filter(j=>!j.articles_in_db).length;
+  c.innerHTML = `<div style="color:var(--muted);font-size:12px;margin:6px 0 12px">ABDC ${data.abdc_version} · 追踪 ${data.astar_journal_count} 刊 · 有 ISSN ${data.with_issn_count} · <span style="color:var(--green)">有文章 ${data.with_articles_count}</span> · 0 篇 ${zero} · <span style="color:var(--muted)">点击任一期刊查看其全部文章</span></div>
+    <table><thead><tr><th>期刊</th><th>学科</th><th>ABDC</th><th>ISSN</th><th>eISSN</th><th>出版商</th><th style="text-align:right">已抓文章</th></tr></thead><tbody>`+
+    journals.map((j,i)=>`<tr style="cursor:pointer" onclick="openJournalIdx(${i})">
+      <td style="color:var(--blue)">${esc(j.journal_title)}</td>
+      <td style="color:var(--dim)">${esc(j.discipline||'')}</td>
+      <td style="color:var(--muted)">${esc(j.abdc_rating||'')}${j.source_table==='prestige_extra'?' ★':''}</td>
+      <td style="font-family:monospace;color:var(--muted)">${esc(j.issn_print||'—')}</td>
+      <td style="font-family:monospace;color:var(--muted)">${esc(j.issn_online||'—')}</td>
+      <td style="color:var(--dim)">${esc(j.publisher||'')}</td>
+      <td style="text-align:right;color:${j.articles_in_db?'var(--green)':'var(--muted)'}">${j.articles_in_db||0}</td></tr>`).join('')+
+    `</tbody></table>`;
+}
+
+// ── 已保存 ──
+async function renderSaved(){
+  const data=await getJSON('/api/abdc/astar/saved');
+  const c=document.getElementById('content');
+  if(!data.saved||!data.saved.length){c.innerHTML='<div class="empty"><div class="big">还没有保存的文章</div>在文章卡片点「保存」加入阅读列表。</div>';return}
+  c.innerHTML='<table><thead><tr><th>标题</th><th>期刊</th><th>日期</th><th>状态</th><th>笔记</th></tr></thead><tbody>'+
+    data.saved.map(s=>`<tr><td><a href="${s.doi?'https://doi.org/'+esc(s.doi):'#'}" target="_blank">${esc(s.title)}</a></td>
+    <td style="color:var(--dim)">${esc(s.journal_title||'')}</td><td style="color:var(--muted)">${esc(s.publication_date||'')}</td>
+    <td>${esc(s.reading_status||'')}</td><td style="color:var(--dim)">${esc(s.user_note||'')}</td></tr>`).join('')+'</tbody></table>';
+}
+
+// ── Debug ──
+async function renderDebug(){
+  const data=await getJSON('/api/abdc/astar/debug');
+  document.getElementById('content').innerHTML='<pre class="debug">'+esc(JSON.stringify(data,null,2))+'</pre>';
+}
+
+// ── 操作 ──
+async function runUpdate(mode,days){
+  const body={mode:mode,days:days,abdc_version:'latest'};
+  toast('已启动：'+mode+'（219 个 A* 期刊，预计数分钟，可在 Debug 看进度）');
+  const r=await postJSON('/api/abdc/astar/update',body);
+  toast(r.message||'已启动');
+  setTimeout(loadStatus,8000);
+}
+async function reclassify(){const r=await postJSON('/api/abdc/astar/classify',{});toast(r.message||'已启动')}
+async function enrich(){toast('Semantic Scholar 补全已启动（按批进行，约 1-2 分钟）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
+async function saveArticle(id){const r=await postJSON('/api/abdc/astar/save',{article_id:id});toast(r.success?'已保存到阅读列表':'保存失败')}
+
+async function exportCsv(){
+  const data=await getJSON('/api/abdc/astar/articles?limit=500&sort=relevance_desc');
+  if(!data.articles.length){toast('无数据可导出');return}
+  const rows=[['date','journal','title','relevance','related','area','topics','methods','data_types','abstract_status','doi']];
+  data.articles.forEach(a=>{const c=a.classification||{};rows.push([
+    a.publication_date||'',a.journal_title||'',(a.title||'').replace(/"/g,'""'),
+    c.relevance_score||0,c.is_related_to_my_research||0,c.broad_area||'',
+    (c.research_topic||[]).join('|'),(c.method_tags||[]).join('|'),(c.data_type_tags||[]).join('|'),
+    a.abstract_status||'',a.doi||'']);});
+  const csv=rows.map(r=>r.map(x=>`"${String(x)}"`).join(',')).join('\n');
+  const blob=new Blob(['﻿'+csv],{type:'text/csv'});const u=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=u;a.download='astar_articles.csv';a.click();URL.revokeObjectURL(u);
+}
+
+loadStatus();
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+# ── 数据库（522MB，可由爬虫/回填重建，绝不入库）──
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ── 备份 / 临时 ──
+*.bak
+*.bak-*
+*.log
+*.tmp
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# ── 原始数据源 / 旧独立版本（含 ABDC 版权 xlsx；服务器用 data/abdc_data.json）──
+*.xlsx
+*.xls
+/abdc/
+
+# ── 后台任务输出 / 编辑器 ──
+tasks/
+.vscode/
+.idea/
+.DS_Store
+
+# ── 机器本地 / 工具产物（含本地路径、用户名，勿入公开仓库）──
+.claude/
+.playwright-cli/
+pbc_found_links.json
+pbc_search_found.json
+pbc_*.json

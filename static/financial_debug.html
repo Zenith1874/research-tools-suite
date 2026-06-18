@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>金融数据 Debug</title>
+<script src="/vendor/react.min.js"></script>
+<script src="/vendor/react-dom.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
+<style>
+body{margin:0;background:#07111f;color:#e5edf7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}h1{font-size:20px;margin:0}.btn{background:#111d31;border:1px solid #22324b;color:#e5edf7;border-radius:6px;padding:8px 12px;text-decoration:none;font-size:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{background:#0d1728;border:1px solid #22324b;border-radius:8px;padding:14px;margin-bottom:12px}h2{font-size:14px;margin:0 0 10px;color:#e5edf7}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:7px;border-bottom:1px solid rgba(34,50,75,.7);text-align:left;vertical-align:top}th{color:#8ea0b8}.num{text-align:right;font-variant-numeric:tabular-nums}.muted{color:#8ea0b8;font-size:12px;line-height:1.6}.err{border-color:#ff5b78;color:#ffb3c0}.source{max-width:360px;word-break:break-all}.link{color:#9ec2ff;text-decoration:none}.link:hover{text-decoration:underline}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column;gap:10px}}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const {useEffect,useState}=React;
+function App(){
+  const [debug,setDebug]=useState(null),[data,setData]=useState(null),[err,setErr]=useState(null);
+  async function load(){
+    setErr(null);
+    try{
+      const [d,a]=await Promise.all([fetch('/api/financial/debug'),fetch('/api/data')]);
+      if(!d.ok||!a.ok)throw new Error('API failed');
+      setDebug(await d.json()); setData(await a.json());
+    }catch(e){setErr('后端未连接或 debug API 返回失败。')}
+  }
+  useEffect(()=>{load()},[]);
+  return <div className="wrap">
+    <div className="top"><h1>金融数据 Debug</h1><div><button className="btn" onClick={load}>刷新</button> <a className="btn" href="/dashboard">返回 Dashboard</a></div></div>
+    {err&&<div className="card err">{err}</div>}
+    <div className="card"><h2>当前状态</h2>
+      <div className="muted">dataMode：{data?.data_mode||'—'} · 后端连接：{data?'成功':'未知'} · 最新期数：{debug?.latest_period||data?.pboc_monthly?.latest_period||'—'} · 数据库：{debug?.database_path||'—'}</div>
+      {(data?.metadata?.warnings||[]).map((w,i)=><div key={i} className="muted">Warning: {w}</div>)}
+    </div>
+    <div className="grid">
+      <div className="card"><h2>数据表</h2><table><tbody>{Object.entries(debug?.tables||{}).map(([k,v])=><tr key={k}><td>{k}</td><td className="num">{v}</td></tr>)}</tbody></table></div>
+      <div className="card"><h2>字段覆盖</h2><table><tbody>{Object.entries(debug?.field_coverage||{}).map(([k,v])=><tr key={k}><td>{k}</td><td className="num">{v}</td></tr>)}</tbody></table></div>
+    </div>
+    <div className="card"><h2>每个指标最新值</h2><table><thead><tr><th>指标</th><th>名称</th><th className="num">值</th><th>单位</th><th>期数</th><th>source_url</th><th>source_title</th><th>published_date</th><th>parser_notes</th><th>状态</th><th>mock</th><th>seed</th><th>cache</th></tr></thead><tbody>
+      {(debug?.latest_by_indicator||[]).map(r=><tr key={r.indicator_code}><td>{r.indicator_code}</td><td>{r.indicator_name}</td><td className="num">{r.value}</td><td>{r.unit_display}</td><td>{r.period}</td><td className="source">{r.source_url?<a className="link" href={r.source_url} target="_blank">查看原文</a>:'—'}</td><td>{r.source_title||'—'}</td><td>{r.published_date||'—'}</td><td>{r.parser_notes||'—'}</td><td>{r.data_status}</td><td>{r.is_mock}</td><td>{r.is_seed}</td><td>{r.is_cache}</td></tr>)}
+    </tbody></table></div>
+    <div className="card"><h2>每个 source_url 解析出的指标</h2><table><thead><tr><th>source_url</th><th>source_title</th><th>published_date</th><th className="num">指标数</th><th>指标</th></tr></thead><tbody>
+      {(debug?.indicators_by_source||[]).map((r,i)=><tr key={i}><td className="source">{r.source_url?<a className="link" href={r.source_url} target="_blank">{r.source_url}</a>:'—'}</td><td>{r.source_title||'—'}</td><td>{r.published_date||'—'}</td><td className="num">{r.indicator_count}</td><td className="source">{r.indicators}</td></tr>)}
+    </tbody></table></div>
+    <div className="grid">
+      <div className="card"><h2>缺 source_url 的指标</h2><table><tbody>{(debug?.missing_source_url||[]).map(r=><tr key={r.indicator_code}><td>{r.indicator_code}</td><td className="num">{r.records}</td></tr>)}{!(debug?.missing_source_url||[]).length&&<tr><td className="muted">无</td></tr>}</tbody></table></div>
+      <div className="card"><h2>cache/manual/seed/mock 统计</h2><table><tbody>{(debug?.status_counts||[]).map((r,i)=><tr key={i}><td>{r.data_status}</td><td>{r.source_type}</td><td>mock:{r.is_mock}</td><td>seed:{r.is_seed}</td><td>cache:{r.is_cache}</td><td className="num">{r.records}</td></tr>)}</tbody></table></div>
+    </div>
+    <div className="card"><h2>Source Registry</h2><table><thead><tr><th>source_key</th><th>source_name</th><th>source_type</th><th>入口</th><th>候选路径</th><th>parser_notes</th></tr></thead><tbody>
+      {(debug?.source_registry||[]).map(r=><tr key={r.source_key}><td>{r.source_key}</td><td>{r.source_name}</td><td>{r.source_type}</td><td className="source">{r.entry_url?<a className="link" href={r.entry_url} target="_blank">{r.entry_url}</a>:'—'}</td><td className="source">{r.candidate_paths}</td><td>{r.parser_notes}</td></tr>)}
+    </tbody></table></div>
+    <div className="card"><h2>最近更新日志</h2><table><thead><tr><th>ID</th><th>来源</th><th>开始</th><th>完成</th><th>成功</th><th>新增</th><th>更新</th><th>错误</th></tr></thead><tbody>
+      {(debug?.last_update_logs||[]).map(r=><tr key={r.id}><td>{r.id}</td><td>{r.source_name}</td><td>{r.started_at}</td><td>{r.finished_at}</td><td>{r.success}</td><td>{r.new_records}</td><td>{r.updated_records}</td><td>{r.error_message}</td></tr>)}
+    </tbody></table></div>
+  </div>
+}
+ReactDOM.render(<App/>,document.getElementById('root'));
+</script>
+</body></html>
