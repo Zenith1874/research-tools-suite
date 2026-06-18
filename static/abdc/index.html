@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABDC Journal Quality List</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; }
+
+  header { background: #1a3a5c; color: white; padding: 18px 24px; display: flex; align-items: center; gap: 16px; }
+  header a { color: rgba(255,255,255,0.6); text-decoration: none; font-size: 0.85rem; }
+  header a:hover { color: white; }
+  .header-sep { color: rgba(255,255,255,0.3); }
+  header h1 { font-size: 1.3rem; font-weight: 600; }
+  header p { font-size: 0.8rem; opacity: 0.65; margin-top: 2px; }
+
+  .controls { background: white; border-bottom: 1px solid #e0e0e0; padding: 14px 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+  .ctrl-group label { font-size: 0.73rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.04em; }
+  input[type=text] { border: 1.5px solid #d0d7de; border-radius: 6px; padding: 7px 11px; font-size: 0.93rem; width: 300px; outline: none; transition: border-color 0.15s; }
+  input[type=text]:focus { border-color: #1a3a5c; }
+  select { border: 1.5px solid #d0d7de; border-radius: 6px; padding: 7px 10px; font-size: 0.86rem; background: white; cursor: pointer; outline: none; }
+  select:focus { border-color: #1a3a5c; }
+  .rating-btns { display: flex; gap: 5px; }
+  .rating-btn { border: 1.5px solid #ccc; background: white; border-radius: 6px; padding: 6px 13px; font-size: 0.84rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .rating-btn:hover { background: #f0f2f5; }
+  .rating-btn.active { color: white; border-color: transparent; }
+  .rating-btn[data-r="ALL"].active { background: #1a3a5c; }
+  .rating-btn[data-r="A*"].active { background: #7c3aed; }
+  .rating-btn[data-r="A"].active  { background: #0369a1; }
+  .rating-btn[data-r="B"].active  { background: #047857; }
+  .rating-btn[data-r="C"].active  { background: #b45309; }
+
+  .stats-bar { background: white; border-bottom: 1px solid #e0e0e0; padding: 7px 24px; font-size: 0.81rem; color: #666; display: flex; gap: 18px; align-items: center; }
+  .stat-chip { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-astar{background:#7c3aed}.dot-a{background:#0369a1}.dot-b{background:#047857}.dot-c{background:#b45309}
+  .total-count { font-weight: 600; color: #333; margin-left: auto; }
+
+  .table-wrap { overflow-x: auto; padding: 0 24px 24px; }
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-top: 14px; font-size: 0.87rem; }
+  thead th { background: #1a3a5c; color: white; padding: 10px 13px; text-align: left; font-weight: 600; white-space: nowrap; }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { background: #243f61; }
+  tbody tr { border-bottom: 1px solid #f0f0f0; transition: background 0.1s; }
+  tbody tr:hover { background: #f8fafc; }
+  tbody td { padding: 9px 13px; vertical-align: middle; }
+  td.title { font-weight: 500; max-width: 320px; }
+  td.publisher { color: #555; max-width: 190px; font-size: 0.83rem; }
+  td.issn { font-family: monospace; font-size: 0.81rem; color: #444; white-space: nowrap; }
+  td.for-code { font-family: monospace; font-size: 0.81rem; }
+
+  .badge { display: inline-block; border-radius: 5px; padding: 3px 8px; font-size: 0.79rem; font-weight: 700; color: white; }
+  .badge-astar{background:#7c3aed}.badge-a{background:#0369a1}.badge-b{background:#047857}.badge-c{background:#b45309}
+  .history-badges { display: flex; gap: 3px; flex-wrap: wrap; }
+  .hist-badge { border-radius: 4px; padding: 2px 5px; font-size: 0.7rem; font-weight: 600; color: white; }
+
+  .no-results { text-align: center; padding: 60px; color: #888; background: white; border-radius: 8px; margin-top: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .loading { text-align: center; padding: 80px; color: #888; }
+  .spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid #e0e0e0; border-top-color: #1a3a5c; border-radius: 50%; animation: spin 0.7s linear infinite; margin-bottom: 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .pagination { display: flex; justify-content: center; align-items: center; gap: 7px; padding: 14px 0 0; font-size: 0.86rem; }
+  .page-btn { border: 1.5px solid #d0d7de; background: white; border-radius: 6px; padding: 5px 11px; cursor: pointer; transition: all 0.15s; }
+  .page-btn:hover:not(:disabled) { background: #f0f2f5; }
+  .page-btn.active { background: #1a3a5c; color: white; border-color: #1a3a5c; }
+  .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .page-info { color: #666; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+      <a href="/">← 首页</a>
+      <span class="header-sep">/</span>
+      <h1>ABDC Journal Quality List</h1>
+    </div>
+    <p>Australian Business Deans Council · 2010–2025</p>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="ctrl-group">
+    <label>搜索期刊</label>
+    <input type="text" id="searchInput" placeholder="期刊名称、ISSN、出版商…" autocomplete="off">
+  </div>
+  <div class="ctrl-group">
+    <label>年份版本</label>
+    <select id="yearSelect">
+      <option value="2025">2025</option>
+      <option value="2022">2022</option>
+      <option value="2019">2019</option>
+      <option value="2016">2016</option>
+      <option value="2013">2013</option>
+      <option value="2010">2010</option>
+    </select>
+  </div>
+  <div class="ctrl-group">
+    <label>FoR 代码</label>
+    <select id="forSelect"><option value="">全部</option></select>
+  </div>
+  <div class="ctrl-group">
+    <label>等级筛选</label>
+    <div class="rating-btns">
+      <button class="rating-btn active" data-r="ALL">全部</button>
+      <button class="rating-btn" data-r="A*">A*</button>
+      <button class="rating-btn" data-r="A">A</button>
+      <button class="rating-btn" data-r="B">B</button>
+      <button class="rating-btn" data-r="C">C</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <label>排序</label>
+    <select id="sortSelect">
+      <option value="title-asc">名称 A→Z</option>
+      <option value="title-desc">名称 Z→A</option>
+      <option value="rating-desc">等级 A*→C</option>
+      <option value="rating-asc">等级 C→A*</option>
+    </select>
+  </div>
+</div>
+
+<div class="stats-bar" id="statsBar">
+  <span class="stat-chip"><span class="dot dot-astar"></span><span id="cnt-astar">0</span> A*</span>
+  <span class="stat-chip"><span class="dot dot-a"></span><span id="cnt-a">0</span> A</span>
+  <span class="stat-chip"><span class="dot dot-b"></span><span id="cnt-b">0</span> B</span>
+  <span class="stat-chip"><span class="dot dot-c"></span><span id="cnt-c">0</span> C</span>
+  <span class="total-count" id="totalCount">加载中…</span>
+</div>
+
+<div class="table-wrap">
+  <div id="loadingDiv" class="loading">
+    <div class="spinner"></div><br>正在加载期刊数据…
+  </div>
+  <table id="mainTable" style="display:none">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th class="sortable" data-col="title">期刊名称</th>
+        <th>出版商</th>
+        <th>ISSN</th>
+        <th>FoR</th>
+        <th>创刊</th>
+        <th class="sortable" data-col="rating">等级</th>
+        <th>历史等级</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <div id="noResults" class="no-results" style="display:none">未找到匹配的期刊</div>
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<script>
+const PAGE_SIZE = 50;
+const RATING_ORDER = {'A*':4,'A':3,'B':2,'C':1};
+const BADGE_CLASS = {'A*':'badge-astar','A':'badge-a','B':'badge-b','C':'badge-c'};
+const HIST_BG = {'A*':'#7c3aed','A':'#0369a1','B':'#047857','C':'#b45309'};
+const YEARS = ['2025','2022','2019','2016','2013','2010'];
+
+let DB = null;
+let currentYear = '2025';
+let filteredData = [];
+let currentPage = 1;
+let activeRating = 'ALL';
+
+async function loadData() {
+  try {
+    const res = await fetch('/api/abdc/data');
+    DB = await res.json();
+    document.getElementById('loadingDiv').style.display = 'none';
+    buildForOptions();
+    applyFilters();
+  } catch(e) {
+    document.getElementById('loadingDiv').innerHTML = '加载失败，请确认服务器正在运行';
+  }
+}
+
+function buildForOptions() {
+  const sel = document.getElementById('forSelect');
+  const codes = new Set();
+  (DB[currentYear] || []).forEach(j => { if(j.for) codes.add(j.for); });
+  const sorted = [...codes].sort((a,b) => a.localeCompare(b, undefined, {numeric:true}));
+  sel.innerHTML = '<option value="">全部 FoR</option>';
+  sorted.forEach(c => { const o = document.createElement('option'); o.value=c; o.textContent=c; sel.appendChild(o); });
+}
+
+function applyFilters() {
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  const forVal = document.getElementById('forSelect').value;
+  const sortVal = document.getElementById('sortSelect').value;
+  const [sortCol, sortDir] = sortVal.split('-');
+
+  let data = DB[currentYear] || [];
+  if(q) data = data.filter(j =>
+    j.title.toLowerCase().includes(q) ||
+    (j.publisher||'').toLowerCase().includes(q) ||
+    (j.issn||'').includes(q) ||
+    (j.issnOnline||'').includes(q)
+  );
+  if(forVal) data = data.filter(j => j.for === forVal);
+  if(activeRating !== 'ALL') data = data.filter(j => j.rating === activeRating);
+
+  data = [...data].sort((a,b) => {
+    let va, vb;
+    if(sortCol === 'rating') { va = RATING_ORDER[a.rating]||0; vb = RATING_ORDER[b.rating]||0; }
+    else { va = a.title.toLowerCase(); vb = b.title.toLowerCase(); }
+    if(va < vb) return sortDir==='asc' ? -1 : 1;
+    if(va > vb) return sortDir==='asc' ? 1 : -1;
+    return 0;
+  });
+
+  filteredData = data;
+  currentPage = 1;
+  updateStats();
+  renderPage();
+  renderPagination();
+}
+
+function updateStats() {
+  const counts = {'A*':0,'A':0,'B':0,'C':0};
+  filteredData.forEach(j => { if(counts[j.rating]!==undefined) counts[j.rating]++; });
+  document.getElementById('cnt-astar').textContent = counts['A*'];
+  document.getElementById('cnt-a').textContent = counts['A'];
+  document.getElementById('cnt-b').textContent = counts['B'];
+  document.getElementById('cnt-c').textContent = counts['C'];
+  document.getElementById('totalCount').textContent = `共 ${filteredData.length.toLocaleString()} 条结果`;
+}
+
+function getHistory(title) {
+  const result = {};
+  const key = title.trim().toLowerCase();
+  YEARS.forEach(y => {
+    if(y === currentYear) return;
+    const found = (DB[y]||[]).find(j => j.title.trim().toLowerCase() === key);
+    if(found) result[y] = found.rating;
+  });
+  return result;
+}
+
+function renderPage() {
+  const tbody = document.getElementById('tableBody');
+  const noRes = document.getElementById('noResults');
+  const tbl = document.getElementById('mainTable');
+
+  if(filteredData.length === 0) {
+    tbl.style.display = 'none'; noRes.style.display = 'block'; return;
+  }
+  tbl.style.display = ''; noRes.style.display = 'none';
+
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const slice = filteredData.slice(start, start + PAGE_SIZE);
+
+  tbody.innerHTML = slice.map((j, idx) => {
+    const hist = getHistory(j.title);
+    const histHtml = Object.entries(hist).map(([y,r]) =>
+      `<span class="hist-badge" style="background:${HIST_BG[r]}" title="${y}: ${r}">${y.slice(2)} ${r}</span>`
+    ).join('');
+    const issnDisplay = [j.issn, j.issnOnline].filter(Boolean).join(' / ') || '—';
+    return `<tr>
+      <td style="color:#aaa;font-size:0.76rem">${start+idx+1}</td>
+      <td class="title">${esc(j.title)}</td>
+      <td class="publisher">${esc(j.publisher||'—')}</td>
+      <td class="issn">${esc(issnDisplay)}</td>
+      <td class="for-code">${j.for||'—'}</td>
+      <td style="color:#666">${j.yearInception||'—'}</td>
+      <td><span class="badge ${BADGE_CLASS[j.rating]||''}">${j.rating}</span></td>
+      <td><div class="history-badges">${histHtml||'—'}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination() {
+  const total = Math.ceil(filteredData.length / PAGE_SIZE);
+  const pg = document.getElementById('pagination');
+  if(total <= 1) { pg.innerHTML=''; return; }
+
+  let html = `<button class="page-btn" onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹</button>`;
+  pageRange(currentPage, total).forEach(p => {
+    if(p==='…') html += `<span style="color:#aaa;padding:0 2px">…</span>`;
+    else html += `<button class="page-btn ${p===currentPage?'active':''}" onclick="goPage(${p})">${p}</button>`;
+  });
+  html += `<button class="page-btn" onclick="goPage(${currentPage+1})" ${currentPage===total?'disabled':''}>›</button>`;
+  html += `<span class="page-info">${currentPage} / ${total} 页</span>`;
+  pg.innerHTML = html;
+}
+
+function pageRange(cur, total) {
+  if(total <= 7) return Array.from({length:total},(_,i)=>i+1);
+  const pages = new Set([1, total, cur]);
+  for(let i=Math.max(1,cur-1); i<=Math.min(total,cur+1); i++) pages.add(i);
+  const sorted = [...pages].sort((a,b)=>a-b);
+  const result = []; let prev = 0;
+  sorted.forEach(p => { if(p-prev>1) result.push('…'); result.push(p); prev=p; });
+  return result;
+}
+
+function goPage(p) {
+  const total = Math.ceil(filteredData.length / PAGE_SIZE);
+  if(p < 1 || p > total) return;
+  currentPage = p;
+  renderPage(); renderPagination();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+let searchTimer;
+document.getElementById('searchInput').addEventListener('input', () => {
+  clearTimeout(searchTimer); searchTimer = setTimeout(applyFilters, 200);
+});
+document.getElementById('yearSelect').addEventListener('change', e => {
+  currentYear = e.target.value; buildForOptions(); applyFilters();
+});
+document.getElementById('forSelect').addEventListener('change', applyFilters);
+document.getElementById('sortSelect').addEventListener('change', applyFilters);
+document.querySelectorAll('.rating-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.rating-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active'); activeRating = btn.dataset.r; applyFilters();
+  });
+});
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    const sel = document.getElementById('sortSelect');
+    const [c, d] = sel.value.split('-');
+    sel.value = (c===col && d==='asc') ? `${col}-desc` : `${col}-asc`;
+    applyFilters();
+  });
+});
+
+loadData();
+</script>
+</body>
+</html>
