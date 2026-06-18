@@ -24,7 +24,7 @@ python server.py            # 启动后打开 http://localhost:5001
 
 ### 环境变量
 - `ASTAR_MAILTO` — OpenAlex / Crossref polite-pool 联系邮箱（建议设为你的真实邮箱；默认占位）。
-- `ASTAR_AUTO=0` — 关闭 A\* 雷达每 6 小时的后台增量抓取。
+- `ASTAR_AUTO=0` — 关闭 A\* 雷达每天一次的后台增量抓取。
 
 ## 数据说明
 
