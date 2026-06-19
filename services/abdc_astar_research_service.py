@@ -197,6 +197,12 @@ PRESTIGE_TITLE_ALIASES = {
     'human resource management': 'human resource management (us)',
 }
 
+# ABDC 清单中过期/错误的刊号修正（normalize_title → (issn_print, issn_online)）
+# Environment and Planning B 2017 改名为 Urban Analytics and City Science，新刊号 2399-808x
+ISSN_OVERRIDES = {
+    'environment and planning b urban analytics and city science': ('2399-8083', '2399-8091'),
+}
+
 # 已知 OpenAlex 把会议论文错并入期刊 ISSN 的情况：要求 DOI 含指定子串才视为该刊正刊文章。
 # JAIS (1536-9323) 被混入大量 AIS eLibrary 会议论文（无 DOI），正刊 DOI 为 10.17705/1jais.*
 JOURNAL_DOI_FILTER = {
@@ -299,6 +305,9 @@ def load_astar_journals_from_abdc(version='latest'):
         title = (j.get('title') or '').strip()
         issn_p = normalize_issn(j.get('issn'))
         issn_o = normalize_issn(j.get('issnOnline'))
+        ov = ISSN_OVERRIDES.get(normalize_title(title))   # 修正 ABDC 过期/错误刊号
+        if ov:
+            issn_p, issn_o = ov
         disc, _area = discipline_for(j)
         has_issn = bool(issn_p or issn_o)
         if has_issn:
