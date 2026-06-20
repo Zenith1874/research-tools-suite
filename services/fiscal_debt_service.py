@@ -22,6 +22,14 @@ KNOWN_LOCAL_DEBT_URLS = [
 
 MOF_CENTRAL_DEBT_PDF = 'https://zwgls.mof.gov.cn/tjsj/202511/P020251101766789596876.pdf'
 MOF_CENTRAL_DEBT_TITLE = '2024年中央政府月度收支及融资数据和季度债务余额情况'
+# 财政部国库司中央政府季度债务余额 PDF（SDDS 口径）。新年度/季度 PDF 上线后在此追加一条即可。
+MOF_CENTRAL_DEBT_PDFS = [
+    {'url': MOF_CENTRAL_DEBT_PDF, 'title': MOF_CENTRAL_DEBT_TITLE,
+     'periods': ['2024-03', '2024-06', '2024-09', '2024-12'], 'published': '2025-11-01'},
+    {'url': 'https://zwgls.mof.gov.cn/tjsj/202511/P020251101766791526425.pdf',
+     'title': '2025年9月中央政府收支及融资数据和二季度债务余额情况',
+     'periods': ['2025-03', '2025-06'], 'published': '2025-10-27'},
+]
 
 LOCAL_DEBT_FIELDS = {
     'local_debt_balance_total': ('地方政府债务余额', '亿元', 'official'),
@@ -468,30 +476,35 @@ def fetch_binary(url, timeout=40):
         return resp.read(), resp.geturl()
 
 
-def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF):
+def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
+                                      periods=('2024-03', '2024-06', '2024-09', '2024-12'),
+                                      published='2025-11-01',
+                                      title=MOF_CENTRAL_DEBT_TITLE):
+    """解析财政部国库司 PDF 第2页“中央政府债务余额（季度数据）”。
+    支持可变季度数（年中 PDF 可能只含已发布的 1-2 个季度）。原始单位十亿元，×10 转亿元。"""
     try:
         from pypdf import PdfReader
     except ImportError as exc:
         raise RuntimeError('解析中央政府债务 PDF 需要 pypdf') from exc
+    periods = list(periods)
+    n = len(periods)
     content, final_url = fetch_binary(url)
     reader = PdfReader(io.BytesIO(content))
     text = '\n'.join(page.extract_text() or '' for page in reader.pages)
-    section = re.search(
-        r'中央政府债务余额（季度数据）.*?Debt\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(.*)',
-        text,
-        re.S,
-    )
+    # 债务余额行：Debt 后取连续的 1-4 个数字（季度值）
+    section = re.search(r'中央政府债务余额（季度数据）.*?\bDebt\s+([\d.]+(?:\s+[\d.]+)*)', text, re.S)
     if not section:
-        raise RuntimeError('未从财政部 PDF 解析出中央政府季度债务余额')
-    debt_values = [float(section.group(i)) * 10 for i in range(1, 5)]
-    tail = section.group(5)
-    bonds = re.search(r'(?:债券\s*\n?\s*Bonds)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)', tail, re.S)
+        raise RuntimeError(f'未从财政部 PDF 解析出中央政府季度债务余额: {title}')
+    debt_nums = [float(x) * 10 for x in section.group(1).split()]
+    tail = text[section.end():]   # 债务余额段之后才有“债券 Bonds”余额行（融资段在页1，不在此 tail）
+    bonds = re.search(r'债券\s*\n?\s*Bonds\s+([\d.]+(?:\s+[\d.]+)*)', tail)
     if not bonds:
-        raise RuntimeError('未从财政部 PDF 解析出中央政府债券余额')
-    bond_values = [float(bonds.group(i)) * 10 for i in range(1, 5)]
-    periods = ['2024-03', '2024-06', '2024-09', '2024-12']
-    published = '2025-11-01'
-    notes = '解析财政部官方 PDF 第2页“中央政府债务余额（季度数据）”；原始单位十亿元，乘以10转换为亿元。'
+        raise RuntimeError(f'未从财政部 PDF 解析出中央政府债券余额: {title}')
+    bond_nums = [float(x) * 10 for x in bonds.group(1).split()]
+    if len(debt_nums) < n or len(bond_nums) < n:
+        raise RuntimeError(f'PDF 季度数不足({title})：debt={len(debt_nums)} bond={len(bond_nums)} 需要 {n}')
+    debt_values, bond_values = debt_nums[:n], bond_nums[:n]
+    notes = f'解析财政部官方 PDF“中央政府债务余额（季度数据）”（{title}）；原始单位十亿元，×10 转亿元。'
     records = []
     for period, debt, bond in zip(periods, debt_values, bond_values):
         for code, name, value in [
@@ -508,12 +521,12 @@ def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF):
                 'unit_display': '亿元',
                 'scale_factor': 10,
                 'period': period,
-                'date': period + '-31' if period not in ('2024-06', '2024-09') else period + '-30',
+                'date': period + ('-31' if period[-2:] in ('03', '12') else '-30'),
                 'frequency': 'quarterly',
                 'source_name': '财政部国库司',
                 'source_type': 'mof_central_government_debt_sdds',
                 'source_url': final_url,
-                'source_title': MOF_CENTRAL_DEBT_TITLE,
+                'source_title': title,
                 'published_date': published,
                 'parser_notes': notes,
                 'raw_text': f'{period} {name}: {value / 10} 十亿元',
@@ -524,7 +537,16 @@ def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF):
 
 
 def update_central_government_debt(db_path):
-    records = parse_central_government_debt_pdf()
+    # 解析所有已配置的财政部中央债 PDF（2024、2025…），失败的单个 PDF 跳过不影响其它
+    records, parse_errors = [], []
+    for cfg in MOF_CENTRAL_DEBT_PDFS:
+        try:
+            records.extend(parse_central_government_debt_pdf(
+                cfg['url'], cfg['periods'], cfg['published'], cfg['title']))
+        except Exception as exc:
+            parse_errors.append({'url': cfg['url'], 'title': cfg['title'], 'error': str(exc)})
+    if not records:
+        raise RuntimeError(f'中央政府债务 PDF 全部解析失败: {parse_errors}')
     now = datetime.now().isoformat()
     inserted = updated = 0
     with connect(db_path) as conn:
@@ -559,23 +581,28 @@ def update_central_government_debt(db_path):
                 updated += 1
             else:
                 inserted += 1
-        source = records[0]
-        conn.execute('''INSERT INTO fiscal_debt_sources (
-            source_name,source_type,source_url,source_title,published_date,parser_notes,raw_text,
-            parsed_indicators,status,error,updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(source_url) DO UPDATE SET source_title=excluded.source_title,
-            published_date=excluded.published_date,parser_notes=excluded.parser_notes,
-            parsed_indicators=excluded.parsed_indicators,status=excluded.status,error=NULL,
-            updated_at=excluded.updated_at''', (
-            source['source_name'], source['source_type'], source['source_url'], source['source_title'],
-            source['published_date'], source['parser_notes'], 'PDF attachment',
-            json.dumps(sorted({r['indicator_code'] for r in records}), ensure_ascii=False),
-            'success', None, now
-        ))
+        # 每个不同来源 PDF 各登记一条
+        for surl in sorted({r['source_url'] for r in records}):
+            src_recs = [r for r in records if r['source_url'] == surl]
+            source = src_recs[0]
+            conn.execute('''INSERT INTO fiscal_debt_sources (
+                source_name,source_type,source_url,source_title,published_date,parser_notes,raw_text,
+                parsed_indicators,status,error,updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(source_url) DO UPDATE SET source_title=excluded.source_title,
+                published_date=excluded.published_date,parser_notes=excluded.parser_notes,
+                parsed_indicators=excluded.parsed_indicators,status=excluded.status,error=NULL,
+                updated_at=excluded.updated_at''', (
+                source['source_name'], source['source_type'], source['source_url'], source['source_title'],
+                source['published_date'], source['parser_notes'], 'PDF attachment',
+                json.dumps(sorted({r['indicator_code'] for r in src_recs}), ensure_ascii=False),
+                'success', None, now
+            ))
         conn.commit()
+    latest = max(r['period'] for r in records)
     return {'success': True, 'new_records': inserted, 'updated_records': updated,
-            'records': len(records), 'latest_period': '2024-12', 'source_url': records[0]['source_url']}
+            'records': len(records), 'latest_period': latest,
+            'parse_errors': parse_errors, 'source_url': records[0]['source_url']}
 
 
 def parse_local_debt_page(url):
