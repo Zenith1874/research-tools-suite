@@ -190,6 +190,21 @@ DDL = [
         matched_abdc INTEGER DEFAULT 0,
         updated_at TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS astar_journal_health (
+        journal_id INTEGER PRIMARY KEY,
+        journal_title TEXT,
+        abdc_rating TEXT,
+        issn TEXT,
+        db_count INTEGER,
+        db_recent2y INTEGER,
+        db_latest TEXT,
+        oa_works_count INTEGER,
+        oa_recent2y INTEGER,
+        oa_latest_year INTEGER,
+        status TEXT,
+        note TEXT,
+        checked_at TEXT
+    )""",
 ]
 
 # FT50/UTD24 标题 → ABDC 主表标题的别名（少数命名差异）
@@ -201,6 +216,8 @@ PRESTIGE_TITLE_ALIASES = {
 # Environment and Planning B 2017 改名为 Urban Analytics and City Science，新刊号 2399-808x
 ISSN_OVERRIDES = {
     'environment and planning b urban analytics and city science': ('2399-8083', '2399-8091'),
+    # ABDC 录入刊号 0002-0515 有误，JEL 正确刊号为 0022-0515 / eISSN 2328-8175
+    'journal of economic literature': ('0022-0515', '2328-8175'),
 }
 
 # 已知 OpenAlex 把会议论文错并入期刊 ISSN 的情况：要求 DOI 含指定子串才视为该刊正刊文章。
@@ -217,6 +234,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_astar_cls_article ON astar_article_classifications(article_id)",
     "CREATE INDEX IF NOT EXISTS idx_prestige_issnp ON journal_prestige_lists(issn_print)",
     "CREATE INDEX IF NOT EXISTS idx_prestige_issno ON journal_prestige_lists(issn_online)",
+    # 注：来源表去重的唯一索引在 dedup_article_sources() 里去重后再建（避免脏数据导致建索引失败）
 ]
 
 
@@ -1039,8 +1057,9 @@ def _upsert_article(conn, art, journal):
 
 def _record_source(conn, article_id, art):
     now = datetime.now().isoformat(timespec='seconds')
+    # INSERT OR IGNORE：配合 idx_src_uniq 唯一索引，重抓同一文章不再累积重复来源行
     conn.execute("""
-        INSERT INTO astar_article_sources
+        INSERT OR IGNORE INTO astar_article_sources
           (article_id, source_name, source_type, source_url, raw_id, raw_json, fetched_at, parser_notes)
         VALUES (?,?,?,?,?,?,?,?)""",
         (article_id, art.get('source_name'), art.get('source_type'), art.get('source_url'),
@@ -1723,3 +1742,113 @@ def build_astar_trends_payload(months=18, related_only=False):
             'topics': top_series(topic_by_month, 12),
             'methods': top_series(method_by_month, 10),
             'areas': top_series(area_by_month, 10)}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  来源记录去重（一次性 + 建唯一索引防再生）
+# ════════════════════════════════════════════════════════════════════════════
+def dedup_article_sources():
+    """删除 astar_article_sources 中 (article_id, source_type, raw_id) 重复的行（保留最小 id），
+    并建唯一索引，使之后的重抓不再累积重复来源行。返回删除数。"""
+    conn = get_db()
+    ensure_astar_tables(conn)
+    before = conn.execute('SELECT COUNT(*) FROM astar_article_sources').fetchone()[0]
+    conn.execute("""DELETE FROM astar_article_sources WHERE id NOT IN (
+        SELECT MIN(id) FROM astar_article_sources GROUP BY article_id, source_type, raw_id)""")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_src_uniq "
+                 "ON astar_article_sources(article_id, source_type, raw_id)")
+    conn.commit()
+    after = conn.execute('SELECT COUNT(*) FROM astar_article_sources').fetchone()[0]
+    conn.close()
+    return {'before': before, 'after': after, 'removed': before - after}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  期刊健康检查：逐刊比对 OpenAlex 覆盖，自动分类健康/可救/无解
+# ════════════════════════════════════════════════════════════════════════════
+def _openalex_source_stats(issn):
+    """查 OpenAlex source（按 ISSN），返回 (works_count, latest_year_with_works, recent2y_count, display_name)。
+    无对应 source 返回 None。"""
+    try:
+        r = requests.get(f'https://api.openalex.org/sources/issn:{issn}',
+                         headers={'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'},
+                         timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        cby = {x['year']: x['works_count'] for x in (d.get('counts_by_year') or [])}
+        latest = max([y for y, n in cby.items() if n > 0], default=None)
+        this_year = date.today().year
+        recent2y = cby.get(this_year, 0) + cby.get(this_year - 1, 0)
+        return d.get('works_count'), latest, recent2y, d.get('display_name')
+    except Exception:
+        return None
+
+
+def run_journal_health_check():
+    """对每个追踪期刊：取我们库内文章数/最新年，与 OpenAlex source 的近两年活跃度比对，分类：
+      healthy        我们有且 OpenAlex 也活跃
+      refetch_needed OpenAlex 近两年有不少，但我们库里近两年明显偏少 → 该重抓
+      check_issn     OpenAlex 没有该 ISSN 的 source（疑似刊号错/改名）
+      source_inactive OpenAlex 该刊近两年≈0（源头无近期数据，多为法学/实务刊，通常无解）
+    结果写入 astar_journal_health。返回各状态计数。"""
+    conn = get_db()
+    ensure_astar_tables(conn)
+    journals = conn.execute('SELECT * FROM abdc_astar_journals WHERE is_active=1').fetchall()
+    this_year = date.today().year
+    now = datetime.now().isoformat(timespec='seconds')
+    counts = {}
+    conn.execute('DELETE FROM astar_journal_health')
+    for jr in journals:
+        j = dict(jr)
+        issn = j.get('issn_print') or j.get('issn_online')
+        # 库内统计
+        row = conn.execute("""SELECT COUNT(*) c, MAX(publication_date) latest,
+            SUM(CASE WHEN publication_year>=? THEN 1 ELSE 0 END) r2
+            FROM astar_articles WHERE (journal_issn=? OR journal_issn=?) AND is_duplicate=0""",
+            (this_year - 1, j.get('issn_print'), j.get('issn_online'))).fetchone()
+        db_count, db_latest, db_r2 = row['c'], row['latest'], row['r2'] or 0
+        # OpenAlex：print 刊号无 source 时回退到 eISSN（避免误判 check_issn）
+        oa = _openalex_source_stats(j.get('issn_print')) if j.get('issn_print') else None
+        if oa is None and j.get('issn_online'):
+            oa = _openalex_source_stats(j.get('issn_online'))
+        time.sleep(POLITE_DELAY)
+        if oa is None:
+            oa_wc = oa_latest = oa_r2 = None
+            status, note = 'check_issn', 'OpenAlex 无此 ISSN 的 source（疑似刊号错/改名）'
+        else:
+            oa_wc, oa_latest, oa_r2, _name = oa
+            if (oa_latest or 0) <= this_year - 2 or (oa_r2 or 0) == 0:
+                status = 'source_inactive'
+                note = f'OpenAlex 近两年≈0（最新 {oa_latest}），源头无近期数据'
+            elif db_r2 < (oa_r2 or 0) * 0.5:
+                status = 'refetch_needed'
+                note = f'OpenAlex 近两年 {oa_r2}，库内仅 {db_r2} → 建议重抓'
+            else:
+                status = 'healthy'
+                note = ''
+        counts[status] = counts.get(status, 0) + 1
+        conn.execute("""INSERT INTO astar_journal_health
+            (journal_id, journal_title, abdc_rating, issn, db_count, db_recent2y, db_latest,
+             oa_works_count, oa_recent2y, oa_latest_year, status, note, checked_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (j['id'], j['journal_title'], j['abdc_rating'], issn, db_count, db_r2, db_latest,
+             oa_wc, oa_r2, oa_latest, status, note, now))
+        conn.commit()
+    conn.close()
+    return {'success': True, 'checked': len(journals), 'by_status': counts, 'checked_at': now}
+
+
+def build_journal_health_payload():
+    conn = get_db()
+    ensure_astar_tables(conn)
+    rows = [dict(r) for r in conn.execute(
+        'SELECT * FROM astar_journal_health ORDER BY '
+        "CASE status WHEN 'refetch_needed' THEN 0 WHEN 'check_issn' THEN 1 "
+        "WHEN 'source_inactive' THEN 2 ELSE 3 END, journal_title")]
+    last = conn.execute('SELECT MAX(checked_at) FROM astar_journal_health').fetchone()[0]
+    conn.close()
+    by = {}
+    for r in rows:
+        by[r['status']] = by.get(r['status'], 0) + 1
+    return {'success': True, 'checked_at': last, 'by_status': by, 'journals': rows}
