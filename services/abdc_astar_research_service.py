@@ -1858,7 +1858,20 @@ def build_journal_health_payload():
 #  LLM 辅助分类（可选，需 ANTHROPIC_API_KEY）：给规则法判不准的文章重判
 # ════════════════════════════════════════════════════════════════════════════
 ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
-LLM_MODEL_DEFAULT = 'claude-haiku-4-5-20251001'
+ANTHROPIC_MODEL_DEFAULT = 'claude-haiku-4-5-20251001'
+DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
+DEEPSEEK_MODEL_DEFAULT = 'deepseek-chat'
+LLM_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT   # 兼容旧引用
+
+# 用户核心 OB/IS/管理期刊 ISSN（用于只扫这些刊里被规则低估的漏判候选）
+CORE_JOURNAL_ISSNS = [
+    '0001-4273', '1948-0989', '0001-8392', '1047-7039', '1526-5455',  # AMJ ASQ OrgSci
+    '1047-7047', '1526-5536', '0276-7783', '2162-9730',               # ISR MISQ
+    '0021-9010', '1939-1854', '0149-2063', '1557-1211',               # JAP J Mgmt
+    '0894-3796', '1099-1379', '0018-7267', '1741-282X',               # JOB Human Relations
+    '1071-5797', '1532-7043',                                          # (extra HR-ish placeholders ok)
+]
+
 RESEARCH_PROFILE = (
     'WFH/混合办公/RTO；AI in organizations 与算法管理(algorithmic management)；'
     '数字痕迹/文本挖掘/NLP 在组织研究中的应用；员工 burnout/withdrawal/EVLN(exit-voice-loyalty-neglect)；'
@@ -1875,29 +1888,64 @@ _LLM_SYS = (
     'relevance_score(0-100 整数，越贴近用户方向越高)、reason(一句中文说明)。不要输出 JSON 以外的任何内容。')
 
 
-def _anthropic_classify(title, abstract, concepts, model):
-    key = os.environ.get('ANTHROPIC_API_KEY')
-    if not key:
-        raise RuntimeError('未设置 ANTHROPIC_API_KEY')
-    user = (f'标题：{title}\n摘要：{abstract or "(无公开摘要)"}\n'
+def _llm_provider():
+    """优先 DeepSeek（更便宜），其次 Anthropic。返回 (provider, model) 或 (None, None)。"""
+    if os.environ.get('DEEPSEEK_API_KEY'):
+        return 'deepseek', os.environ.get('LLM_MODEL', DEEPSEEK_MODEL_DEFAULT)
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        return 'anthropic', os.environ.get('LLM_MODEL', ANTHROPIC_MODEL_DEFAULT)
+    return None, None
+
+
+def _user_msg(title, abstract, concepts):
+    return (f'标题：{title}\n摘要：{abstract or "(无公开摘要)"}\n'
             f'OpenAlex概念：{", ".join([c for c in concepts if c])}\n\n只输出 JSON。')
+
+
+def _anthropic_classify(title, abstract, concepts, model):
     body = {'model': model, 'max_tokens': 700, 'system': _LLM_SYS,
-            'messages': [{'role': 'user', 'content': user}]}
+            'messages': [{'role': 'user', 'content': _user_msg(title, abstract, concepts)}]}
     r = requests.post(ANTHROPIC_URL, headers={
-        'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
-        json=body, timeout=45)
+        'x-api-key': os.environ['ANTHROPIC_API_KEY'], 'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'}, json=body, timeout=45)
     r.raise_for_status()
     text = ''.join(b.get('text', '') for b in r.json().get('content', []))
     m = re.search(r'\{.*\}', text, re.DOTALL)
     return json.loads(m.group(0)) if m else None
 
 
+def _deepseek_classify(title, abstract, concepts, model):
+    # OpenAI 兼容接口；response_format=json_object 保证只返回 JSON
+    body = {'model': model, 'max_tokens': 700, 'temperature': 0.2,
+            'response_format': {'type': 'json_object'},
+            'messages': [{'role': 'system', 'content': _LLM_SYS},
+                         {'role': 'user', 'content': _user_msg(title, abstract, concepts)}]}
+    r = requests.post(DEEPSEEK_URL, headers={
+        'Authorization': f"Bearer {os.environ['DEEPSEEK_API_KEY']}",
+        'Content-Type': 'application/json'}, json=body, timeout=60)
+    r.raise_for_status()
+    text = r.json()['choices'][0]['message']['content']
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    return json.loads(m.group(0)) if m else None
+
+
+def _llm_classify_one(title, abstract, concepts, provider, model):
+    if provider == 'deepseek':
+        return _deepseek_classify(title, abstract, concepts, model)
+    return _anthropic_classify(title, abstract, concepts, model)
+
+
 def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=True,
-                          model=LLM_MODEL_DEFAULT):
-    """对规则法判不准(默认 uncertain)、且有摘要的文章，用 Claude 重判并打相关性分。
-    按现有 relevance_score 从高到低优先(先救最可能相关的)。需 ANTHROPIC_API_KEY。"""
-    if not os.environ.get('ANTHROPIC_API_KEY'):
-        return {'success': False, 'error': '未设置 ANTHROPIC_API_KEY，无法调用 LLM。'}
+                          model=None, max_relevance=None, core_journals_only=False):
+    """对规则法判不准的文章用 LLM 重判并打相关性分。自动选 provider：
+    有 DEEPSEEK_API_KEY 走 DeepSeek（便宜），否则走 Anthropic。
+    max_relevance：只处理规则分 < 该值的（找漏判用，如 35）；不传则按分从高到低（清误报用）。
+    core_journals_only：只扫用户核心 OB/IS 期刊（漏判最可能藏在这里）。"""
+    provider, mdl = _llm_provider()
+    if not provider:
+        return {'success': False, 'error': '未设置 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY，无法调用 LLM。'}
+    if model:
+        mdl = model
     conn = get_db()
     ensure_astar_tables(conn)
     where = ['a.is_duplicate=0', "c.classification_method!='llm'"]
@@ -1906,9 +1954,15 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
         where.append('c.classification_status=?'); args.append(only_status)
     if require_abstract:
         where.append("a.abstract IS NOT NULL AND a.abstract!=''")
+    if max_relevance is not None:
+        where.append('c.relevance_score < ?'); args.append(float(max_relevance))
+    if core_journals_only:
+        ph = ','.join(['?'] * len(CORE_JOURNAL_ISSNS))
+        where.append(f'a.journal_issn IN ({ph})'); args += CORE_JOURNAL_ISSNS
+    order = 'a.publication_date DESC' if max_relevance is not None else 'c.relevance_score DESC'
     rows = conn.execute(f"""SELECT a.id, a.title, a.abstract, a.concepts_json
         FROM astar_articles a JOIN astar_article_classifications c ON c.article_id=a.id
-        WHERE {' AND '.join(where)} ORDER BY c.relevance_score DESC LIMIT ?""",
+        WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ?""",
         args + [int(limit)]).fetchall()
 
     done = fail = 0
@@ -1916,7 +1970,7 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
     for r in rows:
         try:
             concepts = [x.get('name') for x in json.loads(r['concepts_json'] or '[]')][:8]
-            res = _anthropic_classify(r['title'], r['abstract'], concepts, model)
+            res = _llm_classify_one(r['title'], r['abstract'], concepts, provider, mdl)
             if not res:
                 fail += 1
                 continue
@@ -1931,7 +1985,7 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
                  json.dumps(res.get('data_type_tags', []), ensure_ascii=False),
                  json.dumps(res.get('theory_tags', []), ensure_ascii=False),
                  round(score, 1), 1 if score >= 60 else 0,
-                 'LLM: ' + (res.get('reason', '') or ''), now, r['id']))
+                 f'LLM({provider}): ' + (res.get('reason', '') or ''), now, r['id']))
             done += 1
             if done % 20 == 0:
                 conn.commit()
@@ -1940,5 +1994,5 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
             log.debug(f'llm classify 失败 article {r["id"]}: {e}')
     conn.commit()
     conn.close()
-    return {'success': True, 'classified': done, 'failed': fail, 'model': model,
-            'candidates_in_scope': len(rows)}
+    return {'success': True, 'provider': provider, 'model': mdl,
+            'classified': done, 'failed': fail, 'candidates_in_scope': len(rows)}
