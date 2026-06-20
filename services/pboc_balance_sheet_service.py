@@ -129,9 +129,10 @@ def normalize_label(value):
     return re.sub(r'\s+', ' ', str(value or '').replace('\xa0', ' ')).strip()
 
 
-def discover_balance_sheet_attachment():
+def discover_balance_sheet_attachments(max_years=5):
     content, final_url = fetch(PBOC_YEAR_INDEX)
     soup = BeautifulSoup(decode_html(content), 'html.parser')
+    attachments = []
     year_links = []
     for a in soup.find_all('a'):
         text = a.get_text(' ', strip=True)
@@ -142,7 +143,7 @@ def discover_balance_sheet_attachment():
         year_links = ['https://www.pbc.gov.cn/diaochatongjisi/116219/116319/2026ntjsj/index.html']
 
     errors = []
-    for year_url in year_links[:4]:
+    for year_url in year_links[:max_years]:
         try:
             year_content, year_final = fetch(year_url)
             year_soup = BeautifulSoup(decode_html(year_content), 'html.parser')
@@ -172,18 +173,20 @@ def discover_balance_sheet_attachment():
                     wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
                     first = normalize_label(wb.active['A1'].value)
                     if '货币当局资产负债表' in first:
-                        return {
+                        attachments.append({
                             'source_url': resolved,
                             'source_title': '货币当局资产负债表',
                             'published_date': source_date_from_url(resolved),
                             'content': data,
-                            'errors': errors,
-                        }
+                        })
+                        break   # 该年已找到附件，处理下一年
                 except Exception as exc:
                     errors.append(f'{candidate}: {exc}')
         except Exception as exc:
             errors.append(f'{year_url}: {exc}')
-    raise RuntimeError('未找到可解析的货币当局资产负债表 xlsx；' + '; '.join(errors[:8]))
+    if not attachments:
+        raise RuntimeError('未找到可解析的货币当局资产负债表 xlsx；' + '; '.join(errors[:8]))
+    return {'attachments': attachments, 'errors': errors}
 
 
 def parse_balance_sheet_xlsx(content, source_meta):
@@ -261,17 +264,31 @@ def update_pboc_balance_sheet(db_path):
     with connect(db_path) as conn:
         ensure_pboc_balance_sheet_tables(conn)
         try:
-            attachment = discover_balance_sheet_attachment()
-            parser_errors.extend(attachment.get('errors') or [])
-            source_meta = {
-                'source_name': PBOC_SOURCE_NAME,
-                'source_type': PBOC_BALANCE_SOURCE_TYPE,
-                'source_url': attachment['source_url'],
-                'source_title': attachment['source_title'],
-                'published_date': attachment.get('published_date'),
-                'parser_notes': '解析自中国人民银行“货币统计概览”下的“货币当局资产负债表”xlsx 附件；占比字段按表内项目除以总资产计算。',
-            }
-            observations = parse_balance_sheet_xlsx(attachment['content'], source_meta)
+            discovery = discover_balance_sheet_attachments()
+            attachments = discovery['attachments']
+            parser_errors.extend(discovery.get('errors') or [])
+            # 逐年解析（新到旧），按 period 去重保留最新年附件的版本
+            observations, seen_periods, used_sources = [], set(), []
+            for att in attachments:
+                source_meta = {
+                    'source_name': PBOC_SOURCE_NAME,
+                    'source_type': PBOC_BALANCE_SOURCE_TYPE,
+                    'source_url': att['source_url'],
+                    'source_title': att['source_title'],
+                    'published_date': att.get('published_date'),
+                    'parser_notes': '解析自中国人民银行“货币统计概览”下的“货币当局资产负债表”xlsx 附件；占比字段按表内项目除以总资产计算。',
+                }
+                try:
+                    year_obs = parse_balance_sheet_xlsx(att['content'], source_meta)
+                except Exception as exc:
+                    parser_errors.append(f"{att['source_url']}: {exc}")
+                    continue
+                new_periods = {o['period'] for o in year_obs} - seen_periods
+                kept = [o for o in year_obs if o['period'] in new_periods]
+                if kept:
+                    observations.extend(kept)
+                    seen_periods |= new_periods
+                    used_sources.append((source_meta, sorted({o['indicator_code'] for o in kept})))
             if not observations:
                 raise RuntimeError('资产负债表附件未解析出目标指标')
             now = datetime.now().isoformat()
@@ -288,29 +305,30 @@ def update_pboc_balance_sheet(db_path):
                     obs['data_status'], obs['source_name'], obs['source_type'], obs['source_url'], obs['source_title'],
                     obs['published_date'], obs['parser_notes'], obs['formula'], now
                 ))
-            conn.execute('''INSERT INTO fiscal_debt_sources (
-                source_name,source_type,source_url,source_title,published_date,parser_notes,raw_text,
-                parsed_indicators,status,error,updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(source_url) DO UPDATE SET
-                source_title=excluded.source_title, published_date=excluded.published_date,
-                parser_notes=excluded.parser_notes, raw_text=excluded.raw_text,
-                parsed_indicators=excluded.parsed_indicators, status=excluded.status,
-                error=excluded.error, updated_at=excluded.updated_at
-            ''', (
-                PBOC_SOURCE_NAME, PBOC_BALANCE_SOURCE_TYPE, source_meta['source_url'], source_meta['source_title'],
-                source_meta['published_date'], source_meta['parser_notes'], 'xlsx attachment',
-                json.dumps(sorted({o['indicator_code'] for o in observations}), ensure_ascii=False),
-                'success', None, now
-            ))
+            for smeta, codes in used_sources:
+                conn.execute('''INSERT INTO fiscal_debt_sources (
+                    source_name,source_type,source_url,source_title,published_date,parser_notes,raw_text,
+                    parsed_indicators,status,error,updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(source_url) DO UPDATE SET
+                    source_title=excluded.source_title, published_date=excluded.published_date,
+                    parser_notes=excluded.parser_notes, raw_text=excluded.raw_text,
+                    parsed_indicators=excluded.parsed_indicators, status=excluded.status,
+                    error=excluded.error, updated_at=excluded.updated_at
+                ''', (
+                    PBOC_SOURCE_NAME, PBOC_BALANCE_SOURCE_TYPE, smeta['source_url'], smeta['source_title'],
+                    smeta['published_date'], smeta['parser_notes'], 'xlsx attachment',
+                    json.dumps(codes, ensure_ascii=False), 'success', None, now
+                ))
             conn.commit()
             return {
                 'success': True,
                 'started_at': started,
                 'finished_at': now,
                 'records': len(observations),
+                'years_parsed': len(used_sources),
                 'latest_period': max(o['period'] for o in observations),
-                'source_url': source_meta['source_url'],
+                'source_url': used_sources[0][0]['source_url'] if used_sources else None,
                 'parser_errors': parser_errors,
             }
         except Exception as exc:
