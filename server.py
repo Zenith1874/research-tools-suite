@@ -73,6 +73,7 @@ from services.abdc_astar_research_service import (
     dedup_article_sources,
     run_journal_health_check,
     build_journal_health_payload,
+    llm_classify_articles,
 )
 
 logging.basicConfig(level=logging.INFO,
@@ -1339,6 +1340,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/abdc/astar/health/run':
             threading.Thread(target=run_journal_health_check, daemon=True).start()
             self.send_json({'status': 'started', 'message': '期刊健康检查已启动（223 刊逐个查 OpenAlex，约 1-2 分钟），完成后看 /api/abdc/astar/health'})
+        elif path == '/api/abdc/astar/llm-classify':
+            body = self._read_json_body()
+            if not os.environ.get('ANTHROPIC_API_KEY'):
+                self.send_json({'success': False, 'error': '未设置 ANTHROPIC_API_KEY，无法调用 LLM'}, 400)
+            else:
+                limit = int(body.get('limit', 100))
+                threading.Thread(target=lambda: llm_classify_articles(limit=limit), daemon=True).start()
+                self.send_json({'status': 'started', 'message': f'LLM 重新分类已启动（最多 {limit} 篇 uncertain 文章，从高相关优先）'})
         elif path == '/api/abdc/astar/save':
             self._api_astar_save()
         elif path == '/api/abdc/astar/enrich':

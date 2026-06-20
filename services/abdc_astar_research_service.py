@@ -1852,3 +1852,93 @@ def build_journal_health_payload():
     for r in rows:
         by[r['status']] = by.get(r['status'], 0) + 1
     return {'success': True, 'checked_at': last, 'by_status': by, 'journals': rows}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  LLM 辅助分类（可选，需 ANTHROPIC_API_KEY）：给规则法判不准的文章重判
+# ════════════════════════════════════════════════════════════════════════════
+ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
+LLM_MODEL_DEFAULT = 'claude-haiku-4-5-20251001'
+RESEARCH_PROFILE = (
+    'WFH/混合办公/RTO；AI in organizations 与算法管理(algorithmic management)；'
+    '数字痕迹/文本挖掘/NLP 在组织研究中的应用；员工 burnout/withdrawal/EVLN(exit-voice-loyalty-neglect)；'
+    'JD-R 理论；OB-IS 交叉；远程协作/监控/自主性/工作-家庭边界；平台/零工/物流配送劳动；'
+    'Glassdoor/Indeed/O*NET/BLS/社媒/在线评论等公开数据研究。')
+
+_LLM_SYS = (
+    '你是学术文献分类助手。基于给定文章的标题/摘要/概念，对照用户研究方向做分类与相关性打分。'
+    '只依据给出的证据，不要臆测；没有摘要时基于标题保守判断。'
+    f'用户研究方向：{RESEARCH_PROFILE}\n'
+    '严格只输出一个 JSON 对象，字段：broad_area(字符串，如 "OB / HR"/"Information Systems"/"Marketing"/'
+    '"Operations / Supply Chain"/"Finance"/"Accounting"/"Economics"/"Management / Strategy"/"Other")、'
+    'research_topic(字符串数组)、method_tags(字符串数组)、data_type_tags(字符串数组)、theory_tags(字符串数组)、'
+    'relevance_score(0-100 整数，越贴近用户方向越高)、reason(一句中文说明)。不要输出 JSON 以外的任何内容。')
+
+
+def _anthropic_classify(title, abstract, concepts, model):
+    key = os.environ.get('ANTHROPIC_API_KEY')
+    if not key:
+        raise RuntimeError('未设置 ANTHROPIC_API_KEY')
+    user = (f'标题：{title}\n摘要：{abstract or "(无公开摘要)"}\n'
+            f'OpenAlex概念：{", ".join([c for c in concepts if c])}\n\n只输出 JSON。')
+    body = {'model': model, 'max_tokens': 700, 'system': _LLM_SYS,
+            'messages': [{'role': 'user', 'content': user}]}
+    r = requests.post(ANTHROPIC_URL, headers={
+        'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
+        json=body, timeout=45)
+    r.raise_for_status()
+    text = ''.join(b.get('text', '') for b in r.json().get('content', []))
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    return json.loads(m.group(0)) if m else None
+
+
+def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=True,
+                          model=LLM_MODEL_DEFAULT):
+    """对规则法判不准(默认 uncertain)、且有摘要的文章，用 Claude 重判并打相关性分。
+    按现有 relevance_score 从高到低优先(先救最可能相关的)。需 ANTHROPIC_API_KEY。"""
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        return {'success': False, 'error': '未设置 ANTHROPIC_API_KEY，无法调用 LLM。'}
+    conn = get_db()
+    ensure_astar_tables(conn)
+    where = ['a.is_duplicate=0', "c.classification_method!='llm'"]
+    args = []
+    if only_status:
+        where.append('c.classification_status=?'); args.append(only_status)
+    if require_abstract:
+        where.append("a.abstract IS NOT NULL AND a.abstract!=''")
+    rows = conn.execute(f"""SELECT a.id, a.title, a.abstract, a.concepts_json
+        FROM astar_articles a JOIN astar_article_classifications c ON c.article_id=a.id
+        WHERE {' AND '.join(where)} ORDER BY c.relevance_score DESC LIMIT ?""",
+        args + [int(limit)]).fetchall()
+
+    done = fail = 0
+    now = datetime.now().isoformat(timespec='seconds')
+    for r in rows:
+        try:
+            concepts = [x.get('name') for x in json.loads(r['concepts_json'] or '[]')][:8]
+            res = _anthropic_classify(r['title'], r['abstract'], concepts, model)
+            if not res:
+                fail += 1
+                continue
+            score = float(res.get('relevance_score', 0) or 0)
+            conn.execute("""UPDATE astar_article_classifications SET
+                broad_area=?, research_topic=?, method_tags_json=?, data_type_tags_json=?,
+                theory_tags_json=?, relevance_score=?, is_related_to_my_research=?,
+                classification_method='llm', classification_status='confident',
+                classification_notes=?, classified_at=? WHERE article_id=?""",
+                (res.get('broad_area'), json.dumps(res.get('research_topic', []), ensure_ascii=False),
+                 json.dumps(res.get('method_tags', []), ensure_ascii=False),
+                 json.dumps(res.get('data_type_tags', []), ensure_ascii=False),
+                 json.dumps(res.get('theory_tags', []), ensure_ascii=False),
+                 round(score, 1), 1 if score >= 60 else 0,
+                 'LLM: ' + (res.get('reason', '') or ''), now, r['id']))
+            done += 1
+            if done % 20 == 0:
+                conn.commit()
+        except Exception as e:
+            fail += 1
+            log.debug(f'llm classify 失败 article {r["id"]}: {e}')
+    conn.commit()
+    conn.close()
+    return {'success': True, 'classified': done, 'failed': fail, 'model': model,
+            'candidates_in_scope': len(rows)}

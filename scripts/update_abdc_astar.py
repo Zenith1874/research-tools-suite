@@ -23,7 +23,8 @@ from services.abdc_astar_research_service import (
     ensure_astar_tables, load_astar_journals_from_abdc,
     update_astar_recent_articles, backfill_astar_articles,
     deduplicate_articles, reclassify_all, build_astar_debug_payload,
-    enrich_with_semantic_scholar,
+    enrich_with_semantic_scholar, run_journal_health_check,
+    dedup_article_sources, llm_classify_articles,
 )
 
 
@@ -38,8 +39,12 @@ def main():
     ap.add_argument('--year', type=int, default=None, help='backfill_one_year 指定年份')
     ap.add_argument('--since-year', type=int, default=None, help='backfill_since 起始年（多年深度回填）')
     ap.add_argument('--version', default='latest', help='ABDC 版本，默认最新')
-    ap.add_argument('--classify-only', action='store_true', help='只重跑分类，不抓取')
+    ap.add_argument('--classify-only', action='store_true', help='只重跑规则分类，不抓取')
     ap.add_argument('--enrich-abstracts', action='store_true', help='用 Semantic Scholar 补摘要/引用/学科')
+    ap.add_argument('--health-check', action='store_true', help='跑期刊健康检查(逐刊查 OpenAlex)')
+    ap.add_argument('--dedup-sources', action='store_true', help='来源表去重 + 建唯一索引')
+    ap.add_argument('--llm-classify', action='store_true', help='用 Claude 给 uncertain 文章重判(需 ANTHROPIC_API_KEY)')
+    ap.add_argument('--limit', type=int, default=100, help='--llm-classify 处理篇数上限')
     ap.add_argument('--debug', action='store_true', help='打印 Debug 摘要后退出')
     args = ap.parse_args()
 
@@ -47,6 +52,20 @@ def main():
 
     if args.debug:
         print(json.dumps(build_astar_debug_payload(), ensure_ascii=False, indent=2))
+        return
+
+    if args.health_check:
+        print('期刊健康检查（逐刊查 OpenAlex，约 1-2 分钟）…')
+        print(json.dumps(run_journal_health_check(), ensure_ascii=False, indent=2))
+        return
+
+    if args.dedup_sources:
+        print(json.dumps(dedup_article_sources(), ensure_ascii=False, indent=2))
+        return
+
+    if args.llm_classify:
+        print(f'LLM 重新分类（最多 {args.limit} 篇 uncertain）…')
+        print(json.dumps(llm_classify_articles(limit=args.limit), ensure_ascii=False, indent=2))
         return
 
     if args.enrich_abstracts:
