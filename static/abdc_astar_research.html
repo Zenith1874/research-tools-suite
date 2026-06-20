@@ -471,25 +471,36 @@ async function renderTrends(){
 }
 
 // ── 期刊覆盖 ──
+const HEALTH_LABEL={healthy:['健康','var(--green)'],refetch_needed:['建议重抓','var(--yellow)'],
+  check_issn:['疑刊号错/改名','var(--red)'],source_inactive:['源头无近期','var(--muted)']};
 async function renderJournals(){
   const data=await getJSON('/api/abdc/astar/journals');
+  let health={}; let healthMeta=null;
+  try{ const h=await getJSON('/api/abdc/astar/health'); healthMeta=h;
+    (h.journals||[]).forEach(r=>health[r.journal_id]=r); }catch(e){}
   const c=document.getElementById('content');
-  // 按已抓文章数降序，0 篇的排最后，方便发现真正缺口
   const journals=[...data.journals].sort((a,b)=>(b.articles_in_db||0)-(a.articles_in_db||0));
   JCACHE=journals;
   const zero=journals.filter(j=>!j.articles_in_db).length;
-  c.innerHTML = `<div style="color:var(--muted);font-size:12px;margin:6px 0 12px">ABDC ${data.abdc_version} · 追踪 ${data.astar_journal_count} 刊 · 有 ISSN ${data.with_issn_count} · <span style="color:var(--green)">有文章 ${data.with_articles_count}</span> · 0 篇 ${zero} · <span style="color:var(--muted)">点击任一期刊查看其全部文章</span></div>
-    <table><thead><tr><th>期刊</th><th>学科</th><th>ABDC</th><th>ISSN</th><th>eISSN</th><th>出版商</th><th style="text-align:right">已抓文章</th></tr></thead><tbody>`+
-    journals.map((j,i)=>`<tr style="cursor:pointer" onclick="openJournalIdx(${i})">
+  const hsum=healthMeta&&healthMeta.by_status?Object.entries(healthMeta.by_status).map(([k,v])=>`${(HEALTH_LABEL[k]||[k])[0]} ${v}`).join(' · '):'未运行';
+  c.innerHTML = `<div style="color:var(--muted);font-size:12px;margin:6px 0 10px">ABDC ${data.abdc_version} · 追踪 ${data.astar_journal_count} 刊 · 有 ISSN ${data.with_issn_count} · <span style="color:var(--green)">有文章 ${data.with_articles_count}</span> · 0 篇 ${zero} · 点击期刊查看全部文章</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <button class="pbtn" onclick="runHealth()">🩺 运行健康检查</button>
+      <span style="font-size:11.5px;color:var(--muted)">健康状态：${esc(hsum)}${healthMeta&&healthMeta.checked_at?' · '+esc(healthMeta.checked_at):''}</span></div>
+    <table><thead><tr><th>期刊</th><th>学科</th><th>ABDC</th><th>健康</th><th>ISSN</th><th>eISSN</th><th style="text-align:right">已抓文章</th></tr></thead><tbody>`+
+    journals.map((j,i)=>{
+      const h=health[j.id]; const hl=h?(HEALTH_LABEL[h.status]||[h.status,'var(--dim)']):null;
+      return `<tr style="cursor:pointer" onclick="openJournalIdx(${i})">
       <td style="color:var(--blue)">${esc(j.journal_title)}</td>
       <td style="color:var(--dim)">${esc(j.discipline||'')}</td>
       <td style="color:var(--muted)">${esc(j.abdc_rating||'')}${j.source_table==='prestige_extra'?' ★':''}</td>
+      <td style="color:${hl?hl[1]:'var(--muted)'};font-size:11.5px" title="${h?esc(h.note||''):''}">${hl?hl[0]:'—'}</td>
       <td style="font-family:monospace;color:var(--muted)">${esc(j.issn_print||'—')}</td>
       <td style="font-family:monospace;color:var(--muted)">${esc(j.issn_online||'—')}</td>
-      <td style="color:var(--dim)">${esc(j.publisher||'')}</td>
-      <td style="text-align:right;color:${j.articles_in_db?'var(--green)':'var(--muted)'}">${j.articles_in_db||0}</td></tr>`).join('')+
+      <td style="text-align:right;color:${j.articles_in_db?'var(--green)':'var(--muted)'}">${j.articles_in_db||0}</td></tr>`;}).join('')+
     `</tbody></table>`;
 }
+async function runHealth(){toast('健康检查已启动（223 刊查 OpenAlex，约 1-2 分钟），完成后回此页刷新');await postJSON('/api/abdc/astar/health/run',{});}
 
 // ── 已保存 ──
 async function renderSaved(){

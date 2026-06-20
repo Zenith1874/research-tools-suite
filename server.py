@@ -70,6 +70,9 @@ from services.abdc_astar_research_service import (
     build_prestige_lists_payload,
     ensure_prestige_extra_journals,
     cleanup_journal_doi_pollution,
+    dedup_article_sources,
+    run_journal_health_check,
+    build_journal_health_payload,
 )
 
 logging.basicConfig(level=logging.INFO,
@@ -1287,6 +1290,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/saved': self.send_json(build_saved_articles_payload())
             elif path == '/api/abdc/astar/trends': self._api_astar_trends()
             elif path == '/api/abdc/astar/lists': self.send_json(build_prestige_lists_payload())
+            elif path == '/api/abdc/astar/health': self.send_json(build_journal_health_payload())
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             # Static page routes
             elif path in ('/', ''):         self.send_file(os.path.join(STATIC_DIR, 'index.html'))
@@ -1332,6 +1336,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/abdc/astar/classify':
             threading.Thread(target=reclassify_all, daemon=True).start()
             self.send_json({'status': 'started', 'message': '重新分类已在后台启动'})
+        elif path == '/api/abdc/astar/health/run':
+            threading.Thread(target=run_journal_health_check, daemon=True).start()
+            self.send_json({'status': 'started', 'message': '期刊健康检查已启动（223 刊逐个查 OpenAlex，约 1-2 分钟），完成后看 /api/abdc/astar/health'})
         elif path == '/api/abdc/astar/save':
             self._api_astar_save()
         elif path == '/api/abdc/astar/enrich':
@@ -1663,6 +1670,7 @@ if __name__ == '__main__':
         ensure_prestige_extra_journals()    # 把非 A* 的 FT50/UTD24 刊持久并入追踪集
         load_journal_prestige_lists()       # 重算 in_astar_tracked
         cleanup_journal_doi_pollution()     # 隐藏 JAIS 等被混入的会议论文
+        dedup_article_sources()             # 来源表去重 + 建唯一索引（幂等）
     except Exception as e:
         log.warning(f'prestige lists 载入失败: {e}')
     server = HTTPServer(('0.0.0.0', PORT), Handler)
