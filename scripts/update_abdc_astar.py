@@ -25,6 +25,7 @@ from services.abdc_astar_research_service import (
     deduplicate_articles, reclassify_all, build_astar_debug_payload,
     enrich_with_semantic_scholar, run_journal_health_check,
     dedup_article_sources, llm_classify_articles,
+    export_classification_batch, apply_classification_results,
 )
 
 
@@ -47,6 +48,8 @@ def main():
     ap.add_argument('--limit', type=int, default=100, help='--llm-classify 处理篇数上限')
     ap.add_argument('--max-relevance', type=float, default=None, help='只判规则分<该值的(找漏判，如 35)')
     ap.add_argument('--core-only', action='store_true', help='只扫核心 OB/IS 期刊(漏判最可能藏处)')
+    ap.add_argument('--export-batch', action='store_true', help='导出待判候选到 JSON(供 Claude 会话判定，免 API)')
+    ap.add_argument('--import-results', default=None, help='把分类结果 JSON 文件写回库')
     ap.add_argument('--debug', action='store_true', help='打印 Debug 摘要后退出')
     args = ap.parse_args()
 
@@ -63,6 +66,16 @@ def main():
 
     if args.dedup_sources:
         print(json.dumps(dedup_article_sources(), ensure_ascii=False, indent=2))
+        return
+
+    if args.export_batch:
+        r = export_classification_batch(limit=args.limit, max_relevance=args.max_relevance,
+                                        core_journals_only=args.core_only)
+        print(f"已导出 {r['count']} 条候选 → {r['path']}")
+        return
+
+    if args.import_results:
+        print(json.dumps(apply_classification_results(args.import_results), ensure_ascii=False))
         return
 
     if args.llm_classify:
