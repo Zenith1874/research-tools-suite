@@ -17,7 +17,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang 
 a{color:var(--blue);text-decoration:none}
 a:hover{text-decoration:underline}
 
-.hdr{display:flex;align-items:center;justify-content:space-between;padding:0 22px;height:56px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:100}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:0 22px;height:56px;background:var(--s1);border-bottom:1px solid var(--bd)}
 .hdr-l{display:flex;align-items:center;gap:12px}
 .hdr-title{font-size:15px;font-weight:700}
 .hdr-sub{font-size:10px;color:var(--muted)}
@@ -39,11 +39,19 @@ a:hover{text-decoration:underline}
 .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
 .btn-primary:hover{opacity:.9}
 
-.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto}
+.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto;position:sticky;top:0;z-index:60;background:var(--bg)}
 .tab{padding:11px 16px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
 
+#filterBar{position:sticky;top:43px;z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
+.pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 14px;color:var(--dim);font-size:12.5px}
+.pbtn{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12.5px}
+.pbtn:hover:not(:disabled){border-color:var(--blue);background:var(--ld)}
+.pbtn:disabled{opacity:.4;cursor:not-allowed}
+.loadmore{display:block;width:100%;margin:14px 0 30px;padding:11px;background:var(--s1);border:1px solid var(--bd);color:var(--blue);border-radius:8px;cursor:pointer;font-size:13px}
+.loadmore:hover{background:var(--ld);border-color:var(--blue)}
+.loadmore:disabled{opacity:.5;cursor:default;color:var(--muted)}
 .filters{display:flex;flex-wrap:wrap;gap:8px;padding:14px 22px;align-items:center}
 .filters input,.filters select{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:6px 10px;font-size:12.5px;outline:none}
 .filters input:focus,.filters select:focus{border-color:var(--blue)}
@@ -159,8 +167,10 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
 
 <script>
 const API = '';
-let STATE = { tab:'latest', filters:{}, relatedChip:'all', journalFilter:null };
+let STATE = { tab:'latest', filters:{}, relatedChip:'all', journalFilter:null,
+              offset:0, loaded:[], total:0, pageMode:'scroll', loading:false, relatedDefault:false };
 let JCACHE = [];   // 期刊覆盖列表缓存，供下钻按索引引用，避免行内 onclick 引号冲突
+const PAGE_SIZE = 50;
 
 const RELATED_CHIPS = [
   ['all','All A*'],['related','与我相关'],
@@ -241,30 +251,41 @@ function render(){
   else if(STATE.tab==='debug') renderDebug();
 }
 
-// ── 文章列表（最新 / 与我相关）──
+// ── 文章列表（最新 / 与我相关）：sticky 筛选 + 翻页/下滑 ──
 async function renderArticles(relatedDefault){
+  STATE.relatedDefault=relatedDefault;
   const fb=document.getElementById('filterBar');
   fb.innerHTML = `<div class="filters">
     <input type="text" id="q" placeholder="搜索标题 / 摘要 / 期刊…" value="${esc(STATE.filters.q||'')}">
-    <select id="sort">
+    <select id="sort" onchange="applyFilters()">
       <option value="date_desc">最新优先</option>
       <option value="relevance_desc">相关性优先</option>
       <option value="citations_desc">引用优先</option>
     </select>
     <input type="number" id="minrel" placeholder="最低相关分" style="width:110px" value="${esc(STATE.filters.min_relevance||'')}">
     <button class="btn" onclick="applyFilters()">应用</button>
+    <span style="margin-left:auto;display:inline-flex;gap:5px;align-items:center">
+      <span style="font-size:11px;color:var(--muted)">浏览</span>
+      <button class="chip ${STATE.pageMode==='scroll'?'active':''}" onclick="setPageMode('scroll')">下滑</button>
+      <button class="chip ${STATE.pageMode==='page'?'active':''}" onclick="setPageMode('page')">翻页</button>
+    </span>
     <div class="chip-row" id="chips"></div>
   </div>`;
+  document.getElementById('sort').value = STATE.filters.sort || (relatedDefault?'relevance_desc':'date_desc');
   document.getElementById('chips').innerHTML = RELATED_CHIPS.map(([k,l])=>
     `<div class="chip${STATE.relatedChip===k?' active':''}" onclick="setChip('${k}')">${l}</div>`).join('');
   document.getElementById('q').onkeydown=e=>{if(e.key==='Enter')applyFilters()};
 
-  const p = new URLSearchParams();
-  p.set('limit','100');
-  p.set('sort', document.getElementById('sort').value || (relatedDefault?'relevance_desc':'date_desc'));
+  STATE.offset=0; STATE.loaded=[]; STATE.total=0;
+  await loadArticlePage(false);
+}
+
+function buildArticleParams(){
+  const p=new URLSearchParams();
+  p.set('sort', STATE.filters.sort || (STATE.relatedDefault?'relevance_desc':'date_desc'));
   if(STATE.filters.q) p.set('q',STATE.filters.q);
   if(STATE.filters.min_relevance) p.set('min_relevance',STATE.filters.min_relevance);
-  if(relatedDefault || STATE.relatedChip==='related') p.set('related_only','true');
+  if(STATE.relatedDefault || STATE.relatedChip==='related') p.set('related_only','true');
   const chip=STATE.relatedChip;
   if(chip && chip!=='all' && chip!=='related'){
     if(['AI_in_organizations','remote_work','labor_market'].includes(chip)) p.set('topic',chip);
@@ -273,25 +294,65 @@ async function renderArticles(relatedDefault){
     else if(chip==='utd24') p.set('list','utd24');
     else p.set('broad_area',chip);
   }
-
-  if(STATE.journalFilter && STATE.journalFilter.issns.length){
+  if(STATE.journalFilter && STATE.journalFilter.issns.length)
     p.set('journal_issns', STATE.journalFilter.issns.join(','));
-    p.set('limit','300');
-  }
+  return p;
+}
 
-  const data = await getJSON('/api/abdc/astar/articles?'+p.toString());
+async function loadArticlePage(append){
+  if(STATE.loading) return;
+  STATE.loading=true;
+  const p=buildArticleParams();
+  p.set('limit',PAGE_SIZE); p.set('offset',STATE.offset);
+  let data;
+  try{ data=await getJSON('/api/abdc/astar/articles?'+p.toString()); }
+  catch(e){ STATE.loading=false; document.getElementById('content').innerHTML='<div class="empty"><div class="big">加载失败</div></div>'; return; }
+  STATE.loading=false;
+  if(!data.success){document.getElementById('content').innerHTML='<div class="empty"><div class="big">后端未连接</div></div>';return}
+  STATE.total=data.total;
+  STATE.loaded = append ? STATE.loaded.concat(data.articles) : data.articles;
+  STATE.lastMeta=data.metadata;
+  renderArticleList();
+}
+
+function renderArticleList(){
   const c=document.getElementById('content');
-  if(!data.success){c.innerHTML='<div class="empty"><div class="big">后端未连接</div></div>';return}
+  const total=STATE.total;
   const banner = STATE.journalFilter
-    ? `<div style="display:flex;align-items:center;gap:12px;margin:6px 0 12px;padding:9px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px">
+    ? `<div style="display:flex;align-items:center;gap:12px;margin:6px 0 10px;padding:9px 14px;background:var(--s1);border:1px solid var(--bd);border-radius:8px">
+         <button class="pbtn" style="background:var(--ld);border-color:var(--blue);color:var(--blue)" onclick="clearJournalFilter()">← 返回期刊覆盖</button>
          <span style="font-weight:700;color:var(--yellow)">📓 ${esc(STATE.journalFilter.title)}</span>
-         <span style="color:var(--muted);font-size:12px">${data.total} 篇</span>
-         <a href="#" onclick="clearJournalFilter();return false" style="margin-left:auto;font-size:12px">← 返回期刊覆盖</a></div>`
-    : `<div style="color:var(--muted);font-size:12px;margin:6px 0 12px">共 ${data.total} 篇 · 数据 ${data.metadata.data_mode} · 最近更新 ${esc(data.metadata.last_update||'—')}</div>`;
-  if(!data.articles.length){
-    c.innerHTML=banner+`<div class="empty"><div class="big">暂无文章</div>该筛选下没有结果。</div>`;return;
+         <span style="color:var(--muted);font-size:12px">${total} 篇</span>
+         <span style="margin-left:auto;color:var(--muted);font-size:11px">点上方筛选 chip 可跳出本刊</span></div>` : '';
+  if(total===0){ c.innerHTML=banner+`<div class="empty"><div class="big">暂无文章</div>该筛选下没有结果。</div>`; return; }
+
+  const pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  const page=Math.floor(STATE.offset/PAGE_SIZE)+1;
+  let head, foot='';
+  if(STATE.pageMode==='page'){
+    head=`<div class="pager">
+      <button class="pbtn" onclick="gotoPage(-1)" ${page<=1?'disabled':''}>‹ 上页</button>
+      <span>第 <b>${page}</b> / ${pages} 页 · 共 ${total.toLocaleString()} 篇</span>
+      <button class="pbtn" onclick="gotoPage(1)" ${page>=pages?'disabled':''}>下页 ›</button>
+      <span style="color:var(--muted)">每页 ${PAGE_SIZE}</span></div>`;
+  }else{
+    head=`<div class="pager"><span>已显示 <b>${STATE.loaded.length.toLocaleString()}</b> / 共 ${total.toLocaleString()} 篇</span></div>`;
+    if(STATE.loaded.length<total)
+      foot=`<button class="loadmore" id="loadmoreBtn" onclick="loadMore()">加载更多（下滑也会自动加载）</button>`;
+    else foot=`<div style="text-align:center;color:var(--muted);font-size:12px;margin:14px 0 30px">— 已到底，共 ${total.toLocaleString()} 篇 —</div>`;
   }
-  c.innerHTML = banner + data.articles.map(articleCard).join('');
+  c.innerHTML = banner + head + STATE.loaded.map(articleCard).join('') + foot;
+}
+
+function setPageMode(m){ if(STATE.pageMode===m) return; STATE.pageMode=m; renderArticles(STATE.relatedDefault); }
+function loadMore(){ STATE.offset=STATE.loaded.length; loadArticlePage(true); }
+function gotoPage(delta){
+  const pages=Math.max(1,Math.ceil(STATE.total/PAGE_SIZE));
+  const page=Math.floor(STATE.offset/PAGE_SIZE)+1+delta;
+  if(page<1||page>pages) return;
+  STATE.offset=(page-1)*PAGE_SIZE;
+  loadArticlePage(false);
+  window.scrollTo({top:0,behavior:'smooth'});
 }
 
 function articleCard(a){
@@ -328,10 +389,11 @@ function articleCard(a){
   </div>`;
 }
 
-function setChip(k){STATE.relatedChip=k;render()}
+function setChip(k){STATE.relatedChip=k; STATE.journalFilter=null; render();}
 function applyFilters(){
   STATE.filters.q=document.getElementById('q').value.trim();
   STATE.filters.min_relevance=document.getElementById('minrel').value.trim();
+  const s=document.getElementById('sort'); if(s) STATE.filters.sort=s.value;
   render();
 }
 
@@ -471,6 +533,17 @@ async function exportCsv(){
   const blob=new Blob(['﻿'+csv],{type:'text/csv'});const u=URL.createObjectURL(blob);
   const a=document.createElement('a');a.href=u;a.download='astar_articles.csv';a.click();URL.revokeObjectURL(u);
 }
+
+// 下滑模式：滚到接近底部自动加载下一页
+window.addEventListener('scroll', ()=>{
+  if(STATE.pageMode!=='scroll') return;
+  if(STATE.tab!=='latest' && STATE.tab!=='related') return;
+  if(STATE.loading || !STATE.loaded.length || STATE.loaded.length>=STATE.total) return;
+  if(window.innerHeight + window.scrollY >= document.body.offsetHeight - 700){
+    STATE.offset=STATE.loaded.length;
+    loadArticlePage(true);
+  }
+}, {passive:true});
 
 loadStatus();
 render();
