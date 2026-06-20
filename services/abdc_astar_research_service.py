@@ -1935,6 +1935,77 @@ def _llm_classify_one(title, abstract, concepts, provider, model):
     return _anthropic_classify(title, abstract, concepts, model)
 
 
+def _classification_candidates(conn, limit, only_status='uncertain', require_abstract=True,
+                               max_relevance=None, core_journals_only=False):
+    """选出待重判的候选行（id/title/journal/abstract/concepts/rules_score）。"""
+    where = ['a.is_duplicate=0', "c.classification_method!='llm'"]
+    args = []
+    if only_status:
+        where.append('c.classification_status=?'); args.append(only_status)
+    if require_abstract:
+        where.append("a.abstract IS NOT NULL AND a.abstract!=''")
+    if max_relevance is not None:
+        where.append('c.relevance_score < ?'); args.append(float(max_relevance))
+    if core_journals_only:
+        ph = ','.join(['?'] * len(CORE_JOURNAL_ISSNS))
+        where.append(f'a.journal_issn IN ({ph})'); args += CORE_JOURNAL_ISSNS
+    order = 'a.publication_date DESC' if max_relevance is not None else 'c.relevance_score DESC'
+    return conn.execute(f"""SELECT a.id, a.title, a.journal_title, a.abstract, a.concepts_json,
+        c.relevance_score FROM astar_articles a JOIN astar_article_classifications c ON c.article_id=a.id
+        WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ?""", args + [int(limit)]).fetchall()
+
+
+# ── "通过 Claude 会话判定" 的口子：导出候选 / 导入结果 ────────────────────────
+def export_classification_batch(out_path=None, limit=40, only_status='uncertain',
+                                require_abstract=True, max_relevance=None, core_journals_only=False):
+    """导出一批待分类候选到 JSON，供 Claude 会话人工判定（不花 API 钱）。返回 {path, count}。"""
+    conn = get_db(); ensure_astar_tables(conn)
+    rows = _classification_candidates(conn, limit, only_status, require_abstract,
+                                      max_relevance, core_journals_only)
+    conn.close()
+    cands = [{'id': r['id'], 'title': r['title'], 'journal': r['journal_title'],
+              'rules_score': r['relevance_score'],
+              'concepts': [x.get('name') for x in json.loads(r['concepts_json'] or '[]')][:8],
+              'abstract': (r['abstract'] or '')[:750]} for r in rows]
+    out_path = out_path or os.path.join(_ROOT, 'data', 'classify_batch.json')
+    with open(out_path, 'w', encoding='utf-8') as f:
+        json.dump({'schema': '结果数组每条: {id, broad_area, research_topic[], method_tags[], '
+                   'data_type_tags[], theory_tags[], relevance_score(0-100整数), reason(中文一句)}',
+                   'research_profile': RESEARCH_PROFILE, 'count': len(cands),
+                   'candidates': cands}, f, ensure_ascii=False, indent=1)
+    return {'path': out_path, 'count': len(cands)}
+
+
+def apply_classification_results(results, source='Claude会话'):
+    """把分类结果(list[dict] 或 JSON 文件路径)写回库；每条需 id + 分类字段。返回 {applied}。"""
+    if isinstance(results, str):
+        with open(results, encoding='utf-8') as f:
+            results = json.load(f)
+    if isinstance(results, dict):
+        results = results.get('results') or results.get('candidates') or []
+    conn = get_db(); ensure_astar_tables(conn)
+    now = datetime.now().isoformat(timespec='seconds')
+    applied = 0
+    for res in results:
+        aid = res.get('id')
+        if not aid:
+            continue
+        score = float(res.get('relevance_score', 0) or 0)
+        conn.execute("""UPDATE astar_article_classifications SET broad_area=?, research_topic=?,
+            method_tags_json=?, data_type_tags_json=?, theory_tags_json=?, relevance_score=?,
+            is_related_to_my_research=?, classification_method='llm', classification_status='confident',
+            classification_notes=?, classified_at=? WHERE article_id=?""",
+            (res.get('broad_area'), json.dumps(res.get('research_topic', []), ensure_ascii=False),
+             json.dumps(res.get('method_tags', []), ensure_ascii=False),
+             json.dumps(res.get('data_type_tags', []), ensure_ascii=False),
+             json.dumps(res.get('theory_tags', []), ensure_ascii=False),
+             round(score, 1), 1 if score >= 60 else 0,
+             f'LLM({source}): ' + (res.get('reason', '') or ''), now, aid))
+        applied += 1
+    conn.commit(); conn.close()
+    return {'applied': applied}
+
+
 def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=True,
                           model=None, max_relevance=None, core_journals_only=False):
     """对规则法判不准的文章用 LLM 重判并打相关性分。自动选 provider：
@@ -1948,22 +2019,8 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
         mdl = model
     conn = get_db()
     ensure_astar_tables(conn)
-    where = ['a.is_duplicate=0', "c.classification_method!='llm'"]
-    args = []
-    if only_status:
-        where.append('c.classification_status=?'); args.append(only_status)
-    if require_abstract:
-        where.append("a.abstract IS NOT NULL AND a.abstract!=''")
-    if max_relevance is not None:
-        where.append('c.relevance_score < ?'); args.append(float(max_relevance))
-    if core_journals_only:
-        ph = ','.join(['?'] * len(CORE_JOURNAL_ISSNS))
-        where.append(f'a.journal_issn IN ({ph})'); args += CORE_JOURNAL_ISSNS
-    order = 'a.publication_date DESC' if max_relevance is not None else 'c.relevance_score DESC'
-    rows = conn.execute(f"""SELECT a.id, a.title, a.abstract, a.concepts_json
-        FROM astar_articles a JOIN astar_article_classifications c ON c.article_id=a.id
-        WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ?""",
-        args + [int(limit)]).fetchall()
+    rows = _classification_candidates(conn, limit, only_status, require_abstract,
+                                      max_relevance, core_journals_only)
 
     done = fail = 0
     now = datetime.now().isoformat(timespec='seconds')

@@ -6,6 +6,8 @@
 *.sqlite3
 *.db.gz
 data_snapshot.*
+data/classify_batch.json
+data/classify_results.json
 
 # ── 备份 / 临时 ──
 *.bak
