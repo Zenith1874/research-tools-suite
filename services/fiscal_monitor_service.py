@@ -186,7 +186,43 @@ def build_fiscal_monitor_payload(db_path):
     latest_issue_rows = [r for r in official_issuances if r.get('issue_date', '').startswith(latest_issue_period or '---')]
     latest_issue_amount = sum(r['actual_issue_amount'] for r in latest_issue_rows) if latest_issue_rows else None
     issue_source = latest_issue_rows[0] if latest_issue_rows else None
-    treasury_pressure_cards = [
+    # —— 年初至今国债发行（官方逐笔）+ 按类型拆分；储蓄/香港单列 ——
+    cur_year = str(datetime.now().year)
+    ytd = treasury_issuance.get('current_year_ytd') or {}
+    ytd_amount, ytd_records = ytd.get('actual_issue_amount'), ytd.get('records') or 0
+    type_sums = {}
+    for r in treasury_issuance.get('by_type', []):
+        if str(r.get('year')) == cur_year and r.get('actual_issue_amount'):
+            type_sums[r['bond_type']] = type_sums.get(r['bond_type'], 0) + r['actual_issue_amount']
+    ytd_urls = [r['source_url'] for r in official_issuances if r.get('issue_date', '').startswith(cur_year)]
+    entry = treasury_issuance.get('entry_url')
+    treasury_ytd_cards = [
+        _card(f'{cur_year} 年初至今国债发行（境内逐笔合计）', ytd_amount, '亿元', cur_year,
+              'official' if ytd_amount else 'missing', '财政部债务管理司', entry,
+              '国债业务公告逐笔实际发行额汇总',
+              f'汇总 {cur_year} 年 {ytd_records} 条 actual_issue_amount（境内记账式+贴现+特别，不含储蓄/香港）。',
+              f'sum(actual_issue_amount where year={cur_year} and data_status=official)',
+              source_urls=ytd_urls[:60]),
+    ]
+    for code, label in [('book_entry_interest_bearing', '其中：记账式附息国债'),
+                        ('discount_bond', '其中：贴现国债'),
+                        ('special_treasury_bond', '其中：特别国债')]:
+        amt = type_sums.get(code)
+        treasury_ytd_cards.append(_card(
+            label, amt, '亿元', cur_year, 'official' if amt else 'missing',
+            '财政部债务管理司' if amt else None, entry if amt else None, None,
+            (f'{cur_year} 年 bond_type={code} 实际发行额合计。' if amt else None),
+            (f'sum(actual_issue_amount where year={cur_year} and bond_type={code})' if amt else None),
+            source_urls=ytd_urls[:60] if amt else None))
+    treasury_ytd_cards.append(_card(
+        '储蓄国债（年初至今）', type_sums.get('savings_bond'), '亿元', cur_year,
+        'official' if type_sums.get('savings_bond') else 'missing', '财政部' if type_sums.get('savings_bond') else None,
+        entry if type_sums.get('savings_bond') else None,
+        warning=None if type_sums.get('savings_bond') else '储蓄国债逐笔公告抓取待接入；不并入境内记账式合计。'))
+    treasury_ytd_cards.append(_card(
+        '香港人民币国债（年初至今）', None, '亿元', cur_year, 'missing',
+        warning='香港人民币国债单列，发行公告抓取待接入。'))
+    treasury_pressure_cards = treasury_ytd_cards + [
         _card(
             '国债当月实际发行', latest_issue_amount, '亿元', latest_issue_period,
             'official' if issue_source else 'missing', issue_source.get('source_name') if issue_source else None,
@@ -260,9 +296,12 @@ def build_fiscal_monitor_payload(db_path):
             'tables': {
                 'local_government_debt': local_records,
                 'treasury_monthly_issuance': treasury_issuance.get('monthly', []),
+                'treasury_by_type': treasury_issuance.get('by_type', []),
+                'treasury_maturity_by_year': treasury_issuance.get('by_maturity_year', []),
                 'treasury_issuance_details': _without_raw(treasury_issuance.get('records', []), 120),
             },
-            'warnings': ['国债实际发行已接入；国债还本、付息尚无完整可靠数据源。'],
+            'warnings': ['国债实际发行（境内逐笔）已接入并按类型/年份汇总；储蓄国债、香港人民币国债、国债还本付息尚未接入。',
+                         '国债到期分布仅来自已抓取的逐只国债（2024 起），不等于全部存量国债的完整到期表。'],
         },
         'pboc_monetization_pressure': {
             'title': '央行与货币化压力', 'status': _section_status(monetization_cards),
