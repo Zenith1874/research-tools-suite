@@ -476,6 +476,21 @@ def fetch_binary(url, timeout=40):
         return resp.read(), resp.geturl()
 
 
+def _extract_central_debt_row(lines, label, expected_count, title):
+    pattern = re.compile(rf'^{re.escape(label)}\s+(.+)$')
+    for line in lines:
+        match = pattern.match(line)
+        if not match:
+            continue
+        tokens = match.group(1).split()
+        if len(tokens) != expected_count or not all(re.fullmatch(r'\d+(?:\.\d+)?', token) for token in tokens):
+            raise RuntimeError(
+                f'PDF {label} 行季度数异常({title})：解析到 {len(tokens)}，需要 {expected_count}'
+            )
+        return [float(token) * 10 for token in tokens]
+    raise RuntimeError(f'未从财政部 PDF 解析出 {label} 行: {title}')
+
+
 def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
                                       periods=('2024-03', '2024-06', '2024-09', '2024-12'),
                                       published='2025-11-01',
@@ -491,19 +506,16 @@ def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
     content, final_url = fetch_binary(url)
     reader = PdfReader(io.BytesIO(content))
     text = '\n'.join(page.extract_text() or '' for page in reader.pages)
-    # 债务余额行：Debt 后取连续的 1-4 个数字（季度值）
-    section = re.search(r'中央政府债务余额（季度数据）.*?\bDebt\s+([\d.]+(?:\s+[\d.]+)*)', text, re.S)
-    if not section:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    section_start = next((i for i, line in enumerate(lines)
+                          if line.startswith('Central Government Debt') or '中央政府债务余额（季度数据）' in line), None)
+    if section_start is None:
         raise RuntimeError(f'未从财政部 PDF 解析出中央政府季度债务余额: {title}')
-    debt_nums = [float(x) * 10 for x in section.group(1).split()]
-    tail = text[section.end():]   # 债务余额段之后才有“债券 Bonds”余额行（融资段在页1，不在此 tail）
-    bonds = re.search(r'债券\s*\n?\s*Bonds\s+([\d.]+(?:\s+[\d.]+)*)', tail)
-    if not bonds:
-        raise RuntimeError(f'未从财政部 PDF 解析出中央政府债券余额: {title}')
-    bond_nums = [float(x) * 10 for x in bonds.group(1).split()]
-    if len(debt_nums) < n or len(bond_nums) < n:
-        raise RuntimeError(f'PDF 季度数不足({title})：debt={len(debt_nums)} bond={len(bond_nums)} 需要 {n}')
-    debt_values, bond_values = debt_nums[:n], bond_nums[:n]
+    table_lines = lines[section_start:]
+    debt_values = _extract_central_debt_row(table_lines, 'Debt', n, title)
+    bond_values = _extract_central_debt_row(table_lines, 'Bonds', n, title)
+    if any(bond > debt for debt, bond in zip(debt_values, bond_values)):
+        raise RuntimeError(f'PDF 债券余额大于债务余额，拒绝落库: {title}')
     notes = f'解析财政部官方 PDF“中央政府债务余额（季度数据）”（{title}）；原始单位十亿元，×10 转亿元。'
     records = []
     for period, debt, bond in zip(periods, debt_values, bond_values):
@@ -598,11 +610,24 @@ def update_central_government_debt(db_path):
                 json.dumps(sorted({r['indicator_code'] for r in src_recs}), ensure_ascii=False),
                 'success', None, now
             ))
+        for issue in parse_errors:
+            conn.execute('''INSERT INTO fiscal_debt_sources (
+                source_name,source_type,source_url,source_title,published_date,parser_notes,raw_text,
+                parsed_indicators,status,error,updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(source_url) DO UPDATE SET source_title=excluded.source_title,
+                status=excluded.status,error=excluded.error,updated_at=excluded.updated_at''', (
+                '财政部国库司', 'mof_central_government_debt_sdds', issue['url'], issue['title'],
+                None, '中央政府季度债务余额 PDF 解析失败。', None, '[]', 'error', issue['error'], now
+            ))
         conn.commit()
     latest = max(r['period'] for r in records)
+    latest_record = max(records, key=lambda row: row['period'])
+    source_urls = sorted({r['source_url'] for r in records})
     return {'success': True, 'new_records': inserted, 'updated_records': updated,
             'records': len(records), 'latest_period': latest,
-            'parse_errors': parse_errors, 'source_url': records[0]['source_url']}
+            'parse_errors': parse_errors, 'source_url': latest_record['source_url'],
+            'source_urls': source_urls}
 
 
 def parse_local_debt_page(url):
