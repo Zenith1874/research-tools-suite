@@ -25,6 +25,25 @@ python server.py            # 启动后打开 http://localhost:5001
 ### 环境变量
 - `ASTAR_MAILTO` — OpenAlex / Crossref polite-pool 联系邮箱（建议设为你的真实邮箱；默认占位）。
 - `ASTAR_AUTO=0` — 关闭 A\* 雷达每天一次的后台增量抓取。
+- `FISCAL_AUTO=0` — 关闭政府债务模块每周一次的官方来源检查。
+
+### 政府债务数据更新
+
+```powershell
+# 更新所有已接入的财政部和央行来源
+Invoke-RestMethod -Method Post http://127.0.0.1:5001/api/fiscal-debt/update
+
+# 只更新一个模块
+Invoke-RestMethod -Method Post -ContentType application/json `
+  -Body '{"module_code":"local_government_debt"}' `
+  http://127.0.0.1:5001/api/fiscal-debt/update
+
+# 验证来源、覆盖和更新日志
+python scripts/verify_fiscal_debt.py
+```
+
+财政债务调度器默认每 168 小时检查一次已接入来源。抓取失败会写入
+`fiscal_debt_update_logs`，不会清空或用假数据覆盖旧 observation。
 
 ## 数据说明
 

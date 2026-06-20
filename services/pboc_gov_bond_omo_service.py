@@ -188,8 +188,6 @@ def update_pboc_gov_bond_omo(db_path):
     with connect(db_path) as conn:
         ensure_pboc_gov_bond_omo_tables(conn)
         now = datetime.now().isoformat()
-        conn.execute('DELETE FROM pboc_gov_bond_omo_observations')
-        conn.execute('DELETE FROM fiscal_debt_sources WHERE source_type=?', (PBOC_OMO_SOURCE_TYPE,))
         for item in links:
             try:
                 rec = parse_omo_page(item['url'])
@@ -206,6 +204,21 @@ def update_pboc_gov_bond_omo(db_path):
                     PBOC_SOURCE_NAME, PBOC_OMO_SOURCE_TYPE, item['url'], item.get('title'),
                     None, '解析公开市场国债买卖业务公告失败。', '', '[]', 'error', str(exc), now
                 ))
+
+        if not parsed:
+            conn.rollback()
+            return {
+                'success': False,
+                'records': 0,
+                'latest_period': None,
+                'parser_errors': parser_errors,
+                'error': '本次未解析出任何公开市场国债买卖公告；已保留旧数据。',
+            }
+
+        parsed_periods = {rec['period'] for rec in parsed}
+        for row in conn.execute('SELECT * FROM pboc_gov_bond_omo_observations ORDER BY period').fetchall():
+            if row['period'] not in parsed_periods:
+                parsed.append(dict(row))
 
         cumulative = 0.0
         for rec in sorted(parsed, key=lambda r: r['period']):

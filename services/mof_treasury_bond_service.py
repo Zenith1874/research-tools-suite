@@ -404,11 +404,23 @@ def update_mof_treasury_bonds(db_path, start_year=2024, max_pages=80):
                 continue
         retried_items.append((item, rec, error))
     parsed_items = retried_items
+    if not any(rec is not None for _, rec, error in parsed_items if not error):
+        return {
+            'success': False,
+            'discovered_links': len(links),
+            'parsed_records': 0,
+            'actual_records': 0,
+            'planned_only_records': 0,
+            'skipped_records': 0,
+            'parser_errors': [
+                {'source_url': item.get('source_url'), 'source_title': item.get('source_title'), 'error': error}
+                for item, _, error in parsed_items if error
+            ][:20],
+            'error': '本次未解析出财政部国债发行记录；已保留旧数据。',
+        }
     with connect(db_path) as conn:
         ensure_mof_treasury_bond_tables(conn)
         now = datetime.now().isoformat()
-        conn.execute('DELETE FROM mof_treasury_bond_issuances')
-        conn.execute('DELETE FROM fiscal_debt_sources WHERE source_type=?', (SOURCE_TYPE,))
         for item, rec, error in parsed_items:
             try:
                 if error:
@@ -476,7 +488,7 @@ def update_mof_treasury_bonds(db_path, start_year=2024, max_pages=80):
         ) VALUES (?,?,?,?,?,?)''', (started, datetime.now().isoformat(), 1 if not errors else 0, len(links), len(records), json.dumps(errors, ensure_ascii=False)))
         conn.commit()
     return {
-        'success': not errors,
+        'success': bool(records),
         'discovered_links': len(links),
         'parsed_records': len(records),
         'actual_records': sum(1 for r in records if r['actual_issue_amount'] is not None),
