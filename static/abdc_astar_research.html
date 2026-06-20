@@ -12,6 +12,7 @@
   --red:#ff4d6a;--blue:#4f8fff;--ld:rgba(79,143,255,.12);
   --yellow:#f5a623;--purple:#a78bfa;--orange:#fb923c;
   --text:#e2e8f0;--dim:#94a3b8;--muted:#64748b;
+  --tabs-height:43px;  /* sticky 偏移单一来源：filterBar 贴在 tabs 之下 */
 }
 body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;min-height:100vh;overflow-x:hidden}
 a{color:var(--blue);text-decoration:none}
@@ -44,7 +45,7 @@ a:hover{text-decoration:underline}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
 
-#filterBar{position:sticky;top:43px;z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
+#filterBar{position:sticky;top:var(--tabs-height);z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
 .pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 14px;color:var(--dim);font-size:12.5px}
 .pbtn{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12.5px}
 .pbtn:hover:not(:disabled){border-color:var(--blue);background:var(--ld)}
@@ -306,9 +307,16 @@ async function loadArticlePage(append){
   p.set('limit',PAGE_SIZE); p.set('offset',STATE.offset);
   let data;
   try{ data=await getJSON('/api/abdc/astar/articles?'+p.toString()); }
-  catch(e){ STATE.loading=false; document.getElementById('content').innerHTML='<div class="empty"><div class="big">加载失败</div></div>'; return; }
+  catch(e){ STATE.loading=false;
+    if(append) toast('加载更多失败，请重试');  // 追加模式不清空已加载列表
+    else document.getElementById('content').innerHTML='<div class="empty"><div class="big">加载失败</div></div>';
+    return; }
   STATE.loading=false;
-  if(!data.success){document.getElementById('content').innerHTML='<div class="empty"><div class="big">后端未连接</div></div>';return}
+  if(!data.success){
+    if(append) toast('后端未连接');
+    else document.getElementById('content').innerHTML='<div class="empty"><div class="big">后端未连接</div></div>';
+    return;
+  }
   STATE.total=data.total;
   STATE.loaded = append ? STATE.loaded.concat(data.articles) : data.articles;
   STATE.lastMeta=data.metadata;
@@ -345,8 +353,9 @@ function renderArticleList(){
 }
 
 function setPageMode(m){ if(STATE.pageMode===m) return; STATE.pageMode=m; renderArticles(STATE.relatedDefault); }
-function loadMore(){ STATE.offset=STATE.loaded.length; loadArticlePage(true); }
+function loadMore(){ if(STATE.loading) return; STATE.offset=STATE.loaded.length; loadArticlePage(true); }
 function gotoPage(delta){
+  if(STATE.loading) return;   // 加载中先拦截，避免改了 offset 又被丢弃导致页码/数据错位
   const pages=Math.max(1,Math.ceil(STATE.total/PAGE_SIZE));
   const page=Math.floor(STATE.offset/PAGE_SIZE)+1+delta;
   if(page<1||page>pages) return;
@@ -545,15 +554,21 @@ async function exportCsv(){
   const a=document.createElement('a');a.href=u;a.download='astar_articles.csv';a.click();URL.revokeObjectURL(u);
 }
 
-// 下滑模式：滚到接近底部自动加载下一页
+// 下滑模式：滚到接近底部自动加载下一页（用 rAF 节流，避免快速滚动时每帧都检查/触发）
+let _scrollScheduled=false;
 window.addEventListener('scroll', ()=>{
-  if(STATE.pageMode!=='scroll') return;
-  if(STATE.tab!=='latest' && STATE.tab!=='related') return;
-  if(STATE.loading || !STATE.loaded.length || STATE.loaded.length>=STATE.total) return;
-  if(window.innerHeight + window.scrollY >= document.body.offsetHeight - 700){
-    STATE.offset=STATE.loaded.length;
-    loadArticlePage(true);
-  }
+  if(_scrollScheduled) return;
+  _scrollScheduled=true;
+  requestAnimationFrame(()=>{
+    _scrollScheduled=false;
+    if(STATE.pageMode!=='scroll') return;
+    if(STATE.tab!=='latest' && STATE.tab!=='related') return;
+    if(STATE.loading || !STATE.loaded.length || STATE.loaded.length>=STATE.total) return;
+    if(window.innerHeight + window.scrollY >= document.body.offsetHeight - 700){
+      STATE.offset=STATE.loaded.length;
+      loadArticlePage(true);
+    }
+  });
 }, {passive:true});
 
 loadStatus();
