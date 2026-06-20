@@ -408,10 +408,6 @@ def update_pboc_buyout_reverse_repo(db_path):
             announcements = discover_announcements()
         except Exception as exc:
             parser_errors.append({'source_url': ENTRY_URL, 'error': str(exc)})
-        conn.execute('DELETE FROM pboc_buyout_reverse_repo_announcements')
-        conn.execute('DELETE FROM pboc_buyout_reverse_repo_operations')
-        conn.execute('DELETE FROM pboc_buyout_reverse_repo_monthly_stock')
-        conn.execute('DELETE FROM fiscal_debt_sources WHERE source_type=?', (SOURCE_TYPE,))
         for ann in announcements:
             try:
                 ops, detail = parse_operation_page(ann)
@@ -424,6 +420,15 @@ def update_pboc_buyout_reverse_repo(db_path):
                     'raw_text': '',
                     'parser_notes': '公告归档或解析失败。',
                 }, status='error', error=str(exc))
+        if not announcements or not parsed:
+            conn.rollback()
+            return {
+                'success': False,
+                'announcement_records': len(announcements),
+                'operation_records': 0,
+                'parser_errors': parser_errors,
+                'error': '本次未解析出完整买断式逆回购操作；已保留旧数据。',
+            }
         for op in parsed:
             conn.execute('''INSERT INTO pboc_buyout_reverse_repo_operations (
                 operation_id,operation_date,buy_date,buy_time,maturity_date,maturity_date_status,amount,

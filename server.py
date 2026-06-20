@@ -8,7 +8,7 @@
 import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys
 import html as html_lib
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, urljoin, quote
 import urllib.request
 from services.financial_data_service import (
@@ -48,6 +48,12 @@ from services.mof_treasury_bond_service import (
     build_mof_treasury_bond_payload,
     build_mof_treasury_bond_debug,
     update_mof_treasury_bonds,
+)
+from services.fiscal_monitor_service import (
+    build_fiscal_monitor_payload,
+    build_fiscal_monitor_debug,
+    run_fiscal_module_update,
+    run_all_fiscal_updates,
 )
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
@@ -1322,6 +1328,10 @@ class Handler(BaseHTTPRequestHandler):
             self._api_financial_update()
         elif path == '/api/fiscal-debt/update':
             self._api_fiscal_debt_update()
+        elif path == '/api/fiscal-debt/local-government-debt/update':
+            self.send_json(run_fiscal_module_update(DB_PATH, 'local_government_debt'))
+        elif path == '/api/fiscal-debt/central-government-debt/update':
+            self.send_json(run_fiscal_module_update(DB_PATH, 'central_government_debt'))
         elif path == '/api/fiscal-debt/pboc-balance-sheet/update':
             self._api_pboc_balance_sheet_update()
         elif path == '/api/fiscal-debt/pboc-gov-bond-omo/update':
@@ -1399,123 +1409,42 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(build_debug_payload(DB_PATH))
 
     def _api_fiscal_debt_data(self):
-        payload = build_fiscal_debt_payload(DB_PATH)
-        balance = build_pboc_balance_sheet_payload(DB_PATH)
-        omo = build_pboc_gov_bond_omo_payload(DB_PATH)
-        buyout_repo = build_pboc_buyout_reverse_repo_payload(DB_PATH)
-        treasury_bonds = build_mof_treasury_bond_payload(DB_PATH)
-        scenario = {
-            'data_status': 'scenario' if payload.get('projection_scenarios', {}).get('records') else 'missing',
-            'records': payload.get('projection_scenarios', {}).get('records', []),
-            'warnings': ['情景推算必须由用户显式运行，不进入 official observation。'],
-        }
-        sections = {
-            'central_government_debt': treasury_bonds,
-            'local_government_debt': payload.get('local_government_debt', {}),
-            'urban_investment_bonds': payload.get('lgfv_debt', {}),
-            'fiscal_gap': payload.get('fiscal_gap', {}),
-            'pboc_balance_sheet': balance,
-            'pboc_gov_bond_omo': omo,
-            'pboc_buyout_reverse_repo': buyout_repo,
-            'scenario_projection': scenario,
-            'maturity_projection': payload.get('maturity_projection', {}),
-        }
-        coverage = {
-            'local_government_debt': {
-                'records': len(payload.get('local_government_debt', {}).get('records', [])),
-                'latest_period': payload.get('local_government_debt', {}).get('latest_period'),
-            },
-            'pboc_balance_sheet': balance.get('coverage'),
-            'pboc_gov_bond_omo': omo.get('coverage'),
-            'pboc_buyout_reverse_repo': buyout_repo.get('coverage'),
-            'mof_treasury_bonds': treasury_bonds.get('coverage'),
-        }
-        warnings = []
-        for section in sections.values():
-            warnings.extend(section.get('warnings') or [])
-        payload.update({
-            'sections': sections,
-            'coverage': coverage,
-            'warnings': warnings,
-            'pboc_balance_sheet': balance,
-            'pboc_gov_bond_omo': omo,
-            'pboc_buyout_reverse_repo': buyout_repo,
-            'mof_treasury_bonds': treasury_bonds,
-            'scenario_projection': scenario,
-        })
-        self.send_json(payload)
+        self.send_json(build_fiscal_monitor_payload(DB_PATH))
 
     def _api_fiscal_debt_debug(self):
-        debug = build_fiscal_debt_debug_payload(DB_PATH)
-        with get_db() as conn:
-            balance_debug = build_pboc_balance_sheet_debug(conn)
-            omo_debug = build_pboc_gov_bond_omo_debug(conn)
-            buyout_repo_debug = build_pboc_buyout_reverse_repo_debug(conn)
-            treasury_bonds_debug = build_mof_treasury_bond_debug(conn)
-            sources = [dict(r) for r in conn.execute(
-                'SELECT * FROM fiscal_debt_sources ORDER BY updated_at DESC LIMIT 20'
-            ).fetchall()]
-            recent_balance = [dict(r) for r in conn.execute(
-                'SELECT * FROM pboc_balance_sheet_observations ORDER BY updated_at DESC, period DESC LIMIT 20'
-            ).fetchall()]
-            recent_omo = [dict(r) for r in conn.execute(
-                'SELECT * FROM pboc_gov_bond_omo_observations ORDER BY updated_at DESC, period DESC LIMIT 20'
-            ).fetchall()]
-            recent_buyout_announcements = [dict(r) for r in conn.execute(
-                'SELECT * FROM pboc_buyout_reverse_repo_announcements ORDER BY list_page_no, list_order LIMIT 40'
-            ).fetchall()]
-            recent_buyout_ops = [dict(r) for r in conn.execute(
-                'SELECT * FROM pboc_buyout_reverse_repo_operations ORDER BY operation_date DESC, amount DESC LIMIT 40'
-            ).fetchall()]
-            recent_buyout_stock = [dict(r) for r in conn.execute(
-                'SELECT * FROM pboc_buyout_reverse_repo_monthly_stock ORDER BY period DESC LIMIT 30'
-            ).fetchall()]
-            recent_treasury_bonds = [dict(r) for r in conn.execute(
-                'SELECT * FROM mof_treasury_bond_issuances ORDER BY issue_date DESC, published_date DESC LIMIT 50'
-            ).fetchall()]
-        debug.setdefault('modules', {})
-        debug['modules']['pboc_balance_sheet'] = balance_debug
-        debug['modules']['pboc_gov_bond_omo'] = omo_debug
-        debug['modules']['pboc_buyout_reverse_repo'] = buyout_repo_debug
-        debug['modules']['mof_treasury_bonds'] = treasury_bonds_debug
-        debug['recent_source_records'] = sources
-        debug['recent_observations'] = {
-            'pboc_balance_sheet': recent_balance,
-            'pboc_gov_bond_omo': recent_omo,
-            'pboc_buyout_reverse_repo_announcements': recent_buyout_announcements,
-            'pboc_buyout_reverse_repo_operations': recent_buyout_ops,
-            'pboc_buyout_reverse_repo_monthly_stock': recent_buyout_stock,
-            'mof_treasury_bonds': recent_treasury_bonds,
-        }
-        debug['parser_errors'] = [s for s in sources if s.get('status') == 'error']
-        self.send_json(debug)
+        self.send_json(build_fiscal_monitor_debug(DB_PATH))
 
     def _api_pboc_balance_sheet(self):
         self.send_json(build_pboc_balance_sheet_payload(DB_PATH))
 
     def _api_pboc_balance_sheet_update(self):
-        self.send_json(update_pboc_balance_sheet(DB_PATH))
+        self.send_json(run_fiscal_module_update(DB_PATH, 'pboc_balance_sheet'))
 
     def _api_pboc_gov_bond_omo(self):
         self.send_json(build_pboc_gov_bond_omo_payload(DB_PATH))
 
     def _api_pboc_gov_bond_omo_update(self):
-        self.send_json(update_pboc_gov_bond_omo(DB_PATH))
+        self.send_json(run_fiscal_module_update(DB_PATH, 'pboc_gov_bond_omo'))
 
     def _api_pboc_buyout_reverse_repo(self):
         self.send_json(build_pboc_buyout_reverse_repo_payload(DB_PATH))
 
     def _api_pboc_buyout_reverse_repo_update(self):
-        self.send_json(update_pboc_buyout_reverse_repo(DB_PATH))
+        self.send_json(run_fiscal_module_update(DB_PATH, 'pboc_buyout_reverse_repo'))
 
     def _api_mof_treasury_bonds(self):
         self.send_json(build_mof_treasury_bond_payload(DB_PATH))
 
     def _api_mof_treasury_bonds_update(self):
-        self.send_json(update_mof_treasury_bonds(DB_PATH))
+        self.send_json(run_fiscal_module_update(DB_PATH, 'treasury_issuance'))
 
     def _api_fiscal_debt_update(self):
-        self.send_json(update_fiscal_debt(DB_PATH))
+        body = self._read_json_body()
+        module_code = body.get('module_code')
+        if module_code:
+            self.send_json(run_fiscal_module_update(DB_PATH, module_code))
+        else:
+            self.send_json(run_all_fiscal_updates(DB_PATH))
 
     def _api_fiscal_debt_projection(self):
         self.send_json(build_projection_payload(DB_PATH))
@@ -1525,9 +1454,9 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length') or 0)
             body = self.rfile.read(length).decode('utf-8') if length else '{}'
             payload = json.loads(body or '{}')
-        except Exception:
-            payload = {}
-        self.send_json(run_projection(DB_PATH, payload))
+            self.send_json(run_projection(DB_PATH, payload))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self.send_json({'success': False, 'data_status': 'scenario', 'error': str(exc)}, 400)
 
     def _api_status(self):
         with get_db() as conn:
@@ -1644,6 +1573,19 @@ def astar_scheduler_thread(interval_hours=24):
             log.warning(f'A* 增量抓取失败（稍后重试）: {e}')
         time.sleep(interval_hours * 3600)
 
+
+def fiscal_scheduler_thread(interval_hours=168):
+    """每周检查已接入的财政债务和央行相关官方来源；失败只写日志，不清空旧数据。"""
+    log.info(f'财政债务监控调度器启动，每 {interval_hours}h 检查官方来源')
+    time.sleep(1800)
+    while True:
+        try:
+            result = run_all_fiscal_updates(DB_PATH)
+            log.info(f"财政债务更新完成：status={result.get('status')}")
+        except Exception as e:
+            log.warning(f'财政债务更新失败（旧数据保留）: {e}')
+        time.sleep(interval_hours * 3600)
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     print('''
@@ -1676,6 +1618,8 @@ if __name__ == '__main__':
     threading.Thread(target=scheduler_thread, daemon=True).start()
     if os.environ.get('ASTAR_AUTO', '1') != '0':
         threading.Thread(target=astar_scheduler_thread, daemon=True).start()
+    if os.environ.get('FISCAL_AUTO', '1') != '0':
+        threading.Thread(target=fiscal_scheduler_thread, daemon=True).start()
     try:
         load_journal_prestige_lists()       # 填充 FT50 / UTD24 清单（轻量）
         ensure_prestige_extra_journals()    # 把非 A* 的 FT50/UTD24 刊持久并入追踪集
@@ -1684,7 +1628,7 @@ if __name__ == '__main__':
         dedup_article_sources()             # 来源表去重 + 建唯一索引（幂等）
     except Exception as e:
         log.warning(f'prestige lists 载入失败: {e}')
-    server = HTTPServer(('0.0.0.0', PORT), Handler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
     log.info(f'服务启动 → http://localhost:{PORT}')
     try:
         server.serve_forever()
