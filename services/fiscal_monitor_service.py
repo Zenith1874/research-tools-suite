@@ -349,7 +349,7 @@ def run_fiscal_module_update(db_path, module_code):
             module_code,source_name,source_type,source_url,started_at,finished_at,status,http_status,
             success,records_inserted,records_updated,new_records,updated_records,error_message,warnings
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
-            module_code, cfg['source_name'], cfg['source_type'], cfg['source_url'], started, finished,
+            module_code, cfg['source_name'], cfg['source_type'], result.get('source_url') or cfg['source_url'], started, finished,
             status, http_status, int(success), inserted, updated, inserted, updated, error_message,
             json.dumps(issues, ensure_ascii=False),
         ))

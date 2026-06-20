@@ -529,6 +529,19 @@ def build_pboc_buyout_reverse_repo_payload(db_path):
             'operations': _coverage(conn, 'pboc_buyout_reverse_repo_operations'),
             'monthly_stock': _coverage(conn, 'pboc_buyout_reverse_repo_monthly_stock'),
         }
+    for row in stocks:
+        raw_urls = row.get('source_url')
+        try:
+            parsed_urls = json.loads(raw_urls) if raw_urls else []
+        except (TypeError, json.JSONDecodeError):
+            parsed_urls = [raw_urls] if raw_urls else []
+        if isinstance(parsed_urls, str):
+            parsed_urls = [parsed_urls]
+        source_urls = list(dict.fromkeys(
+            url for url in parsed_urls if isinstance(url, str) and url.startswith('http')
+        ))
+        row['source_urls'] = source_urls
+        row['source_url'] = source_urls[0] if source_urls else None
     today = datetime.now().date()
     current_period = datetime.now().strftime('%Y-%m')
     completed_stocks = [
