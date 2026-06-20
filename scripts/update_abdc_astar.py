@@ -43,8 +43,10 @@ def main():
     ap.add_argument('--enrich-abstracts', action='store_true', help='用 Semantic Scholar 补摘要/引用/学科')
     ap.add_argument('--health-check', action='store_true', help='跑期刊健康检查(逐刊查 OpenAlex)')
     ap.add_argument('--dedup-sources', action='store_true', help='来源表去重 + 建唯一索引')
-    ap.add_argument('--llm-classify', action='store_true', help='用 Claude 给 uncertain 文章重判(需 ANTHROPIC_API_KEY)')
+    ap.add_argument('--llm-classify', action='store_true', help='用 LLM 重判(自动选 DeepSeek/Claude，需对应 API key)')
     ap.add_argument('--limit', type=int, default=100, help='--llm-classify 处理篇数上限')
+    ap.add_argument('--max-relevance', type=float, default=None, help='只判规则分<该值的(找漏判，如 35)')
+    ap.add_argument('--core-only', action='store_true', help='只扫核心 OB/IS 期刊(漏判最可能藏处)')
     ap.add_argument('--debug', action='store_true', help='打印 Debug 摘要后退出')
     args = ap.parse_args()
 
@@ -64,8 +66,10 @@ def main():
         return
 
     if args.llm_classify:
-        print(f'LLM 重新分类（最多 {args.limit} 篇 uncertain）…')
-        print(json.dumps(llm_classify_articles(limit=args.limit), ensure_ascii=False, indent=2))
+        print(f'LLM 重新分类（最多 {args.limit} 篇）…')
+        print(json.dumps(llm_classify_articles(limit=args.limit, max_relevance=args.max_relevance,
+                                               core_journals_only=args.core_only),
+                         ensure_ascii=False, indent=2))
         return
 
     if args.enrich_abstracts:
