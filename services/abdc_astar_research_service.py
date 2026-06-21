@@ -54,6 +54,8 @@ FOR_DISCIPLINE = {
     '4609': ('Information Systems', 'Information Systems'),
     '4602': ('Artificial Intelligence', 'Information Systems'),
     '3505 ': ('Human Resources & Industrial Relations', 'OB / HR'),
+    '4801': ('Law', 'Law'),
+    '4905': ('Statistics & Probability', 'Statistics / Methods'),
 }
 # IS 期刊在 ABDC 里有时 FoR=46xx，有时仍在 35xx；用期刊名兜底（见下）
 IS_JOURNAL_HINTS = [
@@ -848,8 +850,9 @@ def classify_article(article):
     # broad_area：先按期刊学科，再用关键词增强
     area = article.get('_journal_discipline_area') or 'Other'
     area_hits = _match_tags(text, BROAD_AREA_KEYWORDS)
-    if area_hits:
-        # 若关键词明确指向某领域，优先用关键词命中（取第一个）
+    # 关键词只在期刊学科本身模糊时用于细化；单一学科期刊（法学/统计/经济/金融/会计）
+    # 不因零星商科关键词被改写（如 Biometrika 论文出现 "performance" 不应变 Management）。
+    if area_hits and area in ('Other', 'Management / Strategy'):
         area = area_hits[0]
 
     # geo / sample context（轻量）
@@ -1169,7 +1172,12 @@ def _area_from_discipline(disc):
         'Applied Economics': 'Economics', 'Econometrics': 'Economics',
         'Economic Theory': 'Economics', 'Information Systems': 'Information Systems',
     }
-    return rev.get(disc, 'Management / Strategy')
+    rev.update({
+        'Tourism': 'Management / Strategy', 'Commercial Services': 'Management / Strategy',
+        'Other Commerce/Management': 'Management / Strategy', 'Business Systems in Context': 'Management / Strategy',
+        'Law': 'Law', 'Statistics & Probability': 'Statistics / Methods',
+    })
+    return rev.get(disc, 'Other')
 
 
 def update_astar_recent_articles(days=30, version='latest'):
@@ -1267,9 +1275,16 @@ def _journal_area_for_issn(conn, issn):
     if not issn:
         return 'Other'
     r = conn.execute(
-        'SELECT discipline FROM abdc_astar_journals WHERE issn_print=? OR issn_online=? LIMIT 1',
+        'SELECT discipline, field_of_research FROM abdc_astar_journals WHERE issn_print=? OR issn_online=? LIMIT 1',
         (issn, issn)).fetchone()
-    return _area_from_discipline(r['discipline']) if r else 'Other'
+    if not r:
+        return 'Other'
+    # FoR 码优先（最精确：法学 4801 / 统计 4905 等 discipline='Other' 的刊靠它定位），
+    # 其次按 discipline 名称，最后 Other。
+    foc = (r['field_of_research'] or '').strip()
+    if foc in FOR_DISCIPLINE:
+        return FOR_DISCIPLINE[foc][1]
+    return _area_from_discipline(r['discipline'])
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1883,7 +1898,8 @@ _LLM_SYS = (
     '只依据给出的证据，不要臆测；没有摘要时基于标题保守判断。'
     f'用户研究方向：{RESEARCH_PROFILE}\n'
     '严格只输出一个 JSON 对象，字段：broad_area(字符串，如 "OB / HR"/"Information Systems"/"Marketing"/'
-    '"Operations / Supply Chain"/"Finance"/"Accounting"/"Economics"/"Management / Strategy"/"Other")、'
+    '"Operations / Supply Chain"/"Finance"/"Accounting"/"Economics"/"Law"/"Statistics / Methods"/'
+    '"Management / Strategy"/"Other")、'
     'research_topic(字符串数组)、method_tags(字符串数组)、data_type_tags(字符串数组)、theory_tags(字符串数组)、'
     'relevance_score(0-100 整数，越贴近用户方向越高)、reason(一句中文说明)。不要输出 JSON 以外的任何内容。')
 
