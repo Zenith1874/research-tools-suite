@@ -48,7 +48,7 @@ MODULE_UPDATES = {
     'treasury_issuance': {
         'source_name': '财政部债务管理司', 'source_type': 'mof_treasury_bond',
         'source_url': 'https://zwgls.mof.gov.cn/ywgg/',
-        'update': lambda db_path: update_mof_treasury_bonds(db_path, start_year=2024, max_pages=30),
+        'update': lambda db_path: update_mof_treasury_bonds(db_path, start_year=2024, max_pages=3),
     },
     'pboc_balance_sheet': {
         'source_name': '中国人民银行', 'source_type': 'pboc_balance_sheet',
@@ -190,6 +190,8 @@ def build_fiscal_monitor_payload(db_path):
     cur_year = str(datetime.now().year)
     ytd = treasury_issuance.get('current_year_ytd') or {}
     ytd_amount, ytd_records = ytd.get('actual_issue_amount'), ytd.get('records') or 0
+    current_year_summary = treasury_issuance.get('current_year_summary') or {}
+    q1_reconciliation = treasury_issuance.get('q1_reconciliation') or {}
     type_sums = {}
     for r in treasury_issuance.get('by_type', []):
         if str(r.get('year')) == cur_year and r.get('actual_issue_amount'):
@@ -197,13 +199,33 @@ def build_fiscal_monitor_payload(db_path):
     ytd_urls = [r['source_url'] for r in official_issuances if r.get('issue_date', '').startswith(cur_year)]
     entry = treasury_issuance.get('entry_url')
     treasury_ytd_cards = [
-        _card(f'{cur_year} 年初至今国债发行（境内逐笔合计）', ytd_amount, '亿元', cur_year,
+        _card(f'{cur_year} 年初至今国债发行（逐笔 actual）', ytd_amount, '亿元',
+              current_year_summary.get('latest_result_published_date') or cur_year,
               'official' if ytd_amount else 'missing', '财政部债务管理司', entry,
               '国债业务公告逐笔实际发行额汇总',
-              f'汇总 {cur_year} 年 {ytd_records} 条 actual_issue_amount（境内记账式+贴现+特别，不含储蓄/香港）。',
+              f'截至最新结果公告发布日期 {current_year_summary.get("latest_result_published_date") or "未知"}，汇总 {cur_year} 年 {ytd_records} 条 actual_issue_amount；不把 planned_only 当 actual。',
               f'sum(actual_issue_amount where year={cur_year} and data_status=official)',
               source_urls=ytd_urls[:60]),
+        _card(f'{cur_year} 尚无结果公告的计划/额度', current_year_summary.get('planned_after_latest_result_amount'), '亿元',
+              current_year_summary.get('latest_result_published_date') or cur_year,
+              'derived' if current_year_summary.get('planned_after_latest_result_amount') else 'missing',
+              '财政部债务管理司' if current_year_summary.get('planned_after_latest_result_amount') else None,
+              entry if current_year_summary.get('planned_after_latest_result_amount') else None,
+              '已发现计划公告但尚未解析到对应结果公告的金额',
+              '仅提示后续待核验，不计入年初至今 actual 发行额。',
+              f'sum(planned_issue_amount where year={cur_year} and data_status=planned_only and no later result announcement has the same bond_name)'),
     ]
+    if q1_reconciliation:
+        treasury_ytd_cards += [
+            _card('财政部官方 2026Q1 国债发行汇总', q1_reconciliation.get('official_total_issue_amount'), '亿元',
+                  '2026Q1', 'official', '财政部新闻办公室', q1_reconciliation.get('source_url'),
+                  q1_reconciliation.get('source_title'), q1_reconciliation.get('parser_notes')),
+            _card('2026Q1 官方汇总 - 逐笔 actual 差额', q1_reconciliation.get('difference_total_minus_detail'), '亿元',
+                  '2026Q1', 'derived', '财政部新闻办公室 + 财政部债务管理司', q1_reconciliation.get('source_url'),
+                  'Q1 官方总发行额与逐笔国债业务公告 actual 对账',
+                  '该差额主要对应储蓄国债等未进入逐笔 actual 主表的口径；用于提示，不自动并入逐笔 actual YTD。',
+                  'official_total_issue_amount - sum(detail actual_issue_amount for 2026-01..2026-03)'),
+        ]
     for code, label in [('book_entry_interest_bearing', '其中：记账式附息国债'),
                         ('discount_bond', '其中：贴现国债'),
                         ('special_treasury_bond', '其中：特别国债')]:
@@ -222,6 +244,7 @@ def build_fiscal_monitor_payload(db_path):
     treasury_ytd_cards.append(_card(
         '香港人民币国债（年初至今）', None, '亿元', cur_year, 'missing',
         warning='香港人民币国债单列，发行公告抓取待接入。'))
+    overview_cards = treasury_ytd_cards[:2] + overview_cards
     treasury_pressure_cards = treasury_ytd_cards + [
         _card(
             '国债当月实际发行', latest_issue_amount, '亿元', latest_issue_period,
@@ -277,6 +300,52 @@ def build_fiscal_monitor_payload(db_path):
             'sum(net_purchase_amount for parsed official months)' if omo_latest else None,
         ),
     ]
+    repo_as_of = buyout.get('as_of_stock')
+    repo_latest = buyout.get('latest')
+    repo_projection = buyout.get('current_month_projection')
+    repo_cards = [
+        _card(
+            '截至当前日期未到期本金余额', repo_as_of.get('outstanding_amount') if repo_as_of else None,
+            '亿元', repo_as_of.get('as_of_date') if repo_as_of else None,
+            'derived' if repo_as_of else 'missing', '中国人民银行' if repo_as_of else None,
+            repo_as_of.get('source_url') if repo_as_of else None,
+            '买断式逆回购逐笔招标公告汇总' if repo_as_of else None,
+            '按操作日和到期日筛选截至当日仍未到期的逐笔本金。' if repo_as_of else None,
+            repo_as_of.get('formula') if repo_as_of else None,
+            source_urls=repo_as_of.get('source_urls') if repo_as_of else None,
+        ),
+        _card(
+            '最近已完成月末余额', repo_latest.get('outstanding_amount') if repo_latest else None,
+            '亿元', repo_latest.get('period') if repo_latest else None,
+            'derived' if repo_latest else 'missing', repo_latest.get('source_name') if repo_latest else None,
+            repo_latest.get('source_url') if repo_latest else None,
+            '买断式逆回购月末未到期本金测算' if repo_latest else None,
+            repo_latest.get('parser_notes') if repo_latest else None,
+            repo_latest.get('formula') if repo_latest else None,
+            source_urls=repo_latest.get('source_urls') if repo_latest else None,
+        ),
+        _card(
+            '当前月末预测余额', repo_projection.get('outstanding_amount') if repo_projection else None,
+            '亿元', repo_projection.get('period') if repo_projection else None,
+            'derived' if repo_projection else 'missing', repo_projection.get('source_name') if repo_projection else None,
+            repo_projection.get('source_url') if repo_projection else None,
+            '买断式逆回购月末未到期本金测算' if repo_projection else None,
+            repo_projection.get('parser_notes') if repo_projection else None,
+            repo_projection.get('formula') if repo_projection else None,
+            warning='仅按截至当前已公告操作预测；月末前新增操作会改变该数值。' if repo_projection else None,
+            source_urls=repo_projection.get('source_urls') if repo_projection else None,
+        ),
+        _card(
+            '当前未到期操作笔数', repo_as_of.get('operation_count') if repo_as_of else None,
+            '笔', repo_as_of.get('as_of_date') if repo_as_of else None,
+            'derived' if repo_as_of else 'missing', '中国人民银行' if repo_as_of else None,
+            repo_as_of.get('source_url') if repo_as_of else None,
+            '买断式逆回购逐笔招标公告汇总' if repo_as_of else None,
+            '筛选截至当日仍未到期的逐笔操作。' if repo_as_of else None,
+            repo_as_of.get('formula') if repo_as_of else None,
+            source_urls=repo_as_of.get('source_urls') if repo_as_of else None,
+        ),
+    ]
 
     with connect(db_path) as conn:
         ensure_fiscal_tables(conn)
@@ -298,6 +367,7 @@ def build_fiscal_monitor_payload(db_path):
                 'treasury_monthly_issuance': treasury_issuance.get('monthly', []),
                 'treasury_by_type': treasury_issuance.get('by_type', []),
                 'treasury_maturity_by_year': treasury_issuance.get('by_maturity_year', []),
+                'treasury_planned_only': _without_raw(treasury_issuance.get('current_year_planned_only', []), 80),
                 'treasury_issuance_details': _without_raw(treasury_issuance.get('records', []), 120),
             },
             'warnings': ['国债实际发行（境内逐笔）已接入并按类型/年份汇总；储蓄国债、香港人民币国债、国债还本付息尚未接入。',
@@ -310,8 +380,14 @@ def build_fiscal_monitor_payload(db_path):
                 'pboc_balance_sheet': balance.get('records', []),
                 'pboc_gov_bond_omo': _without_raw(omo.get('records', [])),
                 'pboc_buyout_reverse_repo_stock': buyout.get('records', []),
+                'pboc_buyout_reverse_repo_completed_stock': buyout.get('completed_records', []),
+                'pboc_buyout_reverse_repo_projection': buyout.get('projection_records', []),
                 'pboc_buyout_reverse_repo_operations': _without_raw(buyout.get('operations', [])),
+                'pboc_buyout_reverse_repo_active_operations': _without_raw(
+                    repo_as_of.get('active_operations', []) if repo_as_of else []
+                ),
             },
+            'repo_cards': repo_cards,
             'warnings': balance.get('notes', []) + ['央行对政府债权不等于国债余额，也不能用于推断地方债持有量。'],
         },
         'scenario_projection': {

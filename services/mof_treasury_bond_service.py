@@ -14,6 +14,21 @@ from bs4 import BeautifulSoup
 SOURCE_NAME = '财政部债务管理司'
 SOURCE_TYPE = 'mof_treasury_bond'
 ENTRY_URL = 'https://zwgls.mof.gov.cn/ywgg/'
+MOF_2026_Q1_TREASURY_SUMMARY = {
+    'year': '2026',
+    'period': '2026Q1',
+    'source_name': '财政部新闻办公室',
+    'source_type': 'mof_treasury_quarterly_summary',
+    'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202604/t20260424_3988407.htm',
+    'source_title': '2026年一季度财政收支情况新闻发布会文字实录',
+    'published_date': '2026-04-24',
+    'total_issue_amount': 36200.0,
+    'book_entry_issue_amount': 35900.0,
+    'savings_issue_amount': 300.0,
+    'unit': '亿元',
+    'parser_notes': '财政部新闻发布会口径：一季度共发行国债3.62万亿元，其中记账式国债3.59万亿元、储蓄国债300亿元。该汇总用于校验，不替代逐笔国债业务公告 actual_issue_amount 主口径。',
+    'data_status': 'official',
+}
 
 
 def connect(db_path):
@@ -547,6 +562,67 @@ def build_mof_treasury_bond_payload(db_path):
         sources = _rows(conn, 'SELECT * FROM fiscal_debt_sources WHERE source_type=? ORDER BY updated_at DESC LIMIT 40', (SOURCE_TYPE,))
     current_year = datetime.now().year
     ytd = next((r for r in yearly if str(r['year']) == str(current_year)), None)
+    current_year_records = [
+        r for r in records
+        if r.get('issue_date') and r.get('issue_date', '').startswith(str(current_year))
+    ]
+    current_year_official = [r for r in current_year_records if r.get('actual_issue_amount') is not None]
+    current_year_planned = [r for r in current_year_records if r.get('data_status') == 'planned_only']
+    unresolved_current_year_planned = []
+    for planned in current_year_planned:
+        planned_title_date = planned.get('published_date') or ''
+        has_later_result = any(
+            official.get('bond_name') == planned.get('bond_name')
+            and (official.get('published_date') or '') >= planned_title_date
+            for official in current_year_official
+        )
+        if not has_later_result:
+            unresolved_current_year_planned.append(planned)
+    latest_result_published_date = max(
+        (r.get('published_date') for r in current_year_official if r.get('published_date')),
+        default=None,
+    )
+    latest_result_issue_date = max(
+        (r.get('issue_date') for r in current_year_official if r.get('issue_date')),
+        default=None,
+    )
+    planned_after_latest_result = [
+        r for r in unresolved_current_year_planned
+        if latest_result_issue_date is None or (r.get('issue_date') and r.get('issue_date') > latest_result_issue_date)
+    ]
+    current_year_summary = {
+        'year': str(current_year),
+        'actual_issue_amount': ytd.get('actual_issue_amount') if ytd else None,
+        'official_records': ytd.get('records') if ytd else 0,
+        'latest_result_published_date': latest_result_published_date,
+        'latest_result_issue_date': latest_result_issue_date,
+        'planned_only_records': len(unresolved_current_year_planned),
+        'planned_only_amount': sum((r.get('planned_issue_amount') or 0) for r in unresolved_current_year_planned),
+        'planned_after_latest_result_records': len(planned_after_latest_result),
+        'planned_after_latest_result_amount': sum((r.get('planned_issue_amount') or 0) for r in planned_after_latest_result),
+        'source_urls': [r.get('source_url') for r in current_year_official if r.get('source_url')],
+    }
+    q1_summary = MOF_2026_Q1_TREASURY_SUMMARY if str(current_year) == '2026' else None
+    q1_detail_amount = sum(
+        (r.get('actual_issue_amount') or 0)
+        for r in current_year_official
+        if r.get('issue_date', '')[:7] in ('2026-01', '2026-02', '2026-03')
+    ) if str(current_year) == '2026' else None
+    q1_reconciliation = None
+    if q1_summary:
+        q1_reconciliation = {
+            'period': '2026Q1',
+            'official_total_issue_amount': q1_summary['total_issue_amount'],
+            'official_book_entry_issue_amount': q1_summary['book_entry_issue_amount'],
+            'official_savings_issue_amount': q1_summary['savings_issue_amount'],
+            'detail_actual_issue_amount': q1_detail_amount,
+            'difference_total_minus_detail': q1_summary['total_issue_amount'] - q1_detail_amount,
+            'source_url': q1_summary['source_url'],
+            'source_title': q1_summary['source_title'],
+            'published_date': q1_summary['published_date'],
+            'parser_notes': q1_summary['parser_notes'],
+            'data_status': 'official',
+        }
     return {
         'data_status': 'official' if coverage.get('official_records') else 'missing',
         'source_name': SOURCE_NAME,
@@ -560,6 +636,10 @@ def build_mof_treasury_bond_payload(db_path):
         'by_term': by_term,
         'by_maturity_year': by_maturity,
         'current_year_ytd': ytd,
+        'current_year_summary': current_year_summary,
+        'current_year_planned_only': unresolved_current_year_planned,
+        'q1_official_summary': q1_summary,
+        'q1_reconciliation': q1_reconciliation,
         'source_records': sources,
         'warnings': [] if records else ['财政部国债发行明细尚未接入；未生成 mock 数据。'],
         'notes': [
