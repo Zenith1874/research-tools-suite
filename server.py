@@ -226,11 +226,83 @@ YTD_FLOW_FIELDS = [
 
 # ── 数据库 ────────────────────────────────────────────────────────────────────
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL')   # 允许并发读写
-    conn.execute('PRAGMA busy_timeout=5000')  # 写锁等待 5s
+    conn.execute('PRAGMA journal_mode=WAL')    # 允许并发读写
+    conn.execute('PRAGMA busy_timeout=30000')  # 写锁最多等 30s 再放弃，避免 "database is locked"
     return conn
+
+
+# ── 后台任务运行器 + 全局写锁 ───────────────────────────────────────────────────
+# 所有"重活/写库"更新都经此运行：① 立即返回不卡 HTTP 线程 ② 全局串行(只允许一个
+# 写任务，杜绝并发写撞 database is locked) ③ 状态可经 /api/jobs 轮询。
+_JOBS = {}                          # name -> {status,started,finished,result,error}
+_JOBS_LOCK = threading.Lock()       # 保护 _JOBS 字典
+_UPDATE_LOCK = threading.Lock()     # 全局写任务串行锁(同一时刻只跑一个更新)
+
+def _run_update_job(name, fn, blocking=False):
+    """在后台守护线程里跑 fn()，串行(共享 _UPDATE_LOCK)。
+    blocking=False(HTTP 触发)：锁被占则直接返回 already_running，不排队。
+    blocking=True(调度器触发)：在当前线程内等锁并同步执行(调度器本就是后台线程)。"""
+    def _exec():
+        with _JOBS_LOCK:
+            _JOBS[name] = {'status': 'running', 'started': datetime.now().isoformat(),
+                           'finished': None, 'result': None, 'error': None}
+        try:
+            res = fn()
+            safe = res if isinstance(res, (dict, list, str, int, float, bool, type(None))) else str(res)
+            with _JOBS_LOCK:
+                _JOBS[name].update(status='done', finished=datetime.now().isoformat(), result=safe)
+            return safe
+        except Exception as e:
+            log.exception(f'后台任务 {name} 失败')
+            with _JOBS_LOCK:
+                _JOBS[name].update(status='error', finished=datetime.now().isoformat(), error=str(e))
+            return {'status': 'error', 'error': str(e)}
+
+    if blocking:
+        with _UPDATE_LOCK:
+            return _exec()
+
+    if not _UPDATE_LOCK.acquire(blocking=False):
+        with _JOBS_LOCK:
+            cur = _JOBS.get(name) or {}
+        return {'status': 'already_running', 'message': '已有更新任务在后台运行，请稍后用 /api/jobs 查看进度',
+                'running': [k for k, v in _JOBS.items() if v.get('status') == 'running']}
+    def _wrap():
+        try:
+            _exec()
+        finally:
+            _UPDATE_LOCK.release()
+    threading.Thread(target=_wrap, daemon=True).start()
+    return {'status': 'started', 'job': name,
+            'message': f'{name} 已在后台运行，可轮询 /api/jobs 查看进度'}
+
+
+def _do_financial_update():
+    """央行月度观测同步(原 _api_financial_update 的同步逻辑，抽成可后台运行的函数)。"""
+    started = datetime.now().isoformat()
+    try:
+        sync = sync_observations(DB_PATH)
+        payload = build_api_payload(DB_PATH)
+        return {
+            'success': True, 'updated_at': datetime.now().isoformat(),
+            'pboc_latest_period': payload['pboc_monthly']['latest_period'],
+            'market_latest_date': None,
+            'new_records': sync.get('new_records', 0),
+            'updated_records': sync.get('updated_records', 0),
+            'failed_sources': [],
+            'warnings': sync.get('warnings', []) + ['市场数据源未配置，状态为 missing。'],
+        }
+    except Exception as e:
+        with get_db() as conn:
+            ensure_financial_tables(conn)
+            conn.execute('''INSERT INTO financial_update_logs
+                (source_name,source_type,started_at,finished_at,success,new_records,updated_records,error_message,warnings)
+                VALUES (?,?,?,?,?,?,?,?,?)''',
+                ('中国人民银行', 'pboc_monthly', started, datetime.now().isoformat(), 0, 0, 0, str(e), '[]'))
+            conn.commit()
+        raise
 
 def init_db():
     with get_db() as conn:
@@ -1238,11 +1310,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, data, code=200):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
-        self.send_response(code)
-        for k,v in cors_headers().items(): self.send_header(k,v)
-        self.send_header('Content-Length', len(body))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            for k,v in cors_headers().items(): self.send_header(k,v)
+            self.send_header('Content-Length', len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            # 客户端在响应写完前断开(刷新/离开/等不及)——正常现象，静默丢弃，
+            # 不让异常冒泡到 socketserver 刷屏日志、也不影响其它线程。
+            pass
 
     def send_file(self, file_path):
         try:
@@ -1278,6 +1355,10 @@ class Handler(BaseHTTPRequestHandler):
             if   path == '/api/data':       self._api_data()
             elif path == '/api/status':     self._api_status()
             elif path == '/api/health':     self.send_json({'status':'ok','time':datetime.now().isoformat()})
+            elif path == '/api/jobs':
+                with _JOBS_LOCK:
+                    jobs = dict(_JOBS)
+                self.send_json({'update_lock_busy': _UPDATE_LOCK.locked(), 'jobs': jobs})
             elif path == '/api/abdc/data':  self._api_abdc_data()
             elif path == '/api/financial/debug': self._api_financial_debug()
             elif path == '/api/fiscal-debt/data': self._api_fiscal_debt_data()
@@ -1322,16 +1403,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path == '/api/scrape':
-            threading.Thread(target=scrape_and_update, daemon=True).start()
-            self.send_json({'status':'started','message':'全量爬取已启动，历史数据较多约需5-10分钟，可轮询 /api/status 查看进度'})
+            self.send_json(_run_update_job('pboc_scrape', scrape_and_update))
         elif path == '/api/financial/update':
             self._api_financial_update()
         elif path == '/api/fiscal-debt/update':
             self._api_fiscal_debt_update()
         elif path == '/api/fiscal-debt/local-government-debt/update':
-            self.send_json(run_fiscal_module_update(DB_PATH, 'local_government_debt'))
+            self.send_json(_run_update_job('local_government_debt', lambda: run_fiscal_module_update(DB_PATH, 'local_government_debt')))
         elif path == '/api/fiscal-debt/central-government-debt/update':
-            self.send_json(run_fiscal_module_update(DB_PATH, 'central_government_debt'))
+            self.send_json(_run_update_job('central_government_debt', lambda: run_fiscal_module_update(DB_PATH, 'central_government_debt')))
         elif path == '/api/fiscal-debt/pboc-balance-sheet/update':
             self._api_pboc_balance_sheet_update()
         elif path == '/api/fiscal-debt/pboc-gov-bond-omo/update':
@@ -1375,35 +1455,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(build_api_payload(DB_PATH))
 
     def _api_financial_update(self):
-        started = datetime.now().isoformat()
-        warnings = []
-        failed_sources = []
-        new_records = updated_records = 0
-        try:
-            sync = sync_observations(DB_PATH)
-            new_records += sync.get('new_records', 0)
-            updated_records += sync.get('updated_records', 0)
-            warnings.extend(sync.get('warnings', []))
-            payload = build_api_payload(DB_PATH)
-            self.send_json({
-                'success': True,
-                'updated_at': datetime.now().isoformat(),
-                'pboc_latest_period': payload['pboc_monthly']['latest_period'],
-                'market_latest_date': None,
-                'new_records': new_records,
-                'updated_records': updated_records,
-                'failed_sources': failed_sources,
-                'warnings': warnings + ['市场数据源未配置，状态为 missing。'],
-            })
-        except Exception as e:
-            with get_db() as conn:
-                ensure_financial_tables(conn)
-                conn.execute('''INSERT INTO financial_update_logs
-                    (source_name,source_type,started_at,finished_at,success,new_records,updated_records,error_message,warnings)
-                    VALUES (?,?,?,?,?,?,?,?,?)''',
-                    ('中国人民银行', 'pboc_monthly', started, datetime.now().isoformat(), 0, 0, 0, str(e), '[]'))
-                conn.commit()
-            self.send_json({'success': False, 'error': str(e), 'warnings': warnings}, 500)
+        self.send_json(_run_update_job('financial', _do_financial_update))
 
     def _api_financial_debug(self):
         self.send_json(build_debug_payload(DB_PATH))
@@ -1418,33 +1470,33 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(build_pboc_balance_sheet_payload(DB_PATH))
 
     def _api_pboc_balance_sheet_update(self):
-        self.send_json(run_fiscal_module_update(DB_PATH, 'pboc_balance_sheet'))
+        self.send_json(_run_update_job('pboc_balance_sheet', lambda: run_fiscal_module_update(DB_PATH, 'pboc_balance_sheet')))
 
     def _api_pboc_gov_bond_omo(self):
         self.send_json(build_pboc_gov_bond_omo_payload(DB_PATH))
 
     def _api_pboc_gov_bond_omo_update(self):
-        self.send_json(run_fiscal_module_update(DB_PATH, 'pboc_gov_bond_omo'))
+        self.send_json(_run_update_job('pboc_gov_bond_omo', lambda: run_fiscal_module_update(DB_PATH, 'pboc_gov_bond_omo')))
 
     def _api_pboc_buyout_reverse_repo(self):
         self.send_json(build_pboc_buyout_reverse_repo_payload(DB_PATH))
 
     def _api_pboc_buyout_reverse_repo_update(self):
-        self.send_json(run_fiscal_module_update(DB_PATH, 'pboc_buyout_reverse_repo'))
+        self.send_json(_run_update_job('pboc_buyout_reverse_repo', lambda: run_fiscal_module_update(DB_PATH, 'pboc_buyout_reverse_repo')))
 
     def _api_mof_treasury_bonds(self):
         self.send_json(build_mof_treasury_bond_payload(DB_PATH))
 
     def _api_mof_treasury_bonds_update(self):
-        self.send_json(run_fiscal_module_update(DB_PATH, 'treasury_issuance'))
+        self.send_json(_run_update_job('treasury_issuance', lambda: run_fiscal_module_update(DB_PATH, 'treasury_issuance')))
 
     def _api_fiscal_debt_update(self):
         body = self._read_json_body()
         module_code = body.get('module_code')
         if module_code:
-            self.send_json(run_fiscal_module_update(DB_PATH, module_code))
+            self.send_json(_run_update_job(module_code, lambda: run_fiscal_module_update(DB_PATH, module_code)))
         else:
-            self.send_json(run_all_fiscal_updates(DB_PATH))
+            self.send_json(_run_update_job('fiscal_all', lambda: run_all_fiscal_updates(DB_PATH)))
 
     def _api_fiscal_debt_projection(self):
         self.send_json(build_projection_payload(DB_PATH))
@@ -1554,7 +1606,7 @@ def scheduler_thread():
     log.info(f'调度器启动，每日 {" / ".join(SCHEDULE)} 自动爬取')
     while True:
         if datetime.now().strftime('%H:%M') in SCHEDULE:
-            scrape_and_update()
+            _run_update_job('pboc_scrape', scrape_and_update, blocking=True)
             time.sleep(61)
         time.sleep(30)
 
@@ -1580,7 +1632,7 @@ def fiscal_scheduler_thread(interval_hours=168):
     time.sleep(1800)
     while True:
         try:
-            result = run_all_fiscal_updates(DB_PATH)
+            result = _run_update_job('fiscal_all', lambda: run_all_fiscal_updates(DB_PATH), blocking=True)
             log.info(f"财政债务更新完成：status={result.get('status')}")
         except Exception as e:
             log.warning(f'财政债务更新失败（旧数据保留）: {e}')
@@ -1614,7 +1666,7 @@ if __name__ == '__main__':
     _probe.close()
 
     init_db()
-    threading.Thread(target=scrape_and_update, daemon=True).start()
+    _run_update_job('pboc_scrape', scrape_and_update)   # 后台启动，串行+不卡 HTTP
     threading.Thread(target=scheduler_thread, daemon=True).start()
     if os.environ.get('ASTAR_AUTO', '1') != '0':
         threading.Thread(target=astar_scheduler_thread, daemon=True).start()

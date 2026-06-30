@@ -161,7 +161,7 @@ DATA_STATUS = [
 
 
 def connect(db_path):
-    conn = sqlite3.connect(db_path, timeout=10)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
