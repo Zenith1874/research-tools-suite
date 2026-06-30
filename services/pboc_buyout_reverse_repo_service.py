@@ -362,6 +362,26 @@ def build_monthly_stock(operations):
     return rows
 
 
+def calculate_outstanding_at(operations, as_of_date):
+    as_of = datetime.strptime(as_of_date, '%Y-%m-%d')
+    active = []
+    for op in operations:
+        operation_date = datetime.strptime(op['operation_date'], '%Y-%m-%d')
+        maturity_date = datetime.strptime(op['maturity_date'], '%Y-%m-%d')
+        if operation_date <= as_of < maturity_date:
+            active.append(op)
+    active.sort(key=lambda row: (row['operation_date'], row['maturity_date'], row['operation_id']))
+    return {
+        'as_of_date': as_of_date,
+        'outstanding_amount': sum(float(op['amount']) for op in active),
+        'operation_count': len(active),
+        'derived_maturity_count': sum(1 for op in active if op['maturity_date_status'] == 'derived'),
+        'data_status': 'derived',
+        'formula': 'sum(amount for operation_date <= as_of_date < maturity_date)',
+        'active_operations': active,
+    }
+
+
 def _insert_announcement(conn, ann, now, parsed_count, detail, status='success', error=None):
     conn.execute('''INSERT INTO pboc_buyout_reverse_repo_announcements (
         source_name,source_type,source_url,source_title,announcement_kind,notice_no,list_page_url,
@@ -543,6 +563,13 @@ def build_pboc_buyout_reverse_repo_payload(db_path):
         row['source_urls'] = source_urls
         row['source_url'] = source_urls[0] if source_urls else None
     today = datetime.now().date()
+    as_of_stock = calculate_outstanding_at(ops, today.isoformat()) if ops else None
+    if as_of_stock:
+        as_of_urls = list(dict.fromkeys(
+            op['source_url'] for op in as_of_stock['active_operations'] if op.get('source_url')
+        ))
+        as_of_stock['source_urls'] = as_of_urls
+        as_of_stock['source_url'] = as_of_urls[0] if as_of_urls else None
     current_period = datetime.now().strftime('%Y-%m')
     completed_stocks = [
         row for row in stocks
@@ -556,12 +583,18 @@ def build_pboc_buyout_reverse_repo_payload(db_path):
         'announcement_data_status': 'official' if announcements else 'missing',
         'latest_period': latest_current['period'] if latest_current else None,
         'latest': latest_current,
+        'as_of_stock': as_of_stock,
         'current_month_projection': current_month_projection,
         'projection_latest_period': stocks[-1]['period'] if stocks else None,
         'projection_latest': stocks[-1] if stocks else None,
         'announcements': announcements,
         'operations': ops,
         'records': stocks,
+        'completed_records': completed_stocks,
+        'projection_records': [
+            row for row in stocks
+            if datetime.strptime(row['month_end_date'], '%Y-%m-%d').date() > today
+        ],
         'coverage': cov,
         'source_records': sources,
         'warnings': [] if ops else ['买断式逆回购公告尚未成功接入；未生成 mock 数据。'],
