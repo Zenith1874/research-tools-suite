@@ -1337,10 +1337,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', mime or 'application/octet-stream')
             self.send_header('Content-Length', len(body))
+            # 缓存策略：HTML 每次向服务器校验(改完立即生效，不用强刷)；
+            # vendor 第三方库文件不变，长缓存一年。
+            if os.sep + 'vendor' + os.sep in file_path:
+                self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
+            elif file_path.endswith(('.html', '.htm')):
+                self.send_header('Cache-Control', 'no-cache')
+            else:
+                self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
             self.wfile.write(body)
         except FileNotFoundError:
             self.send_json({'error': 'not found'}, 404)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass   # 客户端提前断开，正常现象
 
     def _serve_static(self, url_path):
         # 把 URL 路径映射到 STATIC_DIR 下的文件，防止目录穿越

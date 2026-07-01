@@ -23,7 +23,9 @@ h1{font-size:20px;margin:0 0 6px}.sub,.muted{color:var(--muted);font-size:12px;l
 .badge.missing{color:#ffc1cb;border-color:rgba(255,91,120,.55)}
 a.source-link{color:#9ec2ff;text-decoration:none}
 .chart{margin:14px 0;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px}
-.chartsvg{width:100%;height:190px;display:block}.chart-title{font-size:12px;color:var(--dim);margin-bottom:6px}
+.chartsvg{width:100%;height:190px;display:block;cursor:crosshair}.chart-title{font-size:12px;color:var(--dim);margin-bottom:6px}
+.tip{position:absolute;top:8px;transform:translateX(-50%);background:rgba(13,23,40,.96);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:11px;line-height:1.7;pointer-events:none;white-space:nowrap;z-index:5}
+.tip b{color:var(--dim);font-size:10px}.tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:6px}.legend span{display:inline-flex;align-items:center;gap:5px}.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
 .empty{padding:16px;border:1px dashed var(--bd);border-radius:6px;color:var(--muted);font-size:12px}
 @media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.grid{grid-template-columns:1fr}}
@@ -38,7 +40,8 @@ function mergeSeries(map){ // {code:[{period,value}]} -> [{period, code1:v,...}]
   Object.entries(map).forEach(([code,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[code]=r.value}));
   return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1);
 }
-function Chart({title,data,series,unit=''}){
+function Chart({title,data,series,unit='',digits=2}){
+  const [hover,setHover]=useState(null);
   const pts=(data||[]).filter(d=>series.some(s=>typeof d[s.key]==='number'));
   if(pts.length<2)return <div className="empty">{title}：数据点不足。</div>;
   const W=640,H=190,L=50,R=12,T=12,B=22,vals=[];
@@ -46,13 +49,21 @@ function Chart({title,data,series,unit=''}){
   let mn=Math.min(...vals),mx=Math.max(...vals);if(mn===mx){mn-=1;mx+=1}
   const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(v-mn)/(mx-mn));
   const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
+  const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const i=Math.round((x-L)/(W-L-R)*(pts.length-1));setHover(Math.max(0,Math.min(pts.length-1,i)))};
+  const hp=hover===null?null:pts[hover];
+  const tipLeft=hover===null?0:Math.max(10,Math.min(90,sx(hover)/W*100));
   return <div className="chart"><div className="chart-title">{title}</div>
-    <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" preserveAspectRatio="none">
+    <div style={{position:'relative'}}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" preserveAspectRatio="none" onMouseMove={onMove} onMouseLeave={()=>setHover(null)}>
       {[mn,(mn+mx)/2,mx].map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t)}</text></g>)}
       {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6"/>)}
+      {hp&&<g><line x1={sx(hover)} x2={sx(hover)} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
+        {series.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
       <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
       <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{pts[pts.length-1].period}</text>
     </svg>
+    {hp&&<div className="tip" style={{left:tipLeft+'%'}}><b>{hp.period}</b>{series.map(s=>typeof hp[s.key]==='number'?<div key={s.key}><i style={{background:s.color}}/>{s.label}：{fmt(hp[s.key],digits)} {unit}</div>:null)}</div>}
+    </div>
     <div className="legend">{series.map(s=><span key={s.key}><i style={{background:s.color}}/>{s.label}</span>)}{unit&&<span className="muted">单位：{unit}</span>}</div>
   </div>;
 }
@@ -91,7 +102,7 @@ function App(){
     </div>)}</div>
     <Chart title="LPR 报价走势（月度，2019-08 改革起）" data={lpr} series={[{key:'LPR_1Y',label:'1年期',color:'var(--blue)'},{key:'LPR_5Y',label:'5年期以上',color:'var(--red)'}]} unit="%"/>
     <Chart title="SHIBOR 走势（日频，近500交易日）" data={shibor} series={[{key:'SHIBOR_ON',label:'隔夜',color:'var(--green)'},{key:'SHIBOR_3M',label:'3个月',color:'var(--yellow)'},{key:'SHIBOR_1Y',label:'1年',color:'var(--blue)'}]} unit="%"/>
-    <Chart title="人民币对美元中间价（日频，近800交易日）" data={fx} series={[{key:'USDCNY',label:'USD/CNY 中间价',color:'var(--blue)'}]} unit="CNY/USD"/>
+    <Chart title="人民币对美元中间价（日频，近800交易日）" data={fx} series={[{key:'USDCNY',label:'USD/CNY 中间价',color:'var(--blue)'}]} unit="CNY/USD" digits={4}/>
     <div className="muted">{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
   </div>;
 }
