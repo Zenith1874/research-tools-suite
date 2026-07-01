@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>中国利率与汇率</title>
+<script src="/vendor/react.min.js"></script>
+<script src="/vendor/react-dom.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
+<style>
+:root{--bg:#07111f;--panel:#0d1728;--panel2:#111d31;--bd:#22324b;--text:#e5edf7;--muted:#8ea0b8;--dim:#b8c6d8;--blue:#4f8fff;--green:#00d4aa;--red:#ff5b78;--yellow:#f5a623}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+h1{font-size:20px;margin:0 0 6px}.sub,.muted{color:var(--muted);font-size:12px;line-height:1.7}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{min-height:34px;background:var(--panel2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:7px 12px;text-decoration:none;font:inherit;font-size:12px;cursor:pointer;display:inline-flex;align-items:center}
+.btn:hover{border-color:var(--blue)}.btn.primary{background:rgba(79,143,255,.15);border-color:rgba(79,143,255,.5)}.btn:disabled{opacity:.5}
+.banner{border:1px solid rgba(245,166,35,.45);background:var(--panel);border-radius:6px;padding:10px 12px;margin:12px 0;font-size:12px;color:#f8d89b}
+.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:16px 0}
+.metric{background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:13px}
+.metric-label{font-size:11px;color:var(--muted)}.metric-value{font-size:22px;font-weight:750;margin:6px 0;font-variant-numeric:tabular-nums}
+.metric-meta{font-size:10px;color:var(--muted);line-height:1.6}.metric-missing{font-size:13px;color:#ffc1cb;margin:10px 0}
+.badge{display:inline-block;border:1px solid rgba(0,212,170,.55);border-radius:4px;padding:1px 6px;font-size:10px;color:#a9efd8}
+.badge.missing{color:#ffc1cb;border-color:rgba(255,91,120,.55)}
+a.source-link{color:#9ec2ff;text-decoration:none}
+.chart{margin:14px 0;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px}
+.chartsvg{width:100%;height:190px;display:block}.chart-title{font-size:12px;color:var(--dim);margin-bottom:6px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:6px}.legend span{display:inline-flex;align-items:center;gap:5px}.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
+.empty{padding:16px;border:1px dashed var(--bd);border-radius:6px;color:var(--muted);font-size:12px}
+@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const {useEffect,useState}=React;
+function fmt(v,d=2){if(v===null||v===undefined)return '—';return Number(v).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function mergeSeries(map){ // {code:[{period,value}]} -> [{period, code1:v,...}] 按 period 合并
+  const byP={};
+  Object.entries(map).forEach(([code,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[code]=r.value}));
+  return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1);
+}
+function Chart({title,data,series,unit=''}){
+  const pts=(data||[]).filter(d=>series.some(s=>typeof d[s.key]==='number'));
+  if(pts.length<2)return <div className="empty">{title}：数据点不足。</div>;
+  const W=640,H=190,L=50,R=12,T=12,B=22,vals=[];
+  series.forEach(s=>pts.forEach(d=>{if(typeof d[s.key]==='number')vals.push(d[s.key])}));
+  let mn=Math.min(...vals),mx=Math.max(...vals);if(mn===mx){mn-=1;mx+=1}
+  const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(v-mn)/(mx-mn));
+  const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
+  return <div className="chart"><div className="chart-title">{title}</div>
+    <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" preserveAspectRatio="none">
+      {[mn,(mn+mx)/2,mx].map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t)}</text></g>)}
+      {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6"/>)}
+      <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
+      <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{pts[pts.length-1].period}</text>
+    </svg>
+    <div className="legend">{series.map(s=><span key={s.key}><i style={{background:s.color}}/>{s.label}</span>)}{unit&&<span className="muted">单位：{unit}</span>}</div>
+  </div>;
+}
+function App(){
+  const [p,setP]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
+  async function load(){const r=await fetch('/api/china-rates/data');setP(await r.json())}
+  async function update(backfill){
+    setBusy(true);
+    try{
+      const r=await fetch('/api/china-rates/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backfill})});
+      const j=await r.json();setMsg(j.message||j.status);
+      // 后台任务：轮询 /api/jobs 直到完成再刷新
+      const t=setInterval(async()=>{
+        const js=await (await fetch('/api/jobs')).json();
+        const job=js.jobs&&js.jobs.china_rates;
+        if(job&&job.status!=='running'){clearInterval(t);setBusy(false);setMsg(job.status==='done'?'更新完成':'更新失败:'+(job.error||''));load()}
+      },3000);
+    }catch(e){setBusy(false);setMsg('请求失败:'+e)}
+  }
+  useEffect(()=>{load()},[]);
+  if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;
+  const lpr=mergeSeries(p.series.lpr), shibor=mergeSeries({SHIBOR_ON:p.series.shibor.ON,SHIBOR_3M:p.series.shibor['3M'],SHIBOR_1Y:p.series.shibor['1Y']}), fx=mergeSeries({USDCNY:p.series.usdcny});
+  return <div className="wrap">
+    <div className="top"><div><h1>中国利率与汇率</h1>
+      <div className="sub">LPR / SHIBOR / 人民币对美元中间价 · 来源：{p.source_name} · 覆盖 {p.coverage.earliest||'—'} ~ {p.coverage.latest||'—'}（{p.coverage.records||0} 条，全部 official）</div></div>
+      <div className="actions">
+        <button className="btn primary" disabled={busy} onClick={()=>update(false)}>{busy?'更新中…':'增量更新'}</button>
+        <button className="btn" disabled={busy} onClick={()=>update(true)}>全量回填(2019/2020起)</button>
+        <a className="btn" href="/">首页</a></div></div>
+    {msg&&<div className="banner">{msg}</div>}
+    {(p.warnings||[]).map((w,i)=><div key={i} className="banner">{w}</div>)}
+    <div className="grid">{p.cards.map(c=><div className="metric" key={c.label}>
+      <div className="metric-label">{c.label} <span className={'badge '+(c.data_status==='official'?'':'missing')}>{c.data_status}</span></div>
+      {c.value!==null&&c.value!==undefined?<div className="metric-value">{fmt(c.value,c.unit==='%'?2:4)}<span style={{fontSize:12}}> {c.unit}</span></div>:<div className="metric-missing">{c.warning||'—'}</div>}
+      <div className="metric-meta">期数：{c.period||'—'}<br/>{c.source_url?<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">官方来源</a>:'—'}</div>
+    </div>)}</div>
+    <Chart title="LPR 报价走势（月度，2019-08 改革起）" data={lpr} series={[{key:'LPR_1Y',label:'1年期',color:'var(--blue)'},{key:'LPR_5Y',label:'5年期以上',color:'var(--red)'}]} unit="%"/>
+    <Chart title="SHIBOR 走势（日频，近500交易日）" data={shibor} series={[{key:'SHIBOR_ON',label:'隔夜',color:'var(--green)'},{key:'SHIBOR_3M',label:'3个月',color:'var(--yellow)'},{key:'SHIBOR_1Y',label:'1年',color:'var(--blue)'}]} unit="%"/>
+    <Chart title="人民币对美元中间价（日频，近800交易日）" data={fx} series={[{key:'USDCNY',label:'USD/CNY 中间价',color:'var(--blue)'}]} unit="CNY/USD"/>
+    <div className="muted">{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
