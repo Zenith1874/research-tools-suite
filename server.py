@@ -55,6 +55,14 @@ from services.fiscal_monitor_service import (
     run_fiscal_module_update,
     run_all_fiscal_updates,
 )
+from services.china_rates_service import (
+    build_china_rates_payload,
+    update_china_rates,
+)
+from services.us_macro_service import (
+    build_us_macro_payload,
+    update_us_macro,
+)
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -1380,6 +1388,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/lists': self.send_json(build_prestige_lists_payload())
             elif path == '/api/abdc/astar/health': self.send_json(build_journal_health_payload())
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
+            elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
+            elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             # Static page routes
             elif path in ('/', ''):         self.send_file(os.path.join(STATIC_DIR, 'index.html'))
             elif path in ('/dashboard', '/dashboard.html'):
@@ -1394,6 +1404,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'abdc', 'index.html'))
             elif path in ('/abdc-astar-research', '/abdc-astar-research/'):
                 self.send_file(os.path.join(STATIC_DIR, 'abdc_astar_research.html'))
+            elif path in ('/china-rates', '/china-rates/'):
+                self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
+            elif path in ('/us-macro', '/us-macro/'):
+                self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
@@ -1408,6 +1422,12 @@ class Handler(BaseHTTPRequestHandler):
             self._api_financial_update()
         elif path == '/api/fiscal-debt/update':
             self._api_fiscal_debt_update()
+        elif path == '/api/china-rates/update':
+            body = self._read_json_body()
+            backfill = bool(body.get('backfill'))
+            self.send_json(_run_update_job('china_rates', lambda: update_china_rates(DB_PATH, backfill=backfill)))
+        elif path == '/api/us-macro/update':
+            self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
         elif path == '/api/fiscal-debt/local-government-debt/update':
             self.send_json(_run_update_job('local_government_debt', lambda: run_fiscal_module_update(DB_PATH, 'local_government_debt')))
         elif path == '/api/fiscal-debt/central-government-debt/update':
@@ -1626,6 +1646,20 @@ def astar_scheduler_thread(interval_hours=24):
         time.sleep(interval_hours * 3600)
 
 
+def rates_scheduler_thread(interval_hours=24):
+    """每日增量更新中国利率/汇率 + 美国宏观(FRED)。失败只写日志，不清旧数据。"""
+    log.info(f'利率/宏观调度器启动，每 {interval_hours}h 增量更新')
+    time.sleep(900)   # 启动后先让位其他模块
+    while True:
+        try:
+            r1 = _run_update_job('china_rates', lambda: update_china_rates(DB_PATH), blocking=True)
+            r2 = _run_update_job('us_macro', lambda: update_us_macro(DB_PATH), blocking=True)
+            log.info(f"利率/宏观更新完成：cn={r1.get('records_upserted')} us={r2.get('records_upserted')}")
+        except Exception as e:
+            log.warning(f'利率/宏观更新失败（旧数据保留）: {e}')
+        time.sleep(interval_hours * 3600)
+
+
 def fiscal_scheduler_thread(interval_hours=168):
     """每周检查已接入的财政债务和央行相关官方来源；失败只写日志，不清空旧数据。"""
     log.info(f'财政债务监控调度器启动，每 {interval_hours}h 检查官方来源')
@@ -1672,6 +1706,8 @@ if __name__ == '__main__':
         threading.Thread(target=astar_scheduler_thread, daemon=True).start()
     if os.environ.get('FISCAL_AUTO', '1') != '0':
         threading.Thread(target=fiscal_scheduler_thread, daemon=True).start()
+    if os.environ.get('RATES_AUTO', '1') != '0':
+        threading.Thread(target=rates_scheduler_thread, daemon=True).start()
     try:
         load_journal_prestige_lists()       # 填充 FT50 / UTD24 清单（轻量）
         ensure_prestige_extra_journals()    # 把非 A* 的 FT50/UTD24 刊持久并入追踪集
