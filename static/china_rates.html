@@ -100,9 +100,9 @@ function App(){
       {c.value!==null&&c.value!==undefined?<div className="metric-value">{fmt(c.value,c.unit==='%'?2:4)}<span style={{fontSize:12}}> {c.unit}</span></div>:<div className="metric-missing">{c.warning||'—'}</div>}
       <div className="metric-meta">期数：{c.period||'—'}<br/>{c.source_url?<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">官方来源</a>:'—'}</div>
     </div>)}</div>
-    <Chart title="LPR 报价走势（月度，2019-08 改革起）" data={lpr} series={[{key:'LPR_1Y',label:'1年期',color:'var(--blue)'},{key:'LPR_5Y',label:'5年期以上',color:'var(--red)'}]} unit="%"/>
-    <Chart title="SHIBOR 走势（日频，近500交易日）" data={shibor} series={[{key:'SHIBOR_ON',label:'隔夜',color:'var(--green)'},{key:'SHIBOR_3M',label:'3个月',color:'var(--yellow)'},{key:'SHIBOR_1Y',label:'1年',color:'var(--blue)'}]} unit="%"/>
-    <Chart title="人民币对美元中间价（日频，近800交易日）" data={fx} series={[{key:'USDCNY',label:'USD/CNY 中间价',color:'var(--blue)'}]} unit="CNY/USD" digits={4}/>
+    <Chart title="LPR 报价走势（2019-08 改革首报起，逐月公告）" data={lpr} series={[{key:'LPR_1Y',label:'1年期',color:'var(--blue)'},{key:'LPR_5Y',label:'5年期以上',color:'var(--red)'}]} unit="%"/>
+    <Chart title="SHIBOR 走势（2006-10 创设起，日频降采样）" data={shibor} series={[{key:'SHIBOR_ON',label:'隔夜',color:'var(--green)'},{key:'SHIBOR_3M',label:'3个月',color:'var(--yellow)'},{key:'SHIBOR_1Y',label:'1年',color:'var(--blue)'}]} unit="%"/>
+    <Chart title="人民币对美元中间价（2006 起，日频降采样）" data={fx} series={[{key:'USDCNY',label:'USD/CNY 中间价',color:'var(--blue)'}]} unit="CNY/USD" digits={4}/>
     <div className="muted">{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
   </div>;
 }

@@ -9,6 +9,7 @@
 数据纪律：全部逐条 official + source_url；接口失败只写日志不清旧数据；不造数。
 """
 import json
+import re
 import sqlite3
 import time
 from datetime import date, datetime, timedelta
@@ -26,9 +27,14 @@ CCPR_PAGE = 'https://www.chinamoney.com.cn/chinese/bkccpr/'
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 HTTP_TIMEOUT = 20
 
-# 回填起点：LPR 改革首报 2019-08-20；SHIBOR/中间价取 2020 起(日频，够画趋势)
-LPR_BACKFILL_START = date(2019, 8, 1)
-DAILY_BACKFILL_START = date(2020, 1, 1)
+# 回填起点：LPR 改革首报 2019-08-20(旧版 2013-2019 贷款基础利率官方接口不提供历史数值，
+# LprHis 的日期区间模式只返回日期不返回值——实测 2026-07，故不接入)；
+# SHIBOR 2006-10-08 创设；中间价接口实测最早到 2006 年。
+LPR_BACKFILL_START = date(2019, 8, 20)
+DAILY_BACKFILL_START = date(2006, 1, 1)
+# LPR 历史改用"公告栏"接口：每月公告一篇(含正文页 URL)，逐条 official。
+LPR_NOTICE_API = 'https://www.chinamoney.com.cn/ags/ms/cm-s-notice-query/contentsinshorttime'
+LPR_NOTICE_CHANNEL = '3686'   # bklprmkn2 = LPR 市场公告栏目
 
 SHIBOR_TENORS = ['ON', '1W', '2W', '1M', '3M', '6M', '9M', '1Y']
 
@@ -57,23 +63,14 @@ def ensure_china_rates_tables(conn):
 
 
 # ── 纯解析函数(可单测) ─────────────────────────────────────────────────────────
-def parse_lpr_records(records):
-    """chinamoney LprHis records -> obs 行。record 形如
-    {"5Y":"3.50","1Y":"3.00","showDateCN":"2026-06-22"}"""
-    rows = []
-    for r in records or []:
-        d = (r.get('showDateCN') or '').strip()
-        if not d:
-            continue
-        for tenor, code, name in [('1Y', 'LPR_1Y', 'LPR 1年期'), ('5Y', 'LPR_5Y', 'LPR 5年期以上')]:
-            v = r.get(tenor)
-            try:
-                v = float(v)
-            except (TypeError, ValueError):
-                continue
-            rows.append({'indicator_code': code, 'indicator_name': name, 'period': d,
-                         'value': v, 'unit': '%', 'frequency': 'monthly'})
-    return rows
+def parse_lpr_announcement_text(text):
+    """LPR 公告正文 -> (1Y, 5Y)。官方正文空格位置随年代乱飘
+    ("1年期LPR为 3. 0 %" / "1 年期 LPR 为 3.85%")——先删光空白再匹配最稳。"""
+    t = re.sub(r'\s', '', text)
+    m1 = re.search(r'1年期LPR为([\d.]+)%', t)
+    m5 = re.search(r'5年期以上LPR为([\d.]+)%', t)
+    return (float(m1.group(1)) if m1 else None,
+            float(m5.group(1)) if m5 else None)
 
 
 def parse_shibor_records(records):
@@ -127,12 +124,47 @@ def _year_windows(start, end):
         cur = nxt + timedelta(days=1)
 
 
-def fetch_lpr(start, end):
+def fetch_lpr(start, end, max_pages=8):
+    """从中国货币网 LPR 公告栏抓取：列表 API 分页(15/页) → 逐篇正文解析 1Y/5Y。
+    每行带各自公告正文 source_url，逐条 official。
+    (LprHis 数值接口的日期区间模式只回日期不回值，不可用。)"""
     rows = []
-    for a, b in _year_windows(start, end):   # 接口单次窗口约一年
-        d = _post_json(LPR_API, {'lang': 'CN', 'startDate': a.isoformat(), 'endDate': b.isoformat()})
-        rows.extend(parse_lpr_records(d.get('records')))
-        time.sleep(0.4)
+    for pg in range(1, max_pages + 1):
+        d = _post_json(LPR_NOTICE_API, {'channelId': LPR_NOTICE_CHANNEL, 'pageSize': 15, 'pageNo': pg})
+        recs = d.get('records') or []
+        if not recs:
+            break
+        reached_older = False
+        for x in recs:
+            title = x.get('title') or ''
+            if '公布贷款市场报价利率' not in title:
+                continue
+            md = re.search(r'(20\d{2})年(\d{1,2})月(\d{1,2})日', title)
+            if not md:
+                continue
+            period = f'{md.group(1)}-{int(md.group(2)):02d}-{int(md.group(3)):02d}'
+            pdate = date.fromisoformat(period)
+            if pdate > end:
+                continue
+            if pdate < start:
+                reached_older = True
+                break                      # 列表按时间倒序，更老的不用再翻
+            url = 'https://www.chinamoney.com.cn' + (x.get('draftPath') or '')
+            try:
+                r = requests.get(url, headers=UA, timeout=HTTP_TIMEOUT)
+                r.encoding = 'utf-8'
+                text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', r.text))
+                v1, v5 = parse_lpr_announcement_text(text)
+            except Exception:
+                continue                   # 单篇失败跳过，不影响其余
+            for v, code, name in [(v1, 'LPR_1Y', 'LPR 1年期'), (v5, 'LPR_5Y', 'LPR 5年期以上')]:
+                if v is not None:
+                    rows.append({'indicator_code': code, 'indicator_name': name, 'period': period,
+                                 'value': v, 'unit': '%', 'frequency': 'monthly', 'source_url': url})
+            time.sleep(0.4)
+        if reached_older:
+            break
+        time.sleep(0.3)
     return rows
 
 
@@ -189,10 +221,11 @@ def update_china_rates(db_path, backfill=False):
                     source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(indicator_code,period) DO UPDATE SET
-                    value=excluded.value, updated_at=excluded.updated_at''',
+                    value=excluded.value, source_url=excluded.source_url, updated_at=excluded.updated_at''',
                     (o['indicator_code'], o['indicator_name'], o['period'], o['value'], o['unit'],
-                     o['frequency'], 'official', SOURCE_NAME, SOURCE_TYPE, page_url,
-                     f'{label}历史数据(中国货币网)', f'官方 JSON 接口 {api_url}', None, now))
+                     o['frequency'], 'official', SOURCE_NAME, SOURCE_TYPE,
+                     o.get('source_url') or page_url,   # LPR 逐篇公告有各自正文 URL
+                     f'{label}历史数据(中国货币网)', f'官方接口 {api_url}', None, now))
                 inserted += cur.rowcount
         conn.commit()
     return {'success': not errors or inserted > 0, 'started_at': started,
@@ -201,10 +234,20 @@ def update_china_rates(db_path, backfill=False):
 
 
 # ── payload ───────────────────────────────────────────────────────────────────
-def _series(conn, code, limit=None):
+def _downsample(rows, max_points=1200):
+    """长日频序列等距降采样到 max_points(保首尾)，只影响图表密度不影响存储。"""
+    n = len(rows)
+    if n <= max_points:
+        return rows
+    stride = (n - 1) / (max_points - 1)
+    idxs = sorted({round(i * stride) for i in range(max_points)} | {0, n - 1})
+    return [rows[i] for i in idxs]
+
+
+def _series(conn, code, max_points=1200):
     q = 'SELECT period, value FROM china_rates_observations WHERE indicator_code=? ORDER BY period'
     rows = [dict(r) for r in conn.execute(q, (code,))]
-    return rows[-limit:] if limit else rows
+    return _downsample(rows, max_points)
 
 
 def _latest(conn, code):
@@ -236,14 +279,16 @@ def build_china_rates_payload(db_path):
             })
         series = {
             'lpr': {'LPR_1Y': _series(conn, 'LPR_1Y'), 'LPR_5Y': _series(conn, 'LPR_5Y')},
-            'shibor': {t: _series(conn, f'SHIBOR_{t}', limit=500) for t in ('ON', '3M', '1Y')},
-            'usdcny': _series(conn, 'USDCNY_CENTRAL_PARITY', limit=800),
+            'shibor': {t: _series(conn, f'SHIBOR_{t}') for t in ('ON', '3M', '1Y')},
+            'usdcny': _series(conn, 'USDCNY_CENTRAL_PARITY'),
         }
     return {
         'data_status': 'official' if cov.get('records') else 'missing',
         'source_name': SOURCE_NAME, 'coverage': cov, 'cards': cards, 'series': series,
         'source_pages': {'lpr': LPR_PAGE, 'shibor': SHIBOR_PAGE, 'ccpr': CCPR_PAGE},
         'warnings': [] if cov.get('records') else ['尚无数据；未生成 mock。'],
-        'notes': ['LPR 为每月 20 日(节假日顺延)报价；SHIBOR、中间价为交易日日频。',
+        'notes': ['LPR：2019-08-20 改革首报起，逐月取自中国货币网 LPR 公告正文(每条带原文链接)。'
+                  '旧版贷款基础利率(2013-2019)官方接口不提供历史数值，未接入。',
+                  'SHIBOR 自 2006-10 创设；中间价历史取自 2006 年起。日频长序列图表按等距降采样展示(约1200点)，存储为全量。',
                   '全部数据来自中国货币网官方接口，逐条 official。'],
     }

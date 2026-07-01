@@ -84,9 +84,9 @@ function App(){
   }
   useEffect(()=>{load()},[]);
   if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;
-  // 劳动力市场图截近 ~20 年月度；利率图混月度+日频(用各自 period 合并)
-  const labor=mergeSeries({UNRATE:(p.series.UNRATE||[]).slice(-250),JTSQUR:p.series.JTSQUR||[]});
-  const rates=mergeSeries({FEDFUNDS:(p.series.FEDFUNDS||[]).slice(-250),DGS10:p.series.DGS10||[]});
+  // 全量历史(后端已对超长日频降采样)；两图各自按 period 合并
+  const labor=mergeSeries({UNRATE:p.series.UNRATE||[],JTSQUR:p.series.JTSQUR||[]});
+  const rates=mergeSeries({FEDFUNDS:p.series.FEDFUNDS||[],DGS10:p.series.DGS10||[]});
   return <div className="wrap">
     <div className="top"><div><h1>美国宏观 (FRED)</h1>
       <div className="sub">失业率 / JOLTS 离职率 / 联邦基金利率 / 10年期美债 · 来源：{p.source_name} · 覆盖 {p.coverage.earliest||'—'} ~ {p.coverage.latest||'—'}（{p.coverage.records||0} 条，全部 official）</div></div>
@@ -100,8 +100,8 @@ function App(){
       {c.value!==null&&c.value!==undefined?<div className="metric-value">{fmt(c.value)}<span style={{fontSize:12}}> {c.unit}</span></div>:<div className="metric-missing">{c.warning||'—'}</div>}
       <div className="metric-meta">期数：{c.period||'—'}<br/>{c.source_url?<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">FRED 系列页</a>:'—'}</div>
     </div>)}</div>
-    <Chart title="劳动力市场：失业率 vs JOLTS 离职率（月度）" data={labor} series={[{key:'UNRATE',label:'失业率',color:'var(--red)'},{key:'JTSQUR',label:'JOLTS 离职率',color:'var(--green)'}]} unit="%"/>
-    <Chart title="利率：联邦基金利率 vs 10年期美债收益率" data={rates} series={[{key:'FEDFUNDS',label:'联邦基金利率(月)',color:'var(--yellow)'},{key:'DGS10',label:'10Y 美债(日)',color:'var(--blue)'}]} unit="%"/>
+    <Chart title="劳动力市场：失业率(1948起) vs JOLTS 离职率(2000起)，月度" data={labor} series={[{key:'UNRATE',label:'失业率',color:'var(--red)'},{key:'JTSQUR',label:'JOLTS 离职率',color:'var(--green)'}]} unit="%"/>
+    <Chart title="利率：联邦基金利率(1954起，月) vs 10年期美债收益率(1962起，日频降采样)" data={rates} series={[{key:'FEDFUNDS',label:'联邦基金利率(月)',color:'var(--yellow)'},{key:'DGS10',label:'10Y 美债(日)',color:'var(--blue)'}]} unit="%"/>
     <div className="muted">{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
   </div>;
 }

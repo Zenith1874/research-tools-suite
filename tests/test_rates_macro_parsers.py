@@ -1,24 +1,23 @@
 import unittest
 
-from services.china_rates_service import parse_lpr_records, parse_shibor_records, parse_ccpr_records
+from services.china_rates_service import parse_lpr_announcement_text, parse_shibor_records, parse_ccpr_records
 from services.us_macro_service import parse_fred_csv
 
 
 class ChinaRatesParserTests(unittest.TestCase):
-    def test_lpr_parses_both_tenors(self):
-        rows = parse_lpr_records([{'5Y': '3.50', '1Y': '3.00', 'showDateCN': '2026-06-22'}])
-        self.assertEqual(len(rows), 2)
-        by_code = {r['indicator_code']: r for r in rows}
-        self.assertEqual(by_code['LPR_1Y']['value'], 3.00)
-        self.assertEqual(by_code['LPR_5Y']['value'], 3.50)
-        self.assertEqual(by_code['LPR_1Y']['period'], '2026-06-22')
+    def test_lpr_announcement_parses_spaced_digits(self):
+        # 官方正文数字里常夹空格："1年期LPR为 3. 0 %，5年期以上LPR为 3.5 %"
+        text = '2025年5月20日贷款市场报价利率（ LPR）为：1年期LPR为 3. 0 %，5年期以上LPR为 3.5 %。'
+        v1, v5 = parse_lpr_announcement_text(text)
+        self.assertEqual(v1, 3.0)
+        self.assertEqual(v5, 3.5)
 
-    def test_lpr_skips_bad_values_and_missing_date(self):
-        rows = parse_lpr_records([
-            {'5Y': 'N/A', '1Y': '', 'showDateCN': '2026-06-22'},   # 值坏 → 全跳
-            {'5Y': '3.50', '1Y': '3.00'},                          # 无日期 → 跳
-        ])
-        self.assertEqual(rows, [])
+    def test_lpr_announcement_normal_wording(self):
+        v1, v5 = parse_lpr_announcement_text('1年期LPR为3.85%，5年期以上LPR为4.85%。')
+        self.assertEqual((v1, v5), (3.85, 4.85))
+
+    def test_lpr_announcement_no_match(self):
+        self.assertEqual(parse_lpr_announcement_text('与利率无关的正文'), (None, None))
 
     def test_shibor_parses_all_tenors(self):
         rec = {'ON': '1.4030', '1W': '1.4630', '2W': '1.4590', '1M': '1.4260',
