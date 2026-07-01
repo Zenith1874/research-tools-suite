@@ -109,10 +109,20 @@ def update_us_macro(db_path):
             'errors': errors}
 
 
-def _series_rows(conn, code, limit=None):
+def _downsample(rows, max_points=1200):
+    """长序列等距降采样(保首尾)，只影响图表密度，存储仍是全量。"""
+    n = len(rows)
+    if n <= max_points:
+        return rows
+    stride = (n - 1) / (max_points - 1)
+    idxs = sorted({round(i * stride) for i in range(max_points)} | {0, n - 1})
+    return [rows[i] for i in idxs]
+
+
+def _series_rows(conn, code, max_points=1200):
     rows = [dict(r) for r in conn.execute(
         'SELECT period, value FROM us_macro_observations WHERE indicator_code=? ORDER BY period', (code,))]
-    return rows[-limit:] if limit else rows
+    return _downsample(rows, max_points)
 
 
 def build_us_macro_payload(db_path):
@@ -133,8 +143,8 @@ def build_us_macro_payload(db_path):
                 'parser_notes': r['parser_notes'] if r else None,
                 'warning': None if r else '尚未抓取，点击"更新数据"。',
             })
-            # 月频给全量(几百点)；日频截近 ~3 年
-            series[code] = _series_rows(conn, code, limit=800 if freq == 'daily' else None)
+            # 全量历史；超长序列(日频 DGS10 自 1962)等距降采样到 ~1200 点
+            series[code] = _series_rows(conn, code)
     return {
         'data_status': 'official' if cov.get('records') else 'missing',
         'source_name': SOURCE_NAME, 'coverage': cov, 'cards': cards, 'series': series,
