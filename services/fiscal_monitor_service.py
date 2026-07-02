@@ -34,6 +34,11 @@ from services.pboc_gov_bond_omo_service import (
     build_pboc_gov_bond_omo_payload,
     update_pboc_gov_bond_omo,
 )
+from services.fiscal_budget_service import (
+    INDEX_URL as FISCAL_BUDGET_INDEX,
+    build_fiscal_budget_payload,
+    update_fiscal_budget,
+)
 
 
 MODULE_UPDATES = {
@@ -61,6 +66,10 @@ MODULE_UPDATES = {
     'pboc_buyout_reverse_repo': {
         'source_name': '中国人民银行', 'source_type': 'pboc_buyout_reverse_repo',
         'source_url': BUYOUT_REPO_ENTRY, 'update': update_pboc_buyout_reverse_repo,
+    },
+    'fiscal_budget': {
+        'source_name': '财政部国库司', 'source_type': 'mof_fiscal_budget',
+        'source_url': FISCAL_BUDGET_INDEX, 'update': update_fiscal_budget,
     },
 }
 
@@ -127,12 +136,86 @@ def _last_update_time(conn):
     return row['value'] if row else None
 
 
+# ── 国债还本/付息(derived，仅覆盖已抓逐只国债；完整兑付源仍缺) ─────────────────
+def _next_12_months():
+    y, m = datetime.now().year, datetime.now().month
+    out = []
+    for _ in range(12):
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+        out.append(f'{y}-{m:02d}')
+    return out
+
+
+def _treasury_principal_by_month(issuances):
+    """按 maturity_date 逐月聚合到期还本(精确值，但仅含已抓国债)。"""
+    agg = {}
+    for r in issuances:
+        md, amt = r.get('maturity_date'), r.get('actual_issue_amount')
+        if md and amt:
+            a = agg.setdefault(md[:7], {'month': md[:7], 'principal_due': 0.0, 'bonds': 0})
+            a['principal_due'] += amt
+            a['bonds'] += 1
+    return sorted(agg.values(), key=lambda x: x['month'])
+
+
+def _treasury_principal_card(issuances, entry_url):
+    months = set(_next_12_months())
+    total = sum(r['actual_issue_amount'] for r in issuances
+                if r.get('maturity_date') and r.get('actual_issue_amount')
+                and r['maturity_date'][:7] in months)
+    urls = [r['source_url'] for r in issuances
+            if r.get('maturity_date') and r['maturity_date'][:7] in months and r.get('source_url')]
+    if not total:
+        return _card('国债到期还本(未来12个月)', unit='亿元', data_status='missing',
+                     warning='已抓国债中未来12个月无到期记录。')
+    return _card(
+        '国债到期还本(未来12个月，已抓国债)', round(total, 1), '亿元',
+        f"{datetime.now().strftime('%Y-%m')} 起12个月", 'derived',
+        '财政部债务管理司(逐只国债聚合)', entry_url, '逐只国债 maturity_date 聚合',
+        '仅覆盖 2024 年起已抓的逐只国债；更早发行的存量国债到期未包含，实际到期还本更大。',
+        'sum(actual_issue_amount where maturity_date within next 12 months)',
+        source_urls=urls[:60])
+
+
+def _treasury_interest_card(issuances, entry_url):
+    today = datetime.now().strftime('%Y-%m-%d')
+    annual, counted, missing_rate = 0.0, 0, 0
+    urls = []
+    for r in issuances:
+        if r.get('bond_type') not in ('book_entry_interest_bearing', 'special_treasury_bond'):
+            continue    # 贴现国债无票息
+        md, amt = r.get('maturity_date'), r.get('actual_issue_amount')
+        if not (md and md > today and amt):
+            continue
+        cr = r.get('coupon_rate')
+        if cr:
+            annual += amt * cr / 100.0
+            counted += 1
+            if r.get('source_url'):
+                urls.append(r['source_url'])
+        else:
+            missing_rate += 1
+    if not counted:
+        return _card('国债年付息(估计)', unit='亿元/年', data_status='missing',
+                     warning='已抓国债均无票面利率信息，无法估计。')
+    return _card(
+        '存量附息国债年付息(估计，已抓国债)', round(annual, 1), '亿元/年', today, 'derived',
+        '财政部债务管理司(逐只国债聚合)', entry_url, '票面利率×发行额 汇总',
+        f'覆盖 {counted} 只有票面利率的未到期附息/特别国债；另有 {missing_rate} 只未到期附息国债缺票面利率未计入；'
+        '贴现国债折价发行无票息。2024 年前发行的存量国债不在内，实际全口径付息远大于此。',
+        'sum(actual_issue_amount × coupon_rate / 100) for outstanding coupon-bearing bonds',
+        source_urls=urls[:60])
+
+
 def build_fiscal_monitor_payload(db_path):
     fiscal = build_fiscal_debt_payload(db_path)
     balance = build_pboc_balance_sheet_payload(db_path)
     omo = build_pboc_gov_bond_omo_payload(db_path)
     buyout = build_pboc_buyout_reverse_repo_payload(db_path)
     treasury_issuance = build_mof_treasury_bond_payload(db_path)
+    budget = build_fiscal_budget_payload(db_path)
     local_records = fiscal['local_government_debt']['records']
     central_records = fiscal['treasury_debt']['records']
     local_latest = _latest_by_period(local_records)
@@ -254,10 +337,11 @@ def build_fiscal_monitor_payload(db_path):
             f'汇总当月 {len(latest_issue_rows)} 条 actual_issue_amount；每条来源见国债发行明细。' if issue_source else None,
             source_urls=[r['source_url'] for r in latest_issue_rows],
         ),
-        _card('国债到期还本', unit='亿元', data_status='missing', warning='完整兑付数据源待接入，不根据发行表粗略估算。'),
-        _card('国债付息', unit='亿元', data_status='missing', warning='国债付息数据源待接入。'),
+        _treasury_principal_card(official_issuances, entry),
+        _treasury_interest_card(official_issuances, entry),
         _local_card(central_latest, 'central_government_debt_balance', '中央政府债务余额'),
     ]
+    treasury_principal_monthly = _treasury_principal_by_month(official_issuances)
 
     balance_latest = balance.get('latest')
     omo_latest = omo.get('latest')
@@ -356,8 +440,11 @@ def build_fiscal_monitor_payload(db_path):
         'government_debt_overview': {
             'title': '政府债务总览', 'status': _section_status(overview_cards),
             'cards': overview_cards,
-            'tables': {'central_government_debt': central_records, 'local_government_debt': local_records},
-            'warnings': ['中央政府债务与地方政府债务口径分开保存；显性合计只在同一期数计算。'],
+            'budget_cards': budget.get('cards', []),
+            'tables': {'central_government_debt': central_records, 'local_government_debt': local_records,
+                       'fiscal_budget': budget.get('series', [])},
+            'warnings': ['中央政府债务与地方政府债务口径分开保存；显性合计只在同一期数计算。',
+                         '财政收支为国库司月度报告 YTD 累计；收支差额为 derived，不等于官方预算口径赤字。'],
         },
         'debt_rollover_pressure': {
             'title': '发行、还本、付息压力',
@@ -367,10 +454,11 @@ def build_fiscal_monitor_payload(db_path):
                 'treasury_monthly_issuance': treasury_issuance.get('monthly', []),
                 'treasury_by_type': treasury_issuance.get('by_type', []),
                 'treasury_maturity_by_year': treasury_issuance.get('by_maturity_year', []),
+                'treasury_principal_due_monthly': treasury_principal_monthly,
                 'treasury_planned_only': _without_raw(treasury_issuance.get('current_year_planned_only', []), 80),
                 'treasury_issuance_details': _without_raw(treasury_issuance.get('records', []), 120),
             },
-            'warnings': ['国债实际发行（境内逐笔）已接入并按类型/年份汇总；储蓄国债、香港人民币国债、国债还本付息尚未接入。',
+            'warnings': ['国债实际发行（境内逐笔）已接入并按类型/年份汇总；到期还本/年付息为已抓国债的 derived 估计(非全口径)；储蓄国债、香港人民币国债尚未接入。',
                          '国债到期分布仅来自已抓取的逐只国债（2024 起），不等于全部存量国债的完整到期表。'],
         },
         'pboc_monetization_pressure': {
@@ -514,9 +602,11 @@ def build_fiscal_monitor_debug(db_path):
     missing_modules = [
         {'module_code': 'lgfv_debt', 'reason': '没有官方统一城投债余额口径。',
          'next_source': '中国债券信息网、交易所或经授权的 Wind/Choice。'},
-        {'module_code': 'fiscal_gap', 'reason': '财政缺口需要定义测算口径，不能当作官方赤字。',
-         'next_source': '财政部财政收支和预算执行报告。'},
-        {'module_code': 'treasury_principal_interest', 'reason': '国债还本付息完整序列尚未接入。',
+        {'module_code': 'fiscal_gap',
+         'reason': '一般公共预算/政府性基金收支(YTD)已接入，收支差额为 derived；官方预算口径赤字(含调入资金/结转结余)仍未单列。',
+         'next_source': '财政部预算执行报告、全国人大预算决议。'},
+        {'module_code': 'treasury_principal_interest',
+         'reason': '已用已抓逐只国债给出 derived 估计(未来12个月还本 + 存量附息年付息)；全口径(含2024年前存量)完整序列仍缺。',
          'next_source': '财政部国债发行兑付公告和中央国债登记结算公开统计。'},
         {'module_code': 'complete_maturity_schedule', 'reason': '当前国债发行明细不等于完整存量债券到期表。',
          'next_source': '财政部历史公告、中国债券信息网或中债登。'},
