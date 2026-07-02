@@ -18,8 +18,11 @@
 
 ```bash
 cd <repo>
-pip install requests        # 仅 A* 雷达需要；其余模块用标准库
-python server.py            # 启动后打开 http://localhost:5001
+pip install -r requirements.txt   # requests / beautifulsoup4 / openpyxl / pypdf
+python server.py                  # 启动后打开 http://localhost:5001
+
+# 可选：看门狗(健康探测,服务器挂了自动重启)
+python scripts/watchdog.py --start-if-down
 ```
 
 启动时自动建表、载入清单、开启后台增量调度器。

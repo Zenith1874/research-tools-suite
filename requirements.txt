@@ -1,0 +1,5 @@
+# 研究工具集依赖(Python 3.12 实测版本，低一些的兼容版本一般也可用)
+requests>=2.31          # 所有抓取(PBOC/MOF/chinamoney/FRED/OpenAlex/Crossref/LLM API)
+beautifulsoup4>=4.12    # PBOC/MOF 页面解析
+openpyxl>=3.1           # 央行资产负债表 xlsx、ABDC 清单导入
+pypdf>=4.0              # 财政部中央政府债务 PDF 解析
