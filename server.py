@@ -248,6 +248,27 @@ _JOBS = {}                          # name -> {status,started,finished,result,er
 _JOBS_LOCK = threading.Lock()       # 保护 _JOBS 字典
 _UPDATE_LOCK = threading.Lock()     # 全局写任务串行锁(同一时刻只跑一个更新)
 
+# /api/data 内存缓存：payload 532KB 每次现算约 0.4s，而数据一天最多变两次。
+# 任何后台更新任务结束时失效；TTL 10 分钟兜底(防漏失效)。
+_DATA_CACHE = {'body': None, 'ts': 0.0}
+_DATA_CACHE_LOCK = threading.Lock()
+_DATA_CACHE_TTL = 600
+
+def _data_cache_get():
+    with _DATA_CACHE_LOCK:
+        if _DATA_CACHE['body'] is not None and time.time() - _DATA_CACHE['ts'] < _DATA_CACHE_TTL:
+            return _DATA_CACHE['body']
+    return None
+
+def _data_cache_set(body):
+    with _DATA_CACHE_LOCK:
+        _DATA_CACHE['body'] = body
+        _DATA_CACHE['ts'] = time.time()
+
+def _data_cache_clear():
+    with _DATA_CACHE_LOCK:
+        _DATA_CACHE['body'] = None
+
 def _run_update_job(name, fn, blocking=False):
     """在后台守护线程里跑 fn()，串行(共享 _UPDATE_LOCK)。
     blocking=False(HTTP 触发)：锁被占则直接返回 already_running，不排队。
@@ -267,6 +288,8 @@ def _run_update_job(name, fn, blocking=False):
             with _JOBS_LOCK:
                 _JOBS[name].update(status='error', finished=datetime.now().isoformat(), error=str(e))
             return {'status': 'error', 'error': str(e)}
+        finally:
+            _data_cache_clear()   # 任何更新任务结束都让 /api/data 缓存失效
 
     if blocking:
         with _UPDATE_LOCK:
@@ -1482,7 +1505,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'error':'not found'},404)
 
     def _api_data(self):
-        self.send_json(build_api_payload(DB_PATH))
+        cached = _data_cache_get()
+        if cached is not None:
+            self.send_json(cached)
+            return
+        payload = build_api_payload(DB_PATH)
+        _data_cache_set(payload)
+        self.send_json(payload)
 
     def _api_financial_update(self):
         self.send_json(_run_update_job('financial', _do_financial_update))

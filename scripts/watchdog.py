@@ -52,9 +52,27 @@ def kill_server():
         log(f'kill_server 出错: {e}')
 
 
-def start_server():
-    """后台启动 server.py，脱离看门狗进程，stdout/stderr 续写到日志。"""
+MAX_LOG_BYTES = 5 * 1024 * 1024   # 单个日志超过 5MB 就轮转成 .1(覆盖旧 .1)
+
+
+def rotate_log(path):
     try:
+        if os.path.exists(path) and os.path.getsize(path) > MAX_LOG_BYTES:
+            bak = path + '.1'
+            if os.path.exists(bak):
+                os.remove(bak)
+            os.replace(path, bak)
+            log(f'日志已轮转: {os.path.basename(path)} -> .1')
+    except Exception as e:
+        log(f'rotate_log({path}) 出错: {e}')
+
+
+def start_server():
+    """后台启动 server.py，脱离看门狗进程，stdout/stderr 续写到日志(启动前轮转)。"""
+    try:
+        for name in ('server.stdout.log', 'server.stderr.log'):
+            rotate_log(os.path.join(ROOT, name))
+        rotate_log(LOGFILE)
         subprocess.Popen(
             [sys.executable, SERVER], cwd=ROOT,
             creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
@@ -91,6 +109,7 @@ def main():
         time.sleep(8)
 
     consecutive = 0
+    ticks = 0
     while True:
         if healthy(args.port):
             if consecutive:
@@ -102,6 +121,9 @@ def main():
             if consecutive >= args.fails:
                 restart(args.port)
                 consecutive = 0
+        ticks += 1
+        if ticks % 120 == 0:          # 约每 40 分钟检查一次自身日志大小
+            rotate_log(LOGFILE)       # server 日志被运行中进程占用，只在重启时轮转
         time.sleep(args.interval)
 
 
