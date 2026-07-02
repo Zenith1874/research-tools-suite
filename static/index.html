@@ -60,6 +60,10 @@
   <h1>研究工具集</h1>
   <p class="subtitle">localhost:5001</p>
 
+  <div id="whats-new" style="display:none;max-width:1080px;margin:0 auto 26px;text-align:left;
+       background:#0d1728;border:1px solid #22324b;border-radius:8px;padding:14px 18px;font-size:0.82rem;line-height:1.9;color:#b8c6d8;">
+  </div>
+
   <div class="cards">
     <a class="card" href="/dashboard">
       <span class="card-icon">📊</span>
@@ -100,5 +104,43 @@
   </div>
 
   <div class="footer">http://localhost:5001</div>
+
+<script>
+(async function(){
+  try{
+    const r = await fetch('/api/whats-new');
+    if(!r.ok) return;
+    const d = await r.json();
+    const box = document.getElementById('whats-new');
+    const lastVisit = localStorage.getItem('wn_last_visit') || '';
+    localStorage.setItem('wn_last_visit', d.generated_at || new Date().toISOString());
+    const esc = s => String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    let html = '<b style="color:#e5edf7">📌 What\'s New</b>';
+
+    const ev = (d.events||[]).slice(0,8);
+    if(ev.length){
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:6px;">' + ev.map(e=>{
+        const isNew = lastVisit && e.created_at > lastVisit;
+        return '<span>'+(isNew?'🆕 ':'· ')+esc(e.title)+' <b style="color:'+(isNew?'#00d4aa':'#8ea0b8')+'">'+esc(e.period)+'</b></span>';
+      }).join('') + '</div>';
+    }
+    if(d.astar_week_count){
+      html += '<div style="margin-top:6px;">🛰️ 近7天 A* 新文章 <b style="color:#e5edf7">'+d.astar_week_count+'</b> 篇';
+      const hi = d.astar_recent_high||[];
+      if(hi.length){
+        html += '，高相关 <b style="color:#00d4aa">'+hi.length+'</b> 篇：' +
+          hi.slice(0,3).map(a=>'<a href="/abdc-astar-research" style="color:#9ec2ff;text-decoration:none">'+esc((a.title||'').slice(0,46))+'…('+a.relevance_score+')</a>').join(' · ');
+      }
+      html += '</div>';
+    }
+    if((d.update_failures||[]).length){
+      html += '<div style="margin-top:6px;color:#f8d89b;">⚠️ 近7天抓取失败：' +
+        d.update_failures.map(f=>esc(f.source_type)).join('、') + '（详见各模块 Debug）</div>';
+    }
+    box.innerHTML = html;
+    box.style.display = 'block';
+  }catch(e){}
+})();
+</script>
 </body>
 </html>

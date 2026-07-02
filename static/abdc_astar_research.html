@@ -149,6 +149,7 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
 <div class="tabs" id="tabs">
   <div class="tab active" data-tab="latest">最新文章</div>
   <div class="tab" data-tab="related">与我相关</div>
+  <div class="tab" data-tab="semantic">🔍 语义搜索</div>
   <div class="tab" data-tab="digest">本周 Digest</div>
   <div class="tab" data-tab="topics">主题地图</div>
   <div class="tab" data-tab="trends">趋势</div>
@@ -244,6 +245,7 @@ function render(){
   fb.innerHTML=''; c.innerHTML='<div class="loading"><div class="spinner"></div></div>';
   if(STATE.tab==='latest') renderArticles(false);
   else if(STATE.tab==='related') renderArticles(true);
+  else if(STATE.tab==='semantic') renderSemantic();
   else if(STATE.tab==='digest') renderDigest();
   else if(STATE.tab==='topics') renderTopics();
   else if(STATE.tab==='trends') renderTrends();
@@ -393,6 +395,7 @@ function articleCard(a){
       <span class="why">${esc(cls.classification_notes||'')}</span>
       <a href="${doiUrl}" target="_blank">查看原文 ↗</a>
       ${a.openalex_id?`<a href="https://openalex.org/${esc(a.openalex_id)}" target="_blank">OpenAlex</a>`:''}
+      <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
       <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
     </div>
   </div>`;
@@ -539,6 +542,71 @@ async function runUpdate(mode,days){
 async function reclassify(){const r=await postJSON('/api/abdc/astar/classify',{});toast(r.message||'已启动')}
 async function enrich(){toast('Semantic Scholar 补全已启动（按批进行，约 1-2 分钟）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
 async function saveArticle(id){const r=await postJSON('/api/abdc/astar/save',{article_id:id});toast(r.success?'已保存到阅读列表':'保存失败')}
+
+// ── 语义搜索 ──────────────────────────────────────────────────────────────
+function renderSemantic(){
+  const fb=document.getElementById('filterBar'), c=document.getElementById('content');
+  fb.innerHTML='';
+  c.innerHTML=`<div style="max-width:860px;margin:10px auto">
+    <div style="display:flex;gap:8px">
+      <input id="semq" placeholder="粘贴一段话 / 一个假设 / 研究想法…(英文效果最好)" style="flex:1;background:#0d1728;border:1px solid #22324b;border-radius:6px;color:#e5edf7;padding:10px 12px;font-size:13px"/>
+      <button class="btn primary" onclick="runSemantic()">语义搜索</button>
+    </div>
+    <div style="color:var(--muted);font-size:11px;margin-top:6px">在 13 万+ 篇 A* 文章的摘要向量里找语义最近的；向量库未就绪时自动退回标题关键词搜索。</div>
+    <div id="semres" style="margin-top:14px"></div></div>`;
+  const inp=document.getElementById('semq');
+  inp.onkeydown=e=>{if(e.key==='Enter')runSemantic()};
+  inp.focus();
+}
+async function runSemantic(){
+  const q=document.getElementById('semq').value.trim();
+  const res=document.getElementById('semres');
+  if(!q){res.innerHTML='<div class="empty">请输入内容。</div>';return}
+  res.innerHTML='<div class="loading"><div class="spinner"></div></div>';
+  try{
+    const r=await fetch('/api/abdc/astar/semantic-search?q='+encodeURIComponent(q)+'&topk=30');
+    const d=await r.json();
+    if(!d.available){
+      // 回退：标题关键词
+      const kr=await fetch('/api/abdc/astar/articles?q='+encodeURIComponent(q)+'&page_size=30');
+      const kd=await kr.json();
+      const arts=(kd.articles||[]);
+      res.innerHTML=`<div class="banner" style="border:1px solid rgba(245,166,35,.4);border-radius:6px;padding:8px 12px;font-size:12px;color:#f8d89b;margin-bottom:10px">向量库未就绪(${esc(d.error||'')})，已退回标题关键词搜索(${arts.length} 条)。</div>`
+        + arts.map(articleCard).join('');
+      return;
+    }
+    let html='';
+    if((d.journal_match||[]).length){
+      html+='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">📚 期刊匹配(按语义相似度聚合，可作投稿参考):</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'
+        + d.journal_match.map(j=>`<span class="tag tag-area" title="top3均值 ${j.score} · 命中${j.hits}篇">${esc(j.journal)} <b>${(j.score*100).toFixed(0)}</b></span>`).join('')+'</div>';
+    }
+    html+=(d.articles||[]).map(a=>`<div class="card">
+      <div class="card-top"><div style="flex:1">
+        <div class="card-title">${esc(a.title)}</div>
+        <div><span class="card-journal">${esc(a.journal_title||'')}</span></div>
+        <div class="card-meta">${esc(a.publication_date||'')}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
+        <div class="card-authors">${esc((a.authors||[]).join(', '))}</div>
+      </div><span class="relscore rel-high" title="语义相似度">${(a.similarity*100).toFixed(0)}</span></div>
+      <div class="card-abstract">${esc(a.abstract||'')}${(a.abstract||'').length>=400?'…':''}</div>
+      <div class="card-foot">
+        <a href="${a.doi?'https://doi.org/'+esc(a.doi):(a.url||'#')}" target="_blank">查看原文 ↗</a>
+        <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
+        <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
+      </div></div>`).join('');
+    res.innerHTML=html||'<div class="empty">没有结果。</div>';
+  }catch(e){res.innerHTML='<div class="empty">搜索失败: '+esc(String(e))+'</div>'}
+}
+
+async function copyBibtex(id,el){
+  try{
+    const r=await fetch(`/api/abdc/astar/bibtex/${id}`);
+    if(!r.ok){toast('BibTeX 获取失败');return}
+    const text=await r.text();
+    await navigator.clipboard.writeText(text);
+    toast('BibTeX 已复制到剪贴板');
+    if(el){const old=el.textContent;el.textContent='✓ 已复制';setTimeout(()=>el.textContent=old,1500)}
+  }catch(e){toast('复制失败: '+e)}
+}
 
 async function exportCsv(){
   const data=await getJSON('/api/abdc/astar/articles?limit=500&sort=relevance_desc');

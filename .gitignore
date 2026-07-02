@@ -40,3 +40,6 @@ tasks/
 pbc_found_links.json
 pbc_search_found.json
 pbc_*.json
+backups/
+data/astar_emb*.npy
+data/astar_emb_meta.json
