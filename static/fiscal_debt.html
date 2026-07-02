@@ -33,7 +33,15 @@ function Metric({card}){const missing=['missing','error','not_available'].includ
 function Metrics({cards}){return <div className="grid">{(cards||[]).map((c,i)=><Metric key={c.label+'-'+i} card={c}/>)}</div>}
 function Section({id,section,children}){return <section className="section" id={id}><div className="section-head"><div><h2>{section?.title}</h2><div className="muted">{(section?.warnings||[]).join('；')}</div></div><Badge status={section?.status}/></div>{children}</section>}
 function ModuleHead({title,moduleCode,onUpdate,busy}){return <div className="module-head"><h3>{title}</h3>{moduleCode&&<button className="btn" disabled={busy} onClick={()=>onUpdate(moduleCode)}>更新此模块</button>}</div>}
-function DataTable({title,rows,columns}){if(!rows?.length)return <div className="empty">{title}：暂无可靠数据。</div>;return <><div className="table-title">{title}</div><div className="scroll"><table><thead><tr>{columns.map(c=><th key={c[0]}>{c[1]}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={r.period||r.source_url||i}>{columns.map(([k,label,type])=><td key={k} className={type==='num'?'num':''}>{type==='source'?<SourceLink url={r[k]} urls={r.source_urls}/>:type==='status'?<Badge status={r[k]}/>:type==='num'?fmt(r[k],k.includes('rate')||k.includes('pct')?2:1):(r[k]??'—')}</td>)}</tr>)}</tbody></table></div></>}
+function csvDownload(title,rows,columns){
+  const esc=v=>{const s=v===null||v===undefined?'':String(v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s};
+  const head=columns.map(c=>esc(c[1])).join(',');
+  const body=rows.map(r=>columns.map(([k])=>esc(Array.isArray(r[k])?r[k].join(';'):r[k])).join(',')).join('\n');
+  const blob=new Blob(['﻿'+head+'\n'+body],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=title.replace(/[\\/:*?"<>|\s]+/g,'_')+'.csv';a.click();URL.revokeObjectURL(a.href);
+}
+function DataTable({title,rows,columns}){if(!rows?.length)return <div className="empty">{title}：暂无可靠数据。</div>;return <><div className="table-title">{title} <a style={{color:'#9ec2ff',cursor:'pointer',fontSize:11,marginLeft:8}} onClick={()=>csvDownload(title,rows,columns)}>⬇ CSV</a></div><div className="scroll"><table><thead><tr>{columns.map(c=><th key={c[0]}>{c[1]}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={r.period||r.source_url||i}>{columns.map(([k,label,type])=><td key={k} className={type==='num'?'num':''}>{type==='source'?<SourceLink url={r[k]} urls={r.source_urls}/>:type==='status'?<Badge status={r[k]}/>:type==='num'?fmt(r[k],k.includes('rate')||k.includes('pct')?2:1):(r[k]??'—')}</td>)}</tr>)}</tbody></table></div></>}
 
 function Chart({title,data,series,unit=''}){
   const [hover,setHover]=useState(null);   // hook 必须在任何 return 之前

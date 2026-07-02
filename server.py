@@ -5,7 +5,7 @@
   - ABDC 期刊质量列表查询
 """
 
-import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys
+import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys, shutil
 import html as html_lib
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -63,6 +63,7 @@ from services.us_macro_service import (
     build_us_macro_payload,
     update_us_macro,
 )
+from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -290,6 +291,10 @@ def _run_update_job(name, fn, blocking=False):
             return {'status': 'error', 'error': str(e)}
         finally:
             _data_cache_clear()   # 任何更新任务结束都让 /api/data 缓存失效
+            try:
+                check_and_record_new_periods(DB_PATH)   # 探测新期数→记 What's New 事件(幂等)
+            except Exception:
+                pass
 
     if blocking:
         with _UPDATE_LOCK:
@@ -1414,6 +1419,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/articles': self._api_astar_articles()
             elif re.match(r'^/api/abdc/astar/articles/\d+$', path):
                 self.send_json(build_astar_article_detail(int(path.rsplit('/', 1)[1])))
+            elif re.match(r'^/api/abdc/astar/bibtex/\d+$', path):
+                self._api_astar_bibtex(int(path.rsplit('/', 1)[1]))
             elif path == '/api/abdc/astar/recent': self._api_astar_recent()
             elif path == '/api/abdc/astar/digest': self._api_astar_digest()
             elif path == '/api/abdc/astar/saved': self.send_json(build_saved_articles_payload())
@@ -1423,6 +1430,15 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
+            elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
+            elif path == '/api/abdc/astar/semantic-search':
+                from services.astar_semantic_service import semantic_search
+                p = self._query_params()
+                q = (p.get('q') or '').strip()
+                if not q:
+                    self.send_json({'available': True, 'articles': [], 'journal_match': []})
+                else:
+                    self.send_json(semantic_search(q, topk=int(p.get('topk', 30))))
             # Static page routes
             elif path in ('/', ''):         self.send_file(os.path.join(STATIC_DIR, 'index.html'))
             elif path in ('/dashboard', '/dashboard.html'):
@@ -1610,6 +1626,42 @@ class Handler(BaseHTTPRequestHandler):
     def _api_astar_articles(self):
         self.send_json(build_astar_articles_payload(self._query_params()))
 
+    def _api_astar_bibtex(self, article_id):
+        """按文章 id 生成 BibTeX(纯文本返回，前端复制到剪贴板)。"""
+        with get_db() as conn:
+            r = conn.execute('SELECT * FROM astar_articles WHERE id=?', (article_id,)).fetchone()
+        if not r:
+            self.send_json({'error': 'not found'}, 404)
+            return
+        row = dict(r)
+        try:
+            authors = json.loads(row.get('authors_json') or '[]')
+        except Exception:
+            authors = []
+        names = [a.get('name') for a in authors if isinstance(a, dict) and a.get('name')] or \
+                [a for a in authors if isinstance(a, str)]
+        year = row.get('publication_year') or (row.get('publication_date') or '')[:4] or 'n.d.'
+        first_last = (names[0].split()[-1] if names else 'anon').lower()
+        first_word = re.sub(r'[^a-z0-9]', '', (row.get('title') or 'untitled').lower().split()[0]) or 'x'
+        key = f'{first_last}{year}{first_word}'
+        fields = [f'  title = {{{row.get("title") or ""}}}',
+                  f'  author = {{{" and ".join(names)}}}' if names else None,
+                  f'  journal = {{{row.get("journal_title") or ""}}}',
+                  f'  year = {{{year}}}',
+                  f'  doi = {{{row.get("doi")}}}' if row.get('doi') else None,
+                  f'  url = {{{row.get("url") or row.get("landing_page_url")}}}'
+                  if (row.get('url') or row.get('landing_page_url')) else None]
+        bib = '@article{' + key + ',\n' + ',\n'.join(f for f in fields if f) + '\n}\n'
+        body = bib.encode('utf-8')
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.send_header('Content-Length', len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
     def _api_astar_recent(self):
         p = self._query_params()
         days = int(p.get('days', 7))
@@ -1680,8 +1732,56 @@ def astar_scheduler_thread(interval_hours=24):
             r = update_astar_recent_articles(days=14)
             deduplicate_articles()
             log.info(f"A* 增量完成：新增 {r.get('articles_inserted')}，更新 {r.get('articles_updated')}")
+            # 每日自动 LLM 精修(限额，几分钱/天)：对规则法判不准的新文章用 DeepSeek 重判。
+            # LLM_AUTO=0 关闭；无 API key 时函数自己返回错误，不影响抓取。
+            if os.environ.get('LLM_AUTO', '1') != '0':
+                try:
+                    lr = llm_classify_articles(limit=int(os.environ.get('LLM_AUTO_LIMIT', 150)))
+                    if lr.get('success', True):
+                        log.info(f"A* 自动 LLM 精修：处理 {lr.get('processed', lr)}")
+                except Exception as le:
+                    log.warning(f'A* 自动 LLM 精修失败(忽略): {le}')
+            # 语义向量增量(新文章编码追加，几百篇/天秒级)。EMB_AUTO=0 关闭。
+            if os.environ.get('EMB_AUTO', '1') != '0':
+                try:
+                    from services.astar_semantic_service import build_embeddings, EMB_PATH
+                    if os.path.exists(EMB_PATH):      # 首次全量构建须手动跑脚本
+                        er = build_embeddings()
+                        log.info(f"A* 向量增量：新编码 {er.get('encoded')}")
+                except Exception as ee:
+                    log.warning(f'A* 向量增量失败(忽略): {ee}')
         except Exception as e:
             log.warning(f'A* 增量抓取失败（稍后重试）: {e}')
+        time.sleep(interval_hours * 3600)
+
+
+def backup_thread(interval_hours=168):
+    """每周把 SQLite 库热备份(backup API)+ gzip 到 backups/，保留最近 4 份。
+    库里有 13 万篇分类等不可轻易重算的数据，这是最后防线。BACKUP_AUTO=0 可关。"""
+    import gzip
+    time.sleep(3600)   # 启动 1 小时后再做首份，避开开机高峰
+    while True:
+        try:
+            os.makedirs(os.path.join(_ROOT, 'backups'), exist_ok=True)
+            stamp = datetime.now().strftime('%Y%m%d')
+            dst = os.path.join(_ROOT, 'backups', f'pboc_data_{stamp}.db.gz')
+            if not os.path.exists(dst):
+                src = sqlite3.connect(DB_PATH, timeout=60)
+                tmp = os.path.join(_ROOT, 'backups', f'_tmp_{stamp}.db')
+                bak = sqlite3.connect(tmp)
+                with bak:
+                    src.backup(bak)          # 热备份，不锁写
+                bak.close(); src.close()
+                with open(tmp, 'rb') as fi, gzip.open(dst, 'wb', compresslevel=6) as fo:
+                    shutil.copyfileobj(fi, fo)
+                os.remove(tmp)
+                log.info(f'DB 备份完成: {dst} ({os.path.getsize(dst)//1024//1024}MB)')
+                keep = sorted(f for f in os.listdir(os.path.join(_ROOT, 'backups'))
+                              if f.startswith('pboc_data_') and f.endswith('.db.gz'))
+                for old in keep[:-4]:
+                    os.remove(os.path.join(_ROOT, 'backups', old))
+        except Exception as e:
+            log.warning(f'DB 备份失败(下周重试): {e}')
         time.sleep(interval_hours * 3600)
 
 
@@ -1747,6 +1847,8 @@ if __name__ == '__main__':
         threading.Thread(target=fiscal_scheduler_thread, daemon=True).start()
     if os.environ.get('RATES_AUTO', '1') != '0':
         threading.Thread(target=rates_scheduler_thread, daemon=True).start()
+    if os.environ.get('BACKUP_AUTO', '1') != '0':
+        threading.Thread(target=backup_thread, daemon=True).start()
     try:
         load_journal_prestige_lists()       # 填充 FT50 / UTD24 清单（轻量）
         ensure_prestige_extra_journals()    # 把非 A* 的 FT50/UTD24 刊持久并入追踪集
