@@ -29,6 +29,20 @@ _STATE = {'model': None, 'emb': None, 'ids': None, 'id2idx': None}
 os.environ.setdefault('USE_TF', '0')          # 机器上有 Keras3，强制走 PyTorch
 os.environ.setdefault('TRANSFORMERS_NO_TF', '1')
 
+# 研究画像(英文侧写，与 bge-small-en 匹配；每条一个侧面，取各侧面余弦的最大值)。
+# 与 abdc_astar_research_service.RESEARCH_PROFILE(中文)语义对应，改动请同步。
+PROFILE_ASPECTS = [
+    'remote work, work from home, hybrid work arrangements and return-to-office mandates',
+    'artificial intelligence in organizations and algorithmic management of workers',
+    'digital trace data, text mining and natural language processing in organizational research',
+    'employee burnout, emotional exhaustion, withdrawal, turnover and exit-voice-loyalty-neglect responses',
+    'job demands-resources theory and workplace wellbeing',
+    'electronic monitoring, workplace surveillance, worker autonomy and control',
+    'work-family boundary management and remote collaboration',
+    'platform work, gig economy labor and delivery or logistics workers',
+    'research using public data such as Glassdoor, Indeed, O*NET, BLS, social media or online reviews',
+]
+
 
 def _connect():
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -101,6 +115,93 @@ def _ensure_loaded():
     return True
 
 
+def _hydrate_articles(id_list, sim_map):
+    """按 id 列表取文章元数据+分类，保持 id_list 顺序，附相似度。"""
+    if not id_list:
+        return []
+    with _connect() as conn:
+        marks = ','.join('?' * len(id_list))
+        rows = {r['id']: dict(r) for r in conn.execute(f"""
+            SELECT a.id, a.title, a.abstract, a.journal_title, a.publication_date, a.doi, a.url,
+                   a.cited_by_count, a.authors_json, c.relevance_score, c.broad_area
+            FROM astar_articles a
+            LEFT JOIN astar_article_classifications c ON c.article_id=a.id
+            WHERE a.id IN ({marks})""", id_list)}
+    arts = []
+    for aid in id_list:
+        r = rows.get(aid)
+        if not r:
+            continue
+        try:
+            authors = [x.get('name') for x in json.loads(r.get('authors_json') or '[]')
+                       if isinstance(x, dict)][:5]
+        except Exception:
+            authors = []
+        arts.append({'id': aid, 'similarity': round(sim_map[aid], 4), 'title': r['title'],
+                     'journal_title': r['journal_title'], 'publication_date': r['publication_date'],
+                     'doi': r['doi'], 'url': r['url'], 'authors': authors,
+                     'abstract': (r['abstract'] or '')[:400],
+                     'relevance_score': r['relevance_score'], 'broad_area': r['broad_area']})
+    return arts
+
+
+def find_similar(article_id, topk=10):
+    """给定文章 id，返回向量空间里最近的 topk 篇(不含自身)。"""
+    import numpy as np
+    try:
+        ok = _ensure_loaded()
+    except Exception as e:
+        return {'available': False, 'error': f'加载失败: {e}'}
+    if not ok:
+        return {'available': False, 'error': '向量库未构建。'}
+    idx = _STATE['id2idx'].get(int(article_id))
+    if idx is None:
+        return {'available': True, 'error': '该文章尚未编码(新文章等每日增量)。', 'articles': []}
+    sims = _STATE['emb'] @ _STATE['emb'][idx]
+    order = np.argsort(-sims)
+    id_list, sim_map = [], {}
+    for i in order[:topk + 1]:
+        aid = int(_STATE['ids'][i])
+        if aid == int(article_id):
+            continue
+        id_list.append(aid)
+        sim_map[aid] = float(sims[i])
+        if len(id_list) >= topk:
+            break
+    return {'available': True, 'source_id': int(article_id),
+            'articles': _hydrate_articles(id_list, sim_map)}
+
+
+def compute_semantic_relevance(only_missing=True, batch=5000):
+    """研究画像(多侧面) × 全库向量 → semantic_relevance(0-100，=最大余弦×100)存分类表。
+    只需向量矩阵+一次编码画像句，CPU 秒级；only_missing 时只补未打分的(日增量用)。"""
+    import numpy as np
+    if not _ensure_loaded():
+        return {'success': False, 'error': '向量库未构建'}
+    aspects = _STATE['model'].encode(PROFILE_ASPECTS, normalize_embeddings=True).astype('float32')
+    sims = _STATE['emb'] @ aspects.T            # (N, 侧面数)
+    best = sims.max(axis=1)                     # 每篇取最贴近的侧面
+    scores = np.round(np.clip(best, 0, 1) * 100, 1)
+    ids = _STATE['ids']
+    with _connect() as conn:
+        try:
+            conn.execute('ALTER TABLE astar_article_classifications ADD COLUMN semantic_relevance REAL')
+        except sqlite3.OperationalError:
+            pass    # 列已存在
+        todo = None
+        if only_missing:
+            todo = {r[0] for r in conn.execute(
+                'SELECT article_id FROM astar_article_classifications WHERE semantic_relevance IS NULL')}
+        pairs = [(float(s), int(a)) for s, a in zip(scores, ids)
+                 if todo is None or int(a) in todo]
+        for i in range(0, len(pairs), batch):
+            conn.executemany(
+                'UPDATE astar_article_classifications SET semantic_relevance=? WHERE article_id=?',
+                pairs[i:i + batch])
+        conn.commit()
+    return {'success': True, 'scored': len(pairs), 'aspects': len(PROFILE_ASPECTS)}
+
+
 def semantic_status():
     meta = None
     if os.path.exists(META_PATH):
@@ -127,29 +228,7 @@ def semantic_search(query, topk=30):
     top_idx = np.argsort(-sims)[:max(topk, 100)]     # 多取一些供期刊聚合
     id_list = [int(_STATE['ids'][i]) for i in top_idx]
     sim_map = {int(_STATE['ids'][i]): float(sims[i]) for i in top_idx}
-    with _connect() as conn:
-        marks = ','.join('?' * len(id_list))
-        rows = {r['id']: dict(r) for r in conn.execute(f"""
-            SELECT a.id, a.title, a.abstract, a.journal_title, a.publication_date, a.doi, a.url,
-                   a.cited_by_count, a.authors_json, c.relevance_score, c.broad_area
-            FROM astar_articles a
-            LEFT JOIN astar_article_classifications c ON c.article_id=a.id
-            WHERE a.id IN ({marks})""", id_list)}
-    arts = []
-    for aid in id_list:
-        r = rows.get(aid)
-        if not r:
-            continue
-        try:
-            authors = [x.get('name') for x in json.loads(r.get('authors_json') or '[]')
-                       if isinstance(x, dict)][:5]
-        except Exception:
-            authors = []
-        arts.append({'id': aid, 'similarity': round(sim_map[aid], 4), 'title': r['title'],
-                     'journal_title': r['journal_title'], 'publication_date': r['publication_date'],
-                     'doi': r['doi'], 'url': r['url'], 'authors': authors,
-                     'abstract': (r['abstract'] or '')[:400],
-                     'relevance_score': r['relevance_score'], 'broad_area': r['broad_area']})
+    arts = _hydrate_articles(id_list, sim_map)
     # 期刊聚合：每刊取相似度前3篇的均值(既看强度也防单篇偶合)
     by_j = {}
     for a in arts:

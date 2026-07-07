@@ -262,7 +262,8 @@ async function renderArticles(relatedDefault){
     <input type="text" id="q" placeholder="搜索标题 / 摘要 / 期刊…" value="${esc(STATE.filters.q||'')}">
     <select id="sort" onchange="applyFilters()">
       <option value="date_desc">最新优先</option>
-      <option value="relevance_desc">相关性优先</option>
+      <option value="relevance_desc">相关性优先(规则)</option>
+      <option value="semantic_desc">语义相关优先 🧠</option>
       <option value="citations_desc">引用优先</option>
     </select>
     <input type="number" id="minrel" placeholder="最低相关分" style="width:110px" value="${esc(STATE.filters.min_relevance||'')}">
@@ -384,7 +385,7 @@ function articleCard(a){
       <div style="flex:1">
         <div class="card-title">${esc(a.title)}</div>
         <div><span class="card-journal">${esc(a.journal_title||'未知期刊')}</span>${a.is_ft50?'<span class="list-badge lb-ft50">FT50</span>':''}${a.is_utd24?'<span class="list-badge lb-utd24">UTD24</span>':''}</div>
-        <div class="card-meta">${esc(a.publication_date||'')} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}</div>
+        <div class="card-meta">${esc(a.publication_date||'')} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}${cls.semantic_relevance!=null?' · 🧠语义 '+Math.round(cls.semantic_relevance):''}</div>
         <div class="card-authors">${esc(authors)}</div>
       </div>
       <span class="relscore ${relClass(rel)}">${rel}</span>
@@ -396,6 +397,7 @@ function articleCard(a){
       <a href="${doiUrl}" target="_blank">查看原文 ↗</a>
       ${a.openalex_id?`<a href="https://openalex.org/${esc(a.openalex_id)}" target="_blank">OpenAlex</a>`:''}
       <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
+      <a href="#" onclick="findSimilar(${a.id});return false">🔗 找相似</a>
       <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
     </div>
   </div>`;
@@ -580,21 +582,40 @@ async function runSemantic(){
       html+='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">📚 期刊匹配(按语义相似度聚合，可作投稿参考):</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'
         + d.journal_match.map(j=>`<span class="tag tag-area" title="top3均值 ${j.score} · 命中${j.hits}篇">${esc(j.journal)} <b>${(j.score*100).toFixed(0)}</b></span>`).join('')+'</div>';
     }
-    html+=(d.articles||[]).map(a=>`<div class="card">
-      <div class="card-top"><div style="flex:1">
-        <div class="card-title">${esc(a.title)}</div>
-        <div><span class="card-journal">${esc(a.journal_title||'')}</span></div>
-        <div class="card-meta">${esc(a.publication_date||'')}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
-        <div class="card-authors">${esc((a.authors||[]).join(', '))}</div>
-      </div><span class="relscore rel-high" title="语义相似度">${(a.similarity*100).toFixed(0)}</span></div>
-      <div class="card-abstract">${esc(a.abstract||'')}${(a.abstract||'').length>=400?'…':''}</div>
-      <div class="card-foot">
-        <a href="${a.doi?'https://doi.org/'+esc(a.doi):(a.url||'#')}" target="_blank">查看原文 ↗</a>
-        <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
-        <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
-      </div></div>`).join('');
+    html+=semanticCards(d.articles||[]);
     res.innerHTML=html||'<div class="empty">没有结果。</div>';
   }catch(e){res.innerHTML='<div class="empty">搜索失败: '+esc(String(e))+'</div>'}
+}
+function semanticCards(arts){
+  return arts.map(a=>`<div class="card">
+    <div class="card-top"><div style="flex:1">
+      <div class="card-title">${esc(a.title)}</div>
+      <div><span class="card-journal">${esc(a.journal_title||'')}</span></div>
+      <div class="card-meta">${esc(a.publication_date||'')}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
+      <div class="card-authors">${esc((a.authors||[]).join(', '))}</div>
+    </div><span class="relscore rel-high" title="语义相似度">${(a.similarity*100).toFixed(0)}</span></div>
+    <div class="card-abstract">${esc(a.abstract||'')}${(a.abstract||'').length>=400?'…':''}</div>
+    <div class="card-foot">
+      <a href="${a.doi?'https://doi.org/'+esc(a.doi):(a.url||'#')}" target="_blank">查看原文 ↗</a>
+      <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
+      <a href="#" onclick="findSimilar(${a.id});return false">🔗 找相似</a>
+      <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
+    </div></div>`).join('');
+}
+async function findSimilar(id){
+  switchTab('semantic');
+  // renderSemantic 是同步建 DOM 的，直接接管结果区
+  const res=document.getElementById('semres');
+  if(res) res.innerHTML='<div class="loading"><div class="spinner"></div></div>';
+  try{
+    const d=await getJSON(`/api/abdc/astar/similar/${id}?topk=12`);
+    const box=document.getElementById('semres');
+    if(!box) return;
+    if(!d.available){box.innerHTML='<div class="empty">'+esc(d.error||'向量库未就绪')+'</div>';return}
+    if(d.error){box.innerHTML='<div class="empty">'+esc(d.error)+'</div>';return}
+    box.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:10px">🔗 与所选文章语义最接近的 '+d.articles.length+' 篇：</div>'
+      + semanticCards(d.articles);
+  }catch(e){const box=document.getElementById('semres');if(box)box.innerHTML='<div class="empty">失败: '+esc(String(e))+'</div>'}
 }
 
 async function copyBibtex(id,el){

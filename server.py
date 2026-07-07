@@ -1421,6 +1421,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(build_astar_article_detail(int(path.rsplit('/', 1)[1])))
             elif re.match(r'^/api/abdc/astar/bibtex/\d+$', path):
                 self._api_astar_bibtex(int(path.rsplit('/', 1)[1]))
+            elif re.match(r'^/api/abdc/astar/similar/\d+$', path):
+                from services.astar_semantic_service import find_similar
+                p = self._query_params()
+                self.send_json(find_similar(int(path.rsplit('/', 1)[1]), topk=int(p.get('topk', 10))))
             elif path == '/api/abdc/astar/recent': self._api_astar_recent()
             elif path == '/api/abdc/astar/digest': self._api_astar_digest()
             elif path == '/api/abdc/astar/saved': self.send_json(build_saved_articles_payload())
@@ -1744,12 +1748,15 @@ def astar_scheduler_thread(interval_hours=24):
             # 语义向量增量(新文章编码追加，几百篇/天秒级)。EMB_AUTO=0 关闭。
             if os.environ.get('EMB_AUTO', '1') != '0':
                 try:
-                    from services.astar_semantic_service import build_embeddings, EMB_PATH
+                    from services.astar_semantic_service import (build_embeddings, EMB_PATH,
+                                                                 compute_semantic_relevance)
                     if os.path.exists(EMB_PATH):      # 首次全量构建须手动跑脚本
                         er = build_embeddings()
                         log.info(f"A* 向量增量：新编码 {er.get('encoded')}")
+                        sr = compute_semantic_relevance(only_missing=True)
+                        log.info(f"A* 语义相关性：补打分 {sr.get('scored')}")
                 except Exception as ee:
-                    log.warning(f'A* 向量增量失败(忽略): {ee}')
+                    log.warning(f'A* 向量增量/语义打分失败(忽略): {ee}')
         except Exception as e:
             log.warning(f'A* 增量抓取失败（稍后重试）: {e}')
         time.sleep(interval_hours * 3600)

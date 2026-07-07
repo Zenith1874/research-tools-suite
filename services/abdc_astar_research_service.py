@@ -1424,6 +1424,7 @@ def build_astar_articles_payload(params):
     order = {'date_desc': 'a.publication_date DESC',
              'date_asc': 'a.publication_date ASC',
              'relevance_desc': 'c.relevance_score DESC, a.publication_date DESC',
+             'semantic_desc': 'c.semantic_relevance DESC, a.publication_date DESC',
              'citations_desc': 'a.cited_by_count DESC'}.get(sort, 'a.publication_date DESC')
 
     limit = min(int(params.get('limit', 50)), 500)
