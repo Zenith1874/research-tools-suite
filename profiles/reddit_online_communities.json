@@ -1,0 +1,34 @@
+{
+  "profile_id": "reddit_online_communities",
+  "name": "Reddit / 在线社区中的工作话语",
+  "description": "用 Reddit 等在线社区/社交媒体数据研究工作、职业与劳动相关话语与行为。",
+  "aspects": {
+    "topic": [
+      "online communities, social media discourse about work",
+      "Reddit work/career subreddits (r/antiwork, r/jobs, r/cscareerquestions)",
+      "collective sensemaking, online worker voice and mobilization"
+    ],
+    "theory": [
+      "online community/social identity, collective action",
+      "sensemaking, social support, exit-voice",
+      "affective/emotion theories"
+    ],
+    "method": [
+      "text analysis, NLP, topic modeling, emotion classification",
+      "network analysis, computational discourse analysis",
+      "mixed methods with qualitative coding"
+    ],
+    "data": [
+      "Reddit posts/comments, Twitter/X, online forums",
+      "Pushshift/ArcticShift dumps, platform APIs",
+      "user-generated work-related content"
+    ],
+    "setting": [
+      "online communities, platform-mediated collective discourse",
+      "any work topic studied through social media"
+    ]
+  },
+  "my_methods_used": ["text analysis", "embedding-based construct measurement", "sentiment/emotion classification"],
+  "weights": {"topic": 0.9, "theory": 0.5, "method": 0.9, "data": 1.0, "setting": 0.5, "opportunity": 0.8},
+  "enabled": true
+}

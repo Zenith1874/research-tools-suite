@@ -1,0 +1,34 @@
+{
+  "profile_id": "employee_wellbeing",
+  "name": "员工福祉 / 倦怠 / 退出",
+  "description": "员工倦怠、情绪耗竭、退缩、离职与 exit-voice-loyalty-neglect 等福祉与去留反应。",
+  "aspects": {
+    "topic": [
+      "employee burnout, emotional exhaustion, stress, wellbeing",
+      "turnover, turnover intention, withdrawal, quiet quitting",
+      "exit-voice-loyalty-neglect (EVLN), engagement, job satisfaction"
+    ],
+    "theory": [
+      "job demands-resources (JD-R), conservation of resources",
+      "exit-voice-loyalty-neglect, social exchange",
+      "affective events theory, stress-strain"
+    ],
+    "method": [
+      "survey (cross-sectional/panel), experience sampling",
+      "text/sentiment analysis of employee discourse",
+      "archival turnover records, meta-analysis"
+    ],
+    "data": [
+      "employee surveys, HR records, exit data",
+      "Glassdoor/Indeed reviews, Reddit r/antiwork and work subreddits",
+      "diary/ESM data"
+    ],
+    "setting": [
+      "healthcare, hospitality, knowledge work, frontline service",
+      "any workforce studied for wellbeing/turnover"
+    ]
+  },
+  "my_methods_used": ["survey", "text analysis", "embedding-based construct measurement", "sentiment/emotion classification"],
+  "weights": {"topic": 1.0, "theory": 0.9, "method": 0.6, "data": 0.7, "setting": 0.5, "opportunity": 0.8},
+  "enabled": true
+}

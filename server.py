@@ -97,6 +97,24 @@ log = logging.getLogger(__name__)
 
 PORT       = 5001
 _ROOT      = os.path.dirname(os.path.abspath(__file__))
+
+def _load_secrets():
+    """启动时从本地 .secrets(gitignore, KEY=VALUE) 载入密钥到环境变量。
+    已在环境里的不覆盖。密钥绝不写进代码/仓库。"""
+    path = os.path.join(_ROOT, '.secrets')
+    if not os.path.exists(path):
+        return
+    try:
+        for line in open(path, encoding='utf-8'):
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            os.environ.setdefault(k.strip(), v.strip())
+    except Exception:
+        pass
+_load_secrets()
+
 DB_PATH    = os.path.join(_ROOT, 'pboc_data.db')
 STATIC_DIR = os.path.join(_ROOT, 'static')
 ABDC_PATH  = os.path.join(_ROOT, 'data', 'abdc_data.json')

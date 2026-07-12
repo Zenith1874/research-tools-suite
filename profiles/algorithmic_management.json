@@ -1,0 +1,34 @@
+{
+  "profile_id": "algorithmic_management",
+  "name": "算法管理",
+  "description": "算法/自动化系统对工人的分配、评估、监控与控制,及工人的自主性、抵抗与反应。",
+  "aspects": {
+    "topic": [
+      "algorithmic management and control of workers",
+      "algorithmic monitoring, surveillance, rating and evaluation",
+      "worker autonomy, resistance, gaming the algorithm"
+    ],
+    "theory": [
+      "labor process theory, control-resistance",
+      "job demands-resources, autonomy/self-determination",
+      "fairness, procedural justice, technology affordances"
+    ],
+    "method": [
+      "qualitative interviews, ethnography, field study",
+      "digital trace / platform data analysis",
+      "survey, experiment"
+    ],
+    "data": [
+      "platform/app logs, gig platform data",
+      "worker interviews, Reddit/forum discourse",
+      "surveys of platform or algorithmically managed workers"
+    ],
+    "setting": [
+      "gig economy, ride-hailing, delivery, warehousing/logistics",
+      "call centers, platform labor, algorithmically mediated work"
+    ]
+  },
+  "my_methods_used": ["survey", "text analysis", "embedding-based construct measurement"],
+  "weights": {"topic": 1.0, "theory": 0.8, "method": 0.7, "data": 0.8, "setting": 0.7, "opportunity": 0.9},
+  "enabled": true
+}

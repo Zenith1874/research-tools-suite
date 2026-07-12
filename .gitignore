@@ -44,3 +44,6 @@ backups/
 data/astar_emb*.npy
 data/astar_emb_meta.json
 data/astar_texts.jsonl.gz
+.secrets
+.env
+.env.local

@@ -1,0 +1,32 @@
+{
+  "profile_id": "digital_trace_methods",
+  "name": "数字踪迹 / 文本方法",
+  "description": "用数字踪迹数据、文本挖掘、NLP、机器学习测量组织与员工相关构念的方法论取向(跨主题,重方法)。",
+  "aspects": {
+    "topic": [
+      "digital trace data, computational social science in organizations",
+      "text mining, natural language processing of organizational text",
+      "measuring psychological/organizational constructs from text"
+    ],
+    "theory": [
+      "construct validity of text-based measures",
+      "any organizational theory operationalized via text/traces"
+    ],
+    "method": [
+      "text classification, topic modeling, word/sentence embeddings",
+      "large language models, dictionary/lexicon methods",
+      "supervised ML, validation against human coding"
+    ],
+    "data": [
+      "Glassdoor/Indeed reviews, Reddit, Twitter/social media",
+      "job postings, emails, Slack/collaboration logs, earnings calls",
+      "any large-scale user-generated or digital trace corpus"
+    ],
+    "setting": [
+      "any organizational/work context studied via digital traces"
+    ]
+  },
+  "my_methods_used": ["text analysis", "embedding-based construct measurement", "sentiment/emotion classification"],
+  "weights": {"topic": 0.7, "theory": 0.4, "method": 1.0, "data": 0.9, "setting": 0.3, "opportunity": 0.8},
+  "enabled": true
+}
