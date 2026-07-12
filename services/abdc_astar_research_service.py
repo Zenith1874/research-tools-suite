@@ -1876,7 +1876,7 @@ def build_journal_health_payload():
 ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 ANTHROPIC_MODEL_DEFAULT = 'claude-haiku-4-5-20251001'
 DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
-DEEPSEEK_MODEL_DEFAULT = 'deepseek-chat'
+DEEPSEEK_MODEL_DEFAULT = 'deepseek-v4-flash'   # 旧名 deepseek-chat 2026-07-24 弃用
 LLM_MODEL_DEFAULT = ANTHROPIC_MODEL_DEFAULT   # 兼容旧引用
 
 # 用户核心 OB/IS/管理期刊 ISSN（用于只扫这些刊里被规则低估的漏判候选）
@@ -1932,8 +1932,10 @@ def _anthropic_classify(title, abstract, concepts, model):
 
 
 def _deepseek_classify(title, abstract, concepts, model):
-    # OpenAI 兼容接口；response_format=json_object 保证只返回 JSON
+    # OpenAI 兼容接口；response_format=json_object 保证只返回 JSON。
+    # v4-flash 关思考模式(等价旧 deepseek-chat：快、无 reasoning 开销)。
     body = {'model': model, 'max_tokens': 700, 'temperature': 0.2,
+            'thinking': {'type': 'disabled'},
             'response_format': {'type': 'json_object'},
             'messages': [{'role': 'system', 'content': _LLM_SYS},
                          {'role': 'user', 'content': _user_msg(title, abstract, concepts)}]}

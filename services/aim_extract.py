@@ -80,9 +80,11 @@ def prompt_hash(profiles):
     return hashlib.sha256((PROMPT_VERSION + '|' + ids + '|' + BASE_LABEL_INSTR).encode()).hexdigest()[:16]
 
 
-def extract_one(article, profiles, model='deepseek-chat', timeout=90, retries=2):
+def extract_one(article, profiles, model='deepseek-v4-flash', timeout=90, retries=2):
     sys, user = build_messages(article, profiles)
-    body = {'model': model, 'max_tokens': 1400, 'temperature': 0.0,
+    # v4-flash 默认走"思考模式"(慢+多 token);批量抽取用非思考模式,等价于旧 deepseek-chat。
+    body = {'model': model, 'max_tokens': 1600, 'temperature': 0.0,
+            'thinking': {'type': 'disabled'},
             'response_format': {'type': 'json_object'},
             'messages': [{'role': 'system', 'content': sys},
                          {'role': 'user', 'content': user}]}

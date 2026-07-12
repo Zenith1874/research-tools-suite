@@ -61,7 +61,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--n', type=int, default=200)
     ap.add_argument('--smoke', action='store_true')
-    ap.add_argument('--model', default='deepseek-chat')
+    ap.add_argument('--model', default='deepseek-v4-flash')
     args = ap.parse_args()
     _load_secrets()
     if not os.environ.get('DEEPSEEK_API_KEY'):
