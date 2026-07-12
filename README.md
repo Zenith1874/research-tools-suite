@@ -27,6 +27,27 @@ python scripts/watchdog.py --start-if-down
 
 启动时自动建表、载入清单、开启后台增量调度器。
 
+### 保持常驻（Windows，无需管理员）
+
+服务器是普通用户进程，**关机/注销/重启后不会自动回来**。用看门狗 + 登录启动项解决：
+
+- **看门狗** `scripts/watchdog.py`：每 20s 探测 `/api/health`，连失 2 次自动杀掉并重启
+  `server.py`（重启前轮转日志）。它以 `DETACHED_PROCESS` 拉起服务，自身退出也不影响服务。
+- **开机自启**：登录启动文件夹放了 `ClaudeServerWatchdog.vbs`（隐藏窗口启动看门狗）——
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`。每次登录 Windows 自动拉起看门狗，
+  再由看门狗保证服务器在线。**删除该 .vbs 即取消自启。**
+- 更强的**计划任务版**（连"看门狗自身崩溃"也每分钟自恢复）需要**管理员** PowerShell：
+
+  ```powershell
+  $pyw = "C:\Users\<you>\AppData\Local\Programs\Python\Python312\pythonw.exe"
+  $act = New-ScheduledTaskAction -Execute $pyw -Argument "D:\claude\scripts\watchdog.py --start-if-down" -WorkingDirectory "D:\claude"
+  $trg = New-ScheduledTaskTrigger -AtLogOn
+  $set = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName "ClaudeServerWatchdog" -Action $act -Trigger $trg -Settings $set -RunLevel Limited
+  ```
+
+三层保险：登录启动项 → 看门狗 → server.py（异步更新 + 全局写锁，不自锁死）。
+
 ### 环境变量
 - `ASTAR_MAILTO` — OpenAlex / Crossref polite-pool 联系邮箱（建议设为你的真实邮箱；默认占位）。
 - `ASTAR_AUTO=0` — 关闭 A\* 雷达每天一次的后台增量抓取。
