@@ -76,8 +76,12 @@ def build_messages(article, profiles):
 
 
 def prompt_hash(profiles):
-    ids = ",".join(sorted(p['profile_id'] for p in profiles))
-    return hashlib.sha256((PROMPT_VERSION + '|' + ids + '|' + BASE_LABEL_INSTR).encode()).hexdigest()[:16]
+    # 纳入画像的 aspects/weights 内容：编辑画像 → 哈希变化 → provenance 可区分新旧 prompt
+    payload = json.dumps(
+        [{k: p.get(k) for k in ('profile_id', 'aspects', 'weights')} for p in
+         sorted(profiles, key=lambda x: x['profile_id'])],
+        ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256((PROMPT_VERSION + '|' + BASE_LABEL_INSTR + '|' + payload).encode()).hexdigest()[:16]
 
 
 def extract_one(article, profiles, model='deepseek-v4-flash', timeout=90, retries=2):

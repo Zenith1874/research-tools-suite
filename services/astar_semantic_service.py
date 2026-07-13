@@ -61,44 +61,95 @@ def _doc_text(title, abstract):
     return (t + '. ' + a[:1500]) if a else t
 
 
+TITLEONLY_PATH = os.path.join(DATA_DIR, 'astar_emb_titleonly_ids.npy')
+
+
+def _init_titleonly(conn, done_ids, meta_built_at):
+    """sidecar 缺失时初始化"仅标题编码"集合：
+    当前无摘要的 + 构建之后才补上摘要的(它们编码时也没摘要)。"""
+    missing = {r[0] for r in conn.execute(
+        "SELECT id FROM astar_articles WHERE is_duplicate=0 AND (abstract IS NULL OR abstract='')")}
+    late_filled = set()
+    if meta_built_at:
+        late_filled = {r[0] for r in conn.execute(
+            "SELECT id FROM astar_articles WHERE is_duplicate=0 AND abstract_status='available' AND updated_at > ?",
+            (meta_built_at,))}
+    return (missing | late_filled) & done_ids
+
+
 def build_embeddings(batch_size=256, progress_every=20):
-    """全量/增量构建向量库。已有向量的文章跳过；新文章追加。"""
+    """全量/增量构建 + 自愈：
+    - 新文章追加编码；
+    - 追踪"编码时无摘要"的 id(sidecar)，其摘要后来被补上时自动重编该行——
+      否则补摘要的文章会永远停留在"仅标题"质量的旧向量上。"""
     import numpy as np
     os.makedirs(DATA_DIR, exist_ok=True)
-    old_ids, old_emb = [], None
+    old_ids, old_emb, meta_built_at = [], None, None
     if os.path.exists(EMB_PATH) and os.path.exists(IDS_PATH):
         old_emb = np.load(EMB_PATH)
         old_ids = np.load(IDS_PATH).tolist()
+    if os.path.exists(META_PATH):
+        try:
+            meta_built_at = json.load(open(META_PATH, encoding='utf-8')).get('built_at')
+        except Exception:
+            pass
     done = set(old_ids)
     with _connect() as conn:
         rows = conn.execute("""SELECT id, title, abstract FROM astar_articles
                                WHERE is_duplicate=0 AND title IS NOT NULL""").fetchall()
+        if os.path.exists(TITLEONLY_PATH):
+            titleonly = set(np.load(TITLEONLY_PATH).tolist())
+        else:
+            titleonly = _init_titleonly(conn, done, meta_built_at)
+            log.info(f'初始化 title-only sidecar: {len(titleonly)} 篇')
+    by_id = {r['id']: r for r in rows}
     todo = [r for r in rows if r['id'] not in done]
-    log.info(f'embedding 构建：库内 {len(rows)}，已有 {len(done)}，待编码 {len(todo)}')
-    if not todo:
-        return {'success': True, 'total': len(old_ids), 'encoded': 0}
+    # 需要重编：编码时没摘要、现在有了
+    stale = [by_id[i] for i in titleonly
+             if i in by_id and (by_id[i]['abstract'] or '').strip() and i in done]
+    log.info(f'embedding：库内 {len(rows)}，已有 {len(done)}，新增 {len(todo)}，需重编(摘要已补) {len(stale)}')
+    if not todo and not stale:
+        return {'success': True, 'total': len(old_ids), 'encoded': 0, 'refreshed': 0}
     model = _load_model()
-    new_vecs, new_ids = [], []
-    for i in range(0, len(todo), batch_size):
-        chunk = todo[i:i + batch_size]
-        texts = [_doc_text(r['title'], r['abstract']) for r in chunk]
-        vecs = model.encode(texts, batch_size=batch_size, normalize_embeddings=True,
-                            show_progress_bar=False)
-        new_vecs.append(vecs.astype('float32'))
-        new_ids.extend(r['id'] for r in chunk)
-        if (i // batch_size) % progress_every == 0:
-            print(f'  {i + len(chunk)}/{len(todo)}  {datetime.now().strftime("%H:%M:%S")}', flush=True)
-    new_mat = np.vstack(new_vecs)
-    emb = np.vstack([old_emb, new_mat]) if old_emb is not None and len(old_ids) else new_mat
+
+    def encode_rows(rs):
+        out = []
+        for i in range(0, len(rs), batch_size):
+            chunk = rs[i:i + batch_size]
+            texts = [_doc_text(r['title'], r['abstract']) for r in chunk]
+            out.append(model.encode(texts, batch_size=batch_size, normalize_embeddings=True,
+                                    show_progress_bar=False).astype('float32'))
+            if (i // batch_size) % progress_every == 0:
+                print(f'  {i + len(chunk)}/{len(rs)}  {datetime.now().strftime("%H:%M:%S")}', flush=True)
+        return np.vstack(out) if out else np.zeros((0, 384), dtype='float32')
+
+    # ① 重编已补摘要的行(原位替换)
+    refreshed = 0
+    if stale and old_emb is not None:
+        id2idx = {a: i for i, a in enumerate(old_ids)}
+        mat = encode_rows(stale)
+        for r, vec in zip(stale, mat):
+            old_emb[id2idx[r['id']]] = vec
+            titleonly.discard(r['id'])
+            refreshed += 1
+    # ② 追加新文章
+    new_ids = []
+    if todo:
+        new_mat = encode_rows(todo)
+        new_ids = [r['id'] for r in todo]
+        titleonly |= {r['id'] for r in todo if not (r['abstract'] or '').strip()}
+        old_emb = np.vstack([old_emb, new_mat]) if old_emb is not None and len(old_ids) else new_mat
     ids = (old_ids + new_ids) if old_ids else new_ids
-    np.save(EMB_PATH, emb)
+    np.save(EMB_PATH, old_emb)
     np.save(IDS_PATH, np.array(ids, dtype='int64'))
+    np.save(TITLEONLY_PATH, np.array(sorted(titleonly), dtype='int64'))
     with open(META_PATH, 'w', encoding='utf-8') as f:
-        json.dump({'model': MODEL_NAME, 'dim': int(emb.shape[1]), 'count': len(ids),
-                   'built_at': datetime.now().isoformat()}, f, ensure_ascii=False)
+        json.dump({'model': MODEL_NAME, 'dim': int(old_emb.shape[1]), 'count': len(ids),
+                   'built_at': datetime.now().isoformat(),
+                   'title_only_count': len(titleonly)}, f, ensure_ascii=False)
     with _LOCK:                    # 让服务端下次搜索时重新加载
         _STATE['emb'] = None
-    return {'success': True, 'total': len(ids), 'encoded': len(new_ids)}
+    return {'success': True, 'total': len(ids), 'encoded': len(new_ids), 'refreshed': refreshed}
 
 
 def _ensure_loaded():

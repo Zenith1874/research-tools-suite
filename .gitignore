@@ -47,3 +47,5 @@ data/astar_texts.jsonl.gz
 .secrets
 .env
 .env.local
+outputs/*.db
+outputs/*.log
