@@ -1677,7 +1677,7 @@ def enrich_with_semantic_scholar(limit=None, batch_size=100):
             updates.append('updated_at=?'); vals.append(now)
             vals.append(r['id'])
             conn.execute(f"UPDATE astar_articles SET {','.join(updates)} WHERE id=?", vals)
-            conn.execute("""INSERT INTO astar_article_sources
+            conn.execute("""INSERT OR IGNORE INTO astar_article_sources
                 (article_id, source_name, source_type, source_url, raw_id, raw_json, fetched_at, parser_notes)
                 VALUES (?,?,?,?,?,?,?,?)""",
                 (r['id'], 'Semantic Scholar', 'semantic_scholar',
