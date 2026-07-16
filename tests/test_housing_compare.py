@@ -17,6 +17,7 @@ class HousingCompareTests(unittest.TestCase):
             conn.execute('''CREATE TABLE housing_city_observations (
                 city TEXT, period TEXT, indicator_code TEXT, value REAL)''')
             conn.executemany('INSERT INTO housing_city_observations VALUES (?,?,?,?)', [
+                ('北京', '2026-05', 'second_home_yoy_idx', 102.0),
                 ('北京', '2026-06', 'new_home_yoy_idx', 103.1),
                 ('北京', '2026-06', 'second_home_yoy_idx', 101.2),
                 ('上海', '2026-06', 'new_home_yoy_idx', 98.5),
@@ -31,6 +32,7 @@ class HousingCompareTests(unittest.TestCase):
                 city TEXT, period TEXT, avg_price REAL, mom_pct REAL, yoy_pct REAL,
                 data_status TEXT, source_url TEXT, fetched_at TEXT, raw_cached TEXT)''')
             conn.executemany('INSERT INTO anjuke_city_listings VALUES (?,?,?,?,?,?,?,?,?)', [
+                ('北京', '2026-05', 39000, 0.5, 3.5, 'listing_reference', 'https://bj', '2026-07-01', 'bj-05.html'),
                 ('北京', '2026-06', 40000, 1.0, 4.2, 'listing_reference', 'https://bj', '2026-07-01', 'bj.html'),
                 ('上海', '2026-06', 42000, -0.5, -2.0, 'listing_reference', 'https://sh', '2026-07-01', 'sh.html'),
                 ('成都', '2026-06', 15000, 0.2, 1.0, 'listing_reference', 'https://cd', '2026-07-01', 'cd.html'),
@@ -59,6 +61,16 @@ class HousingCompareTests(unittest.TestCase):
         self.assertEqual(payload['summary']['direction_agreement_pct'], 100.0)
         self.assertIsNotNone(payload['summary']['pearson_correlation'])
         self.assertEqual({p['city'] for p in payload['scatter_data']}, {'北京', '上海'})
+
+    def test_history_series_uses_all_common_months(self):
+        payload = build_housing_compare_payload(self.official, self.listing, '2026-06')
+        beijing = payload['history_by_city']['北京']
+        self.assertEqual([r['period'] for r in beijing], ['2026-05', '2026-06'])
+        self.assertAlmostEqual(beijing[0]['official_second_yoy_pct'], 2.0)
+        self.assertAlmostEqual(beijing[0]['divergence'], 1.5)
+        self.assertEqual(payload['history_summary']['cities'], 2)
+        self.assertEqual(payload['history_summary']['points'], 3)
+        self.assertEqual(payload['history_summary']['earliest'], '2026-05')
 
 
 if __name__ == '__main__':

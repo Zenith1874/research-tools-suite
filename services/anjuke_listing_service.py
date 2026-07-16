@@ -12,6 +12,7 @@ import random
 import re
 import sqlite3
 import time
+from contextlib import closing
 from datetime import datetime
 
 import requests
@@ -285,7 +286,7 @@ def update_anjuke_listings(db_path=None, cities=None, sleep_range=(2.0, 4.0), ma
     counters = {'cities_ok': 0, 'cities_blocked': 0, 'cities_failed': 0,
                 'records_upserted': 0, 'requests': 0}
     errors = []
-    with connect(db_path) as conn:
+    with closing(connect(db_path)) as conn:
         ensure_tables(conn)
         for index, city in enumerate(selected):
             url = city_market_url(city)
@@ -383,11 +384,13 @@ def update_anjuke_listings(db_path=None, cities=None, sleep_range=(2.0, 4.0), ma
 
 
 def build_anjuke_payload(db_path=None):
-    with connect(db_path) as conn:
+    with closing(connect(db_path)) as conn:
         ensure_tables(conn)
         latest = conn.execute('SELECT MAX(period) FROM anjuke_city_listings').fetchone()[0]
         rows = [] if not latest else [dict(r) for r in conn.execute(
             'SELECT * FROM anjuke_city_listings WHERE period=? ORDER BY city', (latest,))]
+        history_rows = [dict(r) for r in conn.execute('''SELECT city, period, avg_price, mom_pct, yoy_pct,
+            data_status, source_url FROM anjuke_city_listings ORDER BY city, period''')]
         latest_logs = [dict(r) for r in conn.execute('''SELECT f.* FROM anjuke_fetch_log f JOIN
             (SELECT city, MAX(id) id FROM anjuke_fetch_log GROUP BY city) x ON x.id=f.id''')]
         blocked = sum(1 for r in latest_logs if r['outcome'] == 'blocked')
@@ -404,6 +407,9 @@ def build_anjuke_payload(db_path=None):
             })
         cov = dict(conn.execute('''SELECT COUNT(DISTINCT city) cities, COUNT(DISTINCT period) periods,
             COUNT(*) records, MIN(period) earliest, MAX(period) latest FROM anjuke_city_listings''').fetchone())
+    city_history = {}
+    for row in history_rows:
+        city_history.setdefault(row['city'], []).append(row)
     warnings = []
     if blocked:
         names = '、'.join(r['city'] for r in latest_logs if r['outcome'] == 'blocked')
@@ -416,6 +422,8 @@ def build_anjuke_payload(db_path=None):
     return {
         'data_status': DATA_STATUS if latest else 'missing', 'latest_period': latest,
         'cards': cards, 'city_table': rows,
+        'history_cities': sorted(city_history),
+        'city_history': city_history,
         'coverage': {**cov, 'mapped_cities': len(ANJUKE_CITY_SLUGS),
                      'extra_mapped_cities': len(ANJUKE_EXTRA_CITY_SLUGS)},
         'warnings': warnings,

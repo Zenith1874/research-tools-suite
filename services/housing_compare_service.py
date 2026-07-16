@@ -55,6 +55,40 @@ def _read_listing(db_path, period=None):
     return period, {r['city']: dict(r) for r in rows}
 
 
+def _read_official_history(db_path):
+    if not os.path.exists(db_path):
+        return {}
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        columns = {r[1] for r in conn.execute('PRAGMA table_info(housing_city_observations)')}
+        source_expr = 'source_url' if 'source_url' in columns else 'NULL AS source_url'
+        rows = conn.execute(f'''SELECT city, period, value, {source_expr}
+            FROM housing_city_observations
+            WHERE indicator_code='second_home_yoy_idx' ORDER BY city, period''').fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        conn.close()
+    return {(r['city'], r['period']): {'value': r['value'], 'source_url': r['source_url']}
+            for r in rows}
+
+
+def _read_listing_history(db_path):
+    if not os.path.exists(db_path):
+        return {}
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute('''SELECT city, period, yoy_pct, source_url
+            FROM anjuke_city_listings WHERE yoy_pct IS NOT NULL ORDER BY city, period''').fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        conn.close()
+    return {(r['city'], r['period']): dict(r) for r in rows}
+
+
 def _pearson(xs, ys):
     n = len(xs)
     if n < 2:
@@ -124,6 +158,29 @@ def build_housing_compare_payload(official_db_path=None, listing_db_path=None, p
     ys = [r['listing_yoy_pct'] for r in comparison]
     same = sum(_sign(x) == _sign(y) for x, y in zip(xs, ys))
     direction_rate = round(same / len(comparison) * 100, 2) if comparison else None
+
+    official_history = _read_official_history(official_db)
+    listing_history = _read_listing_history(listing_db)
+    history_by_city = {}
+    for (city, history_period), listed in listing_history.items():
+        official_row = official_history.get((city, history_period))
+        if not official_row:
+            continue
+        official_pct = round(float(official_row['value']) - 100, 2)
+        listing_pct = round(float(listed['yoy_pct']), 2)
+        history_by_city.setdefault(city, []).append({
+            'city': city,
+            'period': history_period,
+            'official_second_yoy_pct': official_pct,
+            'listing_yoy_pct': listing_pct,
+            'divergence': round(listing_pct - official_pct, 2),
+            'data_status': 'derived',
+            'formula': 'divergence = listing_yoy_pct - official_second_yoy_pct',
+            'official_source_url': official_row['source_url'],
+            'listing_source_url': listed['source_url'],
+        })
+    history_points = [row for rows in history_by_city.values() for row in rows]
+    history_periods = [row['period'] for row in history_points]
     return {
         'period': target_period,
         'data_status': 'derived' if comparison else 'missing',
@@ -134,6 +191,14 @@ def build_housing_compare_payload(official_db_path=None, listing_db_path=None, p
         },
         'scatter_data': [{'city': r['city'], 'x': r['official_second_yoy_pct'],
                           'y': r['listing_yoy_pct']} for r in comparison],
+        'history_by_city': history_by_city,
+        'history_summary': {
+            'cities': len(history_by_city),
+            'points': len(history_points),
+            'earliest': min(history_periods) if history_periods else None,
+            'latest': max(history_periods) if history_periods else None,
+            'data_status': 'derived' if history_points else 'missing',
+        },
         'summary': {
             'comparable_cities': len(comparison),
             'pearson_correlation': _pearson(xs, ys),
