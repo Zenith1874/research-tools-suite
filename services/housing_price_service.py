@@ -11,6 +11,7 @@
 import re
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import requests
@@ -19,6 +20,9 @@ from bs4 import BeautifulSoup
 NBS_SOURCE = '国家统计局'
 SOURCE_TYPE = 'nbs_70city_housing'
 NBS_LIST_URL = 'https://www.stats.gov.cn/sj/zxfb/'
+NBS_SEARCH_API = 'https://api.so-gov.cn/query/s'
+NBS_SEARCH_SITE_CODE = 'bm36000002'
+NBS_HISTORY_QUERY = '70个大中城市住宅销售价格变动情况'
 FRED_SERIES = [
     ('QCNR628BIS', 'BIS 中国实际住宅价格指数(2010=100)', 'real'),
     ('QCNN628BIS', 'BIS 中国名义住宅价格指数(2010=100)', 'nominal'),
@@ -64,7 +68,8 @@ def ensure_housing_tables(conn):
 
 # ── 解析(可单测) ──────────────────────────────────────────────────────────────
 def _norm_city(s):
-    return re.sub(r'[\s　]', '', s or '')
+    normalized = re.sub(r'[\s　]', '', s or '')
+    return re.sub(r'[*＊#＃]+$', '', normalized)
 
 
 def parse_period_from_title(title):
@@ -109,6 +114,44 @@ def parse_70city_article(html):
     tables = soup.find_all('table')
     if len(tables) < 2:
         raise ValueError(f'70城月报表格数异常: {len(tables)}')
+
+    # 2011 年旧版同页包含“新建住宅 / 新建商品住宅 / 二手住宅”三张主表，
+    # 且桌面/移动版重复；必须按表题选主表，不能把第 2 张新房表误当二手表。
+    labelled = {'new': [], 'second': []}
+    for table in tables:
+        heading_rows = table.find_all('tr')[:3]
+        # Some releases (notably 2018-01/02) put the table caption in the
+        # paragraph immediately before a wrapping <div>, rather than in the
+        # table itself. Include that nearby context before classifying tables.
+        heading_parts = [row.get_text(' ', strip=True) for row in heading_rows]
+        for node in (table, table.parent):
+            previous = node.find_previous_sibling() if node else None
+            if previous is not None:
+                heading_parts.insert(0, previous.get_text(' ', strip=True))
+        heading = re.sub(r'[\s　]', '', ' '.join(heading_parts))
+        if '分类指数' in heading:
+            continue
+        parsed_table = parse_dual_column_table(table)
+        if len(parsed_table) < 30:
+            continue
+        if '二手住宅价格指数' in heading or '二手住宅销售价格指数' in heading:
+            labelled['second'].append(parsed_table)
+        elif ('新建商品住宅价格指数' in heading
+              or '新建商品住宅销售价格指数' in heading):
+            labelled['new'].append(parsed_table)
+
+    def merge_labelled(parts):
+        merged = {}
+        for part in parts:
+            merged.update(part)
+        return merged
+
+    labelled_new = merge_labelled(labelled['new'])
+    labelled_second = merge_labelled(labelled['second'])
+    if len(labelled_new) == 70 and len(labelled_second) == 70:
+        return {'new': labelled_new, 'second': labelled_second}
+
+    # 无可用表题时保留原版式兼容逻辑（含 35+35 拆表）。
     parsed = [parse_dual_column_table(t) for t in tables[:4]]
     t0, t1 = parsed[0], parsed[1]
     if len(t0) >= 60:                                    # 版式A
@@ -119,9 +162,76 @@ def parse_70city_article(html):
         second = {**parsed[2], **parsed[3]}
     else:
         raise ValueError(f'70城版式无法识别: 表城市数 {[len(x) for x in parsed]}')
-    if len(new) < 60 or len(second) < 60:
+    if len(new) != 70 or len(second) != 70:
         raise ValueError(f'70城解析城市数异常: 新房{len(new)} 二手{len(second)}')
     return {'new': new, 'second': second}
+
+
+def _release_path_rank(url):
+    if '/sj/zxfb/' in url:
+        return 0
+    if '/sj/zxfbhjd/' in url:
+        return 1
+    if '/xxgk/sjfb/' in url:
+        return 2
+    return 9
+
+
+def extract_70city_search_releases(payload, start_year=2011, end_year=None):
+    """从国家统计局官网所用站内搜索 JSON 中提取严格匹配的月报链接。"""
+    end_year = int(end_year or datetime.now().year)
+    pattern = re.compile(
+        r'^(20\d{2})年(\d{1,2})月份?70个大中城市'
+        r'(?:及\d{1,2}月(?:上|下)半月一线和热点二线城市)?'
+        r'(?:商品)?住宅销售价格变动情况$')
+    by_period = {}
+    for doc in (payload or {}).get('resultDocs') or []:
+        data = doc.get('data') or {}
+        title = re.sub(r'<[^>]+>', '', data.get('titleO') or data.get('title') or '').strip()
+        url = (data.get('url') or '').strip()
+        match = pattern.fullmatch(title)
+        if not match or not url.startswith('https://www.stats.gov.cn/'):
+            continue
+        year, month = int(match.group(1)), int(match.group(2))
+        if not start_year <= year <= end_year or not 1 <= month <= 12:
+            continue
+        period = f'{year}-{month:02d}'
+        candidate = (url, title)
+        current = by_period.get(period)
+        if current is None or _release_path_rank(url) < _release_path_rank(current[0]):
+            by_period[period] = candidate
+    return [(period, *by_period[period]) for period in sorted(by_period, reverse=True)]
+
+
+def discover_70city_history(start_year=2011, end_year=None, max_pages=30):
+    """通过统计局官网内置政务搜索发现 2011 年以来的月报原文。"""
+    end_year = int(end_year or datetime.now().year)
+    found = {}
+    headers = {**UA, 'Referer': 'https://www.stats.gov.cn/search/s'}
+    for page in range(1, int(max_pages) + 1):
+        response = requests.post(NBS_SEARCH_API, data={
+            'siteCode': NBS_SEARCH_SITE_CODE,
+            'qt': NBS_HISTORY_QUERY,
+            'page': page,
+            'pageSize': 20,
+            'keyPlace': '1',
+            'sort': 'dateDesc',
+        }, headers=headers, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get('ok'):
+            raise ValueError(f'统计局站内搜索失败: {payload.get("msg") or payload.get("code")}')
+        for period, url, title in extract_70city_search_releases(
+                payload, int(start_year), end_year):
+            current = found.get(period)
+            if current is None or _release_path_rank(url) < _release_path_rank(current[0]):
+                found[period] = (url, title)
+        current_hits = int(payload.get('currentHits') or 0)
+        total_hits = int(payload.get('totalHits') or 0)
+        if not current_hits or page * 20 >= total_hits:
+            break
+        time.sleep(0.15)
+    return [(url, title) for _, (url, title) in sorted(found.items(), reverse=True)]
 
 
 def discover_70city_releases(max_pages=6):
@@ -149,6 +259,107 @@ def discover_70city_releases(max_pages=6):
     return out
 
 
+def _fetch_70city_article(url):
+    response = requests.get(url, headers=UA, timeout=HTTP_TIMEOUT)
+    response.raise_for_status()
+    response.encoding = 'utf-8'
+    return parse_70city_article(response.text)
+
+
+def _upsert_70city_release(conn, data, period, url, title, updated_at):
+    upserted = 0
+    for kind, code_mom, code_yoy in [
+            ('new', 'new_home_mom_idx', 'new_home_yoy_idx'),
+            ('second', 'second_home_mom_idx', 'second_home_yoy_idx')]:
+        for city, (mom, yoy) in data[kind].items():
+            for code, value in ((code_mom, mom), (code_yoy, yoy)):
+                cur = conn.execute('''INSERT INTO housing_city_observations
+                    (city,period,indicator_code,value,data_status,source_name,source_type,
+                     source_url,source_title,parser_notes,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(city,period,indicator_code) DO UPDATE SET
+                      value=excluded.value, source_url=excluded.source_url,
+                      source_title=excluded.source_title, parser_notes=excluded.parser_notes,
+                      updated_at=excluded.updated_at''',
+                    (city, period, code, value, 'official', NBS_SOURCE, SOURCE_TYPE,
+                     url, title, '解析自统计局70城月报正文；按表题识别新建商品住宅/二手住宅主表',
+                     updated_at))
+                upserted += cur.rowcount
+    return upserted
+
+
+def backfill_housing_city_history(db_path, start_year=2011, end_year=None,
+                                  sleep_seconds=0.5, max_search_pages=30, workers=1):
+    """一次性回填现行 70 城逐城指数；2010 旧制度不混入该表。"""
+    started = datetime.now().isoformat()
+    end_year = int(end_year or datetime.now().year)
+    releases = discover_70city_history(start_year, end_year, max_search_pages)
+    errors = []
+    counters = {'records_upserted': 0, 'releases_ok': 0,
+                'releases_skipped_complete': 0, 'releases_failed': 0}
+    actual_coverage = (None, None)
+    with connect(db_path) as conn:
+        ensure_housing_tables(conn)
+        pending = []
+        for url, title in releases:
+            period = parse_period_from_title(title)
+            if not period:
+                continue
+            existing = conn.execute('''SELECT COUNT(*) FROM housing_city_observations
+                WHERE period=?''', (period,)).fetchone()[0]
+            if existing >= 280:
+                counters['releases_skipped_complete'] += 1
+                continue
+            pending.append((period, url, title))
+
+        def store_result(item, data=None, error=None):
+            period, url, title = item
+            if error is not None:
+                counters['releases_failed'] += 1
+                errors.append(f'{period} {title[:30]}: {error}')
+                return
+            now = datetime.now().isoformat()
+            counters['records_upserted'] += _upsert_70city_release(
+                conn, data, period, url, title, now)
+            counters['releases_ok'] += 1
+            conn.commit()
+
+        workers = max(1, min(int(workers), 4))
+        if workers == 1:
+            for index, item in enumerate(pending):
+                if index and sleep_seconds > 0:
+                    time.sleep(float(sleep_seconds))
+                try:
+                    store_result(item, _fetch_70city_article(item[1]))
+                except Exception as exc:
+                    store_result(item, error=exc)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_map = {
+                    executor.submit(_fetch_70city_article, url): (period, url, title)
+                    for period, url, title in pending
+                }
+                for future in as_completed(future_map):
+                    item = future_map[future]
+                    try:
+                        store_result(item, future.result())
+                    except Exception as exc:
+                        store_result(item, error=exc)
+        actual_coverage = conn.execute('''SELECT MIN(period), MAX(period)
+            FROM housing_city_observations WHERE period BETWEEN ? AND ?''',
+            (f'{int(start_year)}-01', f'{end_year}-12')).fetchone()
+    return {
+        'success': counters['releases_ok'] > 0 or counters['releases_skipped_complete'] > 0,
+        **counters,
+        'releases_found': len(releases),
+        'coverage_start': actual_coverage[0],
+        'coverage_end': actual_coverage[1],
+        'errors': errors[:20],
+        'started_at': started,
+        'finished_at': datetime.now().isoformat(),
+    }
+
+
 # ── 更新 ──────────────────────────────────────────────────────────────────────
 def update_housing_prices(db_path):
     started = datetime.now().isoformat()
@@ -163,28 +374,14 @@ def update_housing_prices(db_path):
             if not period:
                 continue
             n = conn.execute('SELECT COUNT(*) FROM housing_city_observations WHERE period=?', (period,)).fetchone()[0]
-            if n >= 240:      # 70城×4指标≈280,留冗余;已完整则跳过
+            if n >= 280:      # 70城×4指标=280；不完整月份必须重抓
                 continue
             try:
-                r = requests.get(url, headers=UA, timeout=HTTP_TIMEOUT)
-                r.encoding = 'utf-8'
-                data = parse_70city_article(r.text)
+                data = _fetch_70city_article(url)
             except Exception as exc:
                 errors.append(f'{title[:40]}: {exc}')
                 continue
-            for kind, code_mom, code_yoy in [('new', 'new_home_mom_idx', 'new_home_yoy_idx'),
-                                             ('second', 'second_home_mom_idx', 'second_home_yoy_idx')]:
-                for city, (mom, yoy) in data[kind].items():
-                    for code, val in [(code_mom, mom), (code_yoy, yoy)]:
-                        cur = conn.execute('''INSERT INTO housing_city_observations
-                            (city,period,indicator_code,value,data_status,source_name,source_type,
-                             source_url,source_title,parser_notes,updated_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                            ON CONFLICT(city,period,indicator_code) DO UPDATE SET
-                              value=excluded.value, source_url=excluded.source_url, updated_at=excluded.updated_at''',
-                            (city, period, code, val, 'official', NBS_SOURCE, SOURCE_TYPE,
-                             url, title, '解析自统计局70城月报正文表(表0新建/表1二手,双列版式)', now))
-                        upserted += cur.rowcount
+            upserted += _upsert_70city_release(conn, data, period, url, title, now)
             time.sleep(0.5)
         # 2) BIS 长指数(FRED 免 key,幂等全量)
         for fred_id, name, kind in FRED_SERIES:
@@ -267,5 +464,6 @@ def build_housing_payload(db_path):
         'warnings': [] if latest else ['尚未抓取;未生成 mock。'],
         'notes': ['70城指数为官方口径:环比上月=100、同比上年同月=100(100 以下即下跌)。',
                   '数据取自统计局月报正文表格(境外 IP 无法访问其 data API,新闻页可访问)。',
+                  '现行逐城可比序列从 2011 年开始；2010 年旧制度仅有旧口径资料，不与现行逐城序列拼接。',
                   '不采用商业平台挂牌价(非成交口径);BIS 指数用于 2005 年以来长趋势。'],
     }

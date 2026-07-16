@@ -74,6 +74,20 @@ python scripts/verify_fiscal_debt.py
 财政债务调度器默认每 168 小时检查一次已接入来源。抓取失败会写入
 `fiscal_debt_update_logs`，不会清空或用假数据覆盖旧 observation。
 
+### 房价历史回填
+
+```powershell
+# 统计局现行 70 城逐城口径（2011 起，公开来源，可复现）
+python scripts/backfill_housing_history.py --source nbs --start-year 2011 --end-year 2026 --nbs-workers 3
+
+# 安居客点名十城年度页（2010 起，低频、本机保存，验证页即跳过）
+python scripts/backfill_housing_history.py --source anjuke --start-year 2010 --end-year 2026 --max-requests 90
+```
+
+统计局 2010 年仍是旧发布制度，不与 2011 年后的逐城序列拼接。安居客挂牌数据和原始页只写入
+gitignored 的 `data/housing_listing.db` 与 `data/anjuke_raw/history/`，不会进入公开仓库；年度页正常但
+价格为 `-` 时保留缺失，不补零、不用区县均价替代。
+
 ## 数据说明
 
 - **数据库 `pboc_data.db` 不入库**（约 500MB 二进制、持续变动，超 GitHub 100MB 单文件上限）。

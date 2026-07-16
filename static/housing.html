@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>中国房价 · 70城 + BIS</title>
+<link rel="icon" href="data:,">
 <script src="/vendor/react.min.js"></script>
 <script src="/vendor/react-dom.min.js"></script>
 <script src="/vendor/babel.min.js"></script>
@@ -15,7 +16,7 @@ h1{font-size:20px;margin:0 0 6px}.sub,.muted{color:var(--muted);font-size:12px;l
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{min-height:34px;background:var(--panel2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:7px 12px;text-decoration:none;font:inherit;font-size:12px;cursor:pointer;display:inline-flex;align-items:center}
 .btn:hover{border-color:var(--blue)}.btn.primary{background:rgba(79,143,255,.15);border-color:rgba(79,143,255,.5)}.btn:disabled{opacity:.5}
 .history-picker{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.history-picker select{min-height:34px;background:var(--panel2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:6px 26px 6px 9px;font:inherit}
-.city-controls{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:12px 0}.city-chip{border:1px solid var(--bd);background:var(--panel2);color:var(--muted);border-radius:16px;padding:5px 10px;font:inherit;font-size:11px;cursor:pointer}.city-chip.active{border-color:var(--city-color);color:var(--text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--city-color) 35%,transparent)}.city-chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--city-color);margin-right:5px}.city-chip.missing{opacity:.48;cursor:not-allowed;text-decoration:line-through}.city-chip.all{border-radius:5px}.control-help{font-size:11px;color:var(--muted)}
+.city-controls{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:12px 0}.city-chip{border:1px solid var(--bd);background:var(--panel2);color:var(--muted);border-radius:16px;padding:5px 10px;font:inherit;font-size:11px;cursor:pointer}.city-chip.active{border-color:var(--city-color);color:var(--text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--city-color) 35%,transparent)}.city-chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--city-color);margin-right:5px}.city-chip.missing{opacity:.68;border-style:dashed}.city-chip.all{border-radius:5px}.control-help{font-size:11px;color:var(--muted)}
 .banner{border:1px solid rgba(245,166,35,.45);background:var(--panel);border-radius:6px;padding:10px 12px;margin:12px 0;font-size:12px;color:#f8d89b}
 .breadth{display:flex;gap:18px;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px 16px;margin:14px 0;font-size:13px;flex-wrap:wrap;align-items:center}
 .breadth b{font-size:20px}
@@ -47,11 +48,13 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 const {useEffect,useState}=React;
 const FOCUS_CITIES=['北京','上海','广州','深圳','厦门','南京','合肥','常州','苏州','无锡'];
 const CITY_COLORS={'北京':'#4f8fff','上海':'#ff5b6e','广州':'#f5a623','深圳':'#00d4aa','厦门':'#a974ff','南京':'#26c6da','合肥':'#ff8a50','常州':'#ec6fbe','苏州':'#9ccc65','无锡':'#8d9eff'};
+const LINE_DASHES=['','6,3','2,2','8,2,2,2','10,3','3,3','7,2,2,2','12,3','4,2','1,3'];
 function fmt(v,d=1){if(v===null||v===undefined)return '—';return Number(v).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d})}
 function Delta({v}){if(v===null||v===undefined)return null;const d=v-100;const cls=d>0?'delta-up':(d<0?'delta-down':'');return <span className={cls}>{d>0?'+':''}{d.toFixed(1)}%</span>}
 function Pct({v}){if(v===null||v===undefined)return <span>—</span>;const n=Number(v),cls=n>0?'delta-up':(n<0?'delta-down':'');return <span className={cls}>{n>0?'+':''}{n.toFixed(2)}%</span>}
 function mergeSeries(map){const byP={};Object.entries(map).forEach(([k,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[k]=r.value}));return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function historyMatrix(map,field,indexed=false){const byP={};Object.entries(map||{}).forEach(([city,rows])=>{const base=(rows||[]).find(r=>typeof r[field]==='number')?.[field];(rows||[]).forEach(r=>{if(typeof r[field]!=='number'||(indexed&&!base))return;(byP[r.period]=byP[r.period]||{period:r.period})[city]=indexed?Number((r[field]/base*100).toFixed(2)):r[field]})});return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
+function filterHistory(map,startYear){const floor=`${startYear}-01`;return Object.fromEntries(Object.entries(map||{}).map(([city,rows])=>[city,(rows||[]).filter(r=>r.period>=floor)]))}
 function Chart({title,data,series,unit='',digits=1,height=190}){
   const [hover,setHover]=useState(null);
   const pts=(data||[]).filter(d=>series.some(s=>typeof d[s.key]==='number'));
@@ -68,7 +71,7 @@ function Chart({title,data,series,unit='',digits=1,height=190}){
     <div style={{position:'relative'}}>
     <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" style={{height}} preserveAspectRatio="none" onMouseMove={onMove} onMouseLeave={()=>setHover(null)}>
       {[mn,(mn+mx)/2,mx].map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t,digits)}</text></g>)}
-      {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6"/>)}
+      {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6" strokeDasharray={s.dash||undefined}/>)}
       {hp&&<g><line x1={sx(hover)} x2={sx(hover)} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
         {series.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
       <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
@@ -113,7 +116,7 @@ function compareHistoryCsv(map){
   const body=rows.map(r=>cols.map(([k])=>r[k]??'').join(',')).join('\n');const blob=new Blob(['﻿'+cols.map(c=>c[1]).join(',')+'\n'+body],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='housing_dual_basis_history.csv';a.click();URL.revokeObjectURL(a.href);
 }
 function App(){
-  const [p,setP]=useState(null),[listing,setListing]=useState(null),[compare,setCompare]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false),[listingBusy,setListingBusy]=useState(false),[historyCity,setHistoryCity]=useState('北京'),[visibleCities,setVisibleCities]=useState(null);
+  const [p,setP]=useState(null),[listing,setListing]=useState(null),[compare,setCompare]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false),[listingBusy,setListingBusy]=useState(false),[historyCity,setHistoryCity]=useState('北京'),[visibleCities,setVisibleCities]=useState(null),[historyStart,setHistoryStart]=useState('2010');
   async function load(){const [a,b,c]=await Promise.all([fetch('/api/housing/data'),fetch('/api/housing/anjuke'),fetch('/api/housing/compare')]);setP(await a.json());setListing(await b.json());setCompare(await c.json())}
   async function update(){
     setBusy(true);
@@ -134,23 +137,30 @@ function App(){
   const b=p.breadth;
   const cityYoY=mergeSeries(Object.fromEntries(Object.entries(p.city_series||{}).map(([c,rows])=>[c,rows])));
   const bis=mergeSeries({real:(p.national||{}).QCNR628BIS||[],nominal:(p.national||{}).QCNN628BIS||[]});
-  const historyCities=listing?.history_cities||[];
-  const orderedHistoryCities=FOCUS_CITIES.filter(city=>historyCities.includes(city));
-  const shownCities=(visibleCities===null?orderedHistoryCities:visibleCities.filter(city=>historyCities.includes(city)));
-  const activeHistoryCity=historyCities.includes(historyCity)?historyCity:historyCities[0];
-  const listingHistory=listing?.city_history?.[activeHistoryCity]||[];
+  const listingHistoryCities=listing?.history_cities||[];
+  const orderedHistoryCities=FOCUS_CITIES;
+  const shownCities=(visibleCities===null?orderedHistoryCities:visibleCities.filter(city=>FOCUS_CITIES.includes(city)));
+  const activeHistoryCity=FOCUS_CITIES.includes(historyCity)?historyCity:FOCUS_CITIES[0];
+  const filteredListingMap=filterHistory(listing?.city_history,historyStart);
+  const filteredCompareMap=filterHistory(compare?.history_by_city,historyStart);
+  const filteredOfficialMap=filterHistory(compare?.official_history_by_city,historyStart);
+  const listingHistory=filteredListingMap?.[activeHistoryCity]||[];
   const allListingHistory=Object.values(listing?.city_history||{}).flat();
-  const compareHistory=compare?.history_by_city?.[activeHistoryCity]||[];
-  const citySeries=shownCities.map(city=>({key:city,label:city,color:CITY_COLORS[city]}));
-  const compareCitySeries=shownCities.filter(city=>compare?.history_by_city?.[city]?.length).map(city=>({key:city,label:city,color:CITY_COLORS[city]}));
-  const priceHistoryMatrix=historyMatrix(listing?.city_history,'avg_price');
-  const priceIndexMatrix=historyMatrix(listing?.city_history,'avg_price',true);
-  const divergenceHistoryMatrix=historyMatrix(compare?.history_by_city,'divergence');
-  function toggleCity(city){if(!historyCities.includes(city))return;setVisibleCities(current=>{const base=current===null?orderedHistoryCities:current;if(base.includes(city))return base.length===1?base:base.filter(item=>item!==city);return FOCUS_CITIES.filter(item=>base.includes(item)||item===city)})}
-  function showOnlyCity(city){if(!historyCities.includes(city))return;setVisibleCities([city]);setHistoryCity(city)}
+  const compareHistory=filteredCompareMap?.[activeHistoryCity]||[];
+  const citySeries=shownCities.filter(city=>filteredListingMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
+  const officialCitySeries=shownCities.filter(city=>filteredOfficialMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
+  const compareCitySeries=shownCities.filter(city=>filteredCompareMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
+  const priceHistoryMatrix=historyMatrix(filteredListingMap,'avg_price');
+  const priceIndexMatrix=historyMatrix(filteredListingMap,'avg_price',true);
+  const officialHistoryMatrix=historyMatrix(filteredOfficialMap,'official_second_yoy_pct');
+  const divergenceHistoryMatrix=historyMatrix(filteredCompareMap,'divergence');
+  const coverageByCity=Object.fromEntries((listing?.coverage_by_city||[]).map(row=>[row.city,row]));
+  const rangeYears=[2010,2015,2020,2023,2025].filter((year,i,arr)=>year<=new Date().getFullYear()&&arr.indexOf(year)===i);
+  function toggleCity(city){if(!FOCUS_CITIES.includes(city))return;setVisibleCities(current=>{const base=current===null?orderedHistoryCities:current;if(base.includes(city))return base.length===1?base:base.filter(item=>item!==city);return FOCUS_CITIES.filter(item=>base.includes(item)||item===city)})}
+  function showOnlyCity(city){if(!FOCUS_CITIES.includes(city))return;setVisibleCities([city]);setHistoryCity(city)}
   return <div className="wrap">
     <div className="top"><div><h1>中国房价</h1>
-      <div className="sub">统计局 70 城商品住宅价格指数(月度,官方) + BIS 全国住宅价格指数(季度,2005起) · 最新期：{p.latest_period||'—'}
+      <div className="sub">统计局 70 城商品住宅价格指数(月度,官方；逐城可比口径 2011 起) + BIS 全国住宅价格指数(季度,2005起) · 最新期：{p.latest_period||'—'} · 70城库覆盖 {p.coverage?.nbs_70city?.earliest||'—'} 至 {p.coverage?.nbs_70city?.latest||'—'}
         {' · '}<a className="source-link" href={p.source_pages?.nbs} target="_blank" rel="noreferrer">统计局发布页</a></div></div>
       <div className="actions">
         <button className="btn primary" disabled={busy} onClick={update}>{busy?'更新中…':'更新数据'}</button>
@@ -186,23 +196,25 @@ function App(){
         <td className="num">{fmt(r.second_home_yoy_idx)} <Delta v={r.second_home_yoy_idx}/></td>
       </tr>)}</tbody></table></div>
     <div className="muted" style={{marginTop:10}}>{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
-    <section className="section"><div className="section-head"><div><h2>挂牌价参考（安居客） <span className="badge listing">挂牌价·参考</span></h2><div className="sub">安居客，非官方口径 · 最新期：{listing?.latest_period||'—'} · 历史覆盖 {listing?.coverage?.earliest||'—'} 至 {listing?.coverage?.latest||'—'}</div></div><div className="actions"><label className="history-picker">单城明细<select value={activeHistoryCity||''} onChange={e=>setHistoryCity(e.target.value)}>{orderedHistoryCities.map(city=><option key={city} value={city}>{city}</option>)}</select></label><a className="btn" style={{cursor:'pointer'}} onClick={()=>listingCsv(allListingHistory)}>⬇ 历史 CSV</a></div></div>
-      <div className="notice">挂牌价是卖方要价，不等于成交价；所有数据均为“挂牌价·参考”，独立保存在本机数据库，不进入公开仓库。</div>
+    <section className="section"><div className="section-head"><div><h2>挂牌价参考（安居客） <span className="badge listing">挂牌价·参考</span></h2><div className="sub">安居客，非官方口径 · 最新期：{listing?.latest_period||'—'} · 历史覆盖 {listing?.coverage?.earliest||'—'} 至 {listing?.coverage?.latest||'—'}</div></div><div className="actions"><label className="history-picker">图表起点<select value={historyStart} onChange={e=>setHistoryStart(e.target.value)}>{rangeYears.map(year=><option key={year} value={String(year)}>{year}年</option>)}</select></label><label className="history-picker">单城明细<select value={activeHistoryCity||''} onChange={e=>setHistoryCity(e.target.value)}>{orderedHistoryCities.map(city=><option key={city} value={city}>{city}</option>)}</select></label><a className="btn" style={{cursor:'pointer'}} onClick={()=>listingCsv(allListingHistory)}>⬇ 完整历史 CSV</a></div></div>
+      <div className="notice">挂牌价是卖方要价，不等于成交价；所有数据均为“挂牌价·参考”，独立保存在本机数据库，不进入公开仓库。年度页正常但价格为 “-” 的城市-年份保持缺失，不用 0、区域均价或相邻年份填充。</div>
       {(listing?.warnings||[]).map((w,i)=><div className="banner" key={i}>{w}</div>)}
       <div className="grid">{(listing?.cards||[]).map(c=><div className="metric" key={c.city}><div className="metric-label">{c.city} <span className="badge listing">{c.data_status==='listing_reference'?'挂牌价·参考':'missing'}</span></div><div className="metric-value">{c.avg_price==null?'—':fmt(c.avg_price,0)} <span style={{fontSize:12}}>元/㎡</span></div><div className="metric-meta">环比 <Pct v={c.mom_pct}/> · 同比 <Pct v={c.yoy_pct}/><br/>{c.source_url&&<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">安居客原页</a>}</div></div>)}</div>
-      <div className="table-title">点名十城历史图 · 已入库 {orderedHistoryCities.length}/10 城</div><div className="city-controls"><button className="city-chip all" onClick={()=>setVisibleCities(null)}>全部显示</button>{FOCUS_CITIES.map(city=>{const available=historyCities.includes(city),active=shownCities.includes(city),points=listing?.city_history?.[city]?.length||0;return <button key={city} disabled={!available} aria-pressed={active} title={available?'单击显示/隐藏；双击只看该城':'当前页面无二手挂牌历史'} style={{'--city-color':CITY_COLORS[city]}} className={`city-chip ${available?(active?'active':''):'missing'}`} onClick={()=>toggleCity(city)} onDoubleClick={()=>showOnlyCity(city)}>{city} {available?`${points}月`:'missing'}</button>})}<span className="control-help">单击显示/隐藏，双击只看该城；至少保留一条线。</span></div>
-      <Chart title={`多城市挂牌均价历史（当前显示 ${shownCities.length} 城）`} data={priceHistoryMatrix} series={citySeries} unit="元/㎡" digits={0} height={280}/>
-      <Chart title="多城市挂牌价相对走势（各城市首期=100，便于比较涨跌幅）" data={priceIndexMatrix} series={citySeries} unit="指数" digits={1} height={280}/>
-      <Chart title={`${activeHistoryCity||'城市'}挂牌均价历史（${listingHistory.length}个月）`} data={listingHistory} series={[{key:'avg_price',label:'挂牌均价',color:'var(--yellow)'}]} unit="元/㎡" digits={0}/>
+      <div className="table-title">点名十城历史图 · 挂牌已入库 {listingHistoryCities.length}/10 城 · 当前图表从 {historyStart}-01 起</div><div className="city-controls"><button className="city-chip all" onClick={()=>setVisibleCities(null)}>全部显示</button>{FOCUS_CITIES.map(city=>{const hasListing=listingHistoryCities.includes(city),hasOfficial=Boolean(compare?.official_history_by_city?.[city]?.length),active=shownCities.includes(city),coverage=coverageByCity[city],points=listing?.city_history?.[city]?.length||0;return <button key={city} aria-pressed={active} title={`单击显示/隐藏；双击只看该城；挂牌 ${hasListing?`${coverage?.earliest||'—'} 至 ${coverage?.latest||'—'}`:'缺失'}；官方二手 ${hasOfficial?'有':'不在70城口径'}`} style={{'--city-color':CITY_COLORS[city]}} className={`city-chip ${active?'active':''} ${hasListing?'':'missing'}`} onClick={()=>toggleCity(city)} onDoubleClick={()=>showOnlyCity(city)}>{city} {hasListing?`${points}月`:'挂牌缺失'}</button>})}<span className="control-help">单击显示/隐藏，双击只看该城；虚线按钮表示挂牌缺失，但仍可查看官方序列。</span></div>
+      <div className="scroll"><table><thead><tr><th>城市</th><th>最早月</th><th>最新月</th><th>价格点</th><th>可算同比点</th></tr></thead><tbody>{FOCUS_CITIES.map(city=>{const c=coverageByCity[city];return <tr key={city}><td>{city}</td><td>{c?.earliest||'missing'}</td><td>{c?.latest||'—'}</td><td className="num">{c?.records??0}</td><td className="num">{c?.yoy_points??0}</td></tr>})}</tbody></table></div>
+      <Chart title={`安居客多城市二手挂牌均价（月度，${historyStart}-01 起；当前 ${citySeries.length} 条有值线）`} data={priceHistoryMatrix} series={citySeries} unit="元/㎡" digits={0} height={280}/>
+      <Chart title={`安居客多城市挂牌价相对走势（月度，${historyStart}-01 起；各城市可见首期=100）`} data={priceIndexMatrix} series={citySeries} unit="指数" digits={1} height={280}/>
+      <Chart title={`统计局官方二手住宅同比（月度，${historyStart}-01 起；当前 ${officialCitySeries.length} 条有值线）`} data={officialHistoryMatrix} series={officialCitySeries} unit="%" digits={1} height={280}/>
+      {listingHistory.length?<Chart title={`${activeHistoryCity||'城市'}安居客二手挂牌均价（月度，${historyStart}-01 起；${listingHistory.length}个月）`} data={listingHistory} series={[{key:'avg_price',label:'挂牌均价',color:'var(--yellow)'}]} unit="元/㎡" digits={0}/>:<div className="empty">{activeHistoryCity}没有可用的全市挂牌历史；城市选择仍保留，以便查看官方二手序列和缺失说明。</div>}
       <div className="table-title">{activeHistoryCity||'城市'}挂牌历史明细（最新在前）</div><div className="scroll"><table><thead><tr><th>月份</th><th>挂牌均价</th><th>环比</th><th>同比</th><th>口径</th></tr></thead><tbody>{listingHistory.slice().reverse().map(r=><tr key={r.period}><td>{r.period}</td><td className="num">{fmt(r.avg_price,0)} 元/㎡</td><td className="num"><Pct v={r.mom_pct}/></td><td className="num"><Pct v={r.yoy_pct}/></td><td><span className="badge listing">挂牌价·参考</span></td></tr>)}</tbody></table></div>
       <div className="table-title">全城市挂牌参考（{listing?.latest_period||'—'}）</div><div className="scroll"><table><thead><tr><th>城市</th><th>挂牌均价</th><th>环比</th><th>同比</th><th>口径</th></tr></thead><tbody>{(listing?.city_table||[]).map(r=><tr key={r.city}><td>{r.city}</td><td className="num">{fmt(r.avg_price,0)} 元/㎡</td><td className="num"><Pct v={r.mom_pct}/></td><td className="num"><Pct v={r.yoy_pct}/></td><td><span className="badge listing">挂牌价·参考</span></td></tr>)}</tbody></table></div>
     </section>
-    <section className="section"><div className="section-head"><h2>双口径对比 <span className="badge">derived</span></h2><a className="btn" style={{cursor:'pointer'}} onClick={()=>compareHistoryCsv(compare?.history_by_city)}>⬇ 历史对比 CSV</a></div><div className="notice">挂牌价均价与官方成交结构加权指数定义不同。挂牌同比主要对标官方二手住宅同比；两者分歧本身是市场情绪信号，不是简单的“误差”。</div>
+    <section className="section"><div className="section-head"><h2>双口径对比 <span className="badge">derived</span></h2><a className="btn" style={{cursor:'pointer'}} onClick={()=>compareHistoryCsv(compare?.history_by_city)}>⬇ 完整历史对比 CSV</a></div><div className="notice">挂牌价均价与官方成交结构加权指数定义不同。挂牌同比主要对标官方二手住宅同比；两者分歧本身是市场情绪信号，不是简单的“误差”。官方现行逐城口径从 2011 年开始，2010 年旧制度不与后续逐城序列强行拼接。</div>
       <div className="grid"><div className="metric"><div className="metric-label">可比城市</div><div className="metric-value">{compare?.summary?.comparable_cities??0}</div><div className="metric-meta">月份 {compare?.period||'—'}</div></div><div className="metric"><div className="metric-label">皮尔逊相关系数 <span className="badge">derived</span></div><div className="metric-value">{fmt(compare?.summary?.pearson_correlation,3)}</div><div className="metric-meta">{compare?.summary?.pearson_formula}</div></div><div className="metric"><div className="metric-label">方向一致率 <span className="badge">derived</span></div><div className="metric-value">{fmt(compare?.summary?.direction_agreement_pct,1)}%</div><div className="metric-meta">{compare?.summary?.direction_formula}</div></div><div className="metric"><div className="metric-label">不可比城市</div><div className="metric-value">{compare?.not_comparable?.length??0}</div><div className="metric-meta">缺任一侧即列入，不补零</div></div></div>
       <ScatterChart data={compare?.scatter_data||[]}/>
-      <Chart title={`多城市挂牌-官方二手分歧历史（当前可比 ${compareCitySeries.length} 城）`} data={divergenceHistoryMatrix} series={compareCitySeries} unit="个百分点" digits={2} height={260}/>
+      <Chart title={`挂牌同比－官方二手同比（月度，${historyStart}-01 起；当前可比 ${compareCitySeries.length} 城）`} data={divergenceHistoryMatrix} series={compareCitySeries} unit="个百分点" digits={2} height={260}/>
       <div className="table-title">{activeHistoryCity||'城市'}逐月双口径历史 · 当前本地库共 {compare?.history_summary?.points??0} 个可比城市-月份点</div>
-      {compareHistory.length?<><Chart title={`${activeHistoryCity}挂牌同比 vs 官方二手同比（${compareHistory.length}个月）`} data={compareHistory} series={[{key:'listing_yoy_pct',label:'挂牌同比',color:'var(--yellow)'},{key:'official_second_yoy_pct',label:'官方二手同比',color:'var(--blue)'}]} unit="%" digits={2}/><Chart title={`${activeHistoryCity}挂牌-官方二手分歧历史`} data={compareHistory} series={[{key:'divergence',label:'分歧',color:'var(--red)'}]} unit="个百分点" digits={2}/></>:<div className="empty">{activeHistoryCity||'该城市'}没有可与统计局二手同比同月对齐的历史点；不会补零或改用新房指数。</div>}
+      {compareHistory.length?<><Chart title={`${activeHistoryCity}挂牌同比 vs 官方二手同比（月度，${historyStart}-01 起；${compareHistory.length}个月）`} data={compareHistory} series={[{key:'listing_yoy_pct',label:'挂牌同比',color:'var(--yellow)'},{key:'official_second_yoy_pct',label:'官方二手同比',color:'var(--blue)',dash:'6,3'}]} unit="%" digits={2}/><Chart title={`${activeHistoryCity}挂牌同比－官方二手同比（月度，${historyStart}-01 起）`} data={compareHistory} series={[{key:'divergence',label:'分歧',color:'var(--red)'}]} unit="个百分点" digits={2}/></>:<div className="empty">{activeHistoryCity||'该城市'}没有可与统计局二手同比同月对齐的历史点；不会补零或改用新房指数。</div>}
       <div className="grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>{[['listing_more_optimistic','挂牌更乐观'],['listing_more_pessimistic','挂牌更悲观']].map(([key,title])=><div key={key}><div className="table-title">分歧 Top 10 · {title}</div><div className="scroll"><table><thead><tr><th>城市</th><th>官方二手同比</th><th>挂牌同比</th><th>分歧</th></tr></thead><tbody>{(compare?.divergence_ranking?.[key]||[]).map(r=><tr key={r.city}><td>{r.city}</td><td className="num"><Pct v={r.official_second_yoy_pct}/></td><td className="num"><Pct v={r.listing_yoy_pct}/></td><td className="num"><Pct v={r.divergence}/></td></tr>)}</tbody></table></div></div>)}</div>
       <div className="table-title">完整对比表</div><div className="scroll"><table><thead><tr><th>城市</th><th>官方新房同比</th><th>官方二手同比</th><th>挂牌同比</th><th>分歧</th></tr></thead><tbody>{(compare?.comparison_table||[]).map(r=><tr key={r.city}><td>{r.city}</td><td className="num"><Pct v={r.official_new_yoy_pct}/></td><td className="num"><Pct v={r.official_second_yoy_pct}/></td><td className="num"><Pct v={r.listing_yoy_pct}/></td><td className="num"><Pct v={r.divergence}/></td></tr>)}</tbody></table></div>
     </section>

@@ -37,6 +37,7 @@ tasks/
 # ── 机器本地 / 工具产物（含本地路径、用户名，勿入公开仓库）──
 .claude/
 .playwright-cli/
+output/playwright/
 pbc_found_links.json
 pbc_search_found.json
 pbc_*.json

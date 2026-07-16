@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 from services.anjuke_city_map import (
     ANJUKE_CITY_SLUGS,
     ANJUKE_EXTRA_CITY_SLUGS,
+    city_history_url,
     city_market_url,
     city_slug,
 )
@@ -37,6 +38,7 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
 BLOCK_MARKERS = ('访问验证', '请输入验证码', 'antibot/verifycode', '滑块验证')
 TIER1 = ('北京', '上海', '广州', '深圳')
+FOCUS_CITIES = ('北京', '上海', '广州', '深圳', '厦门', '南京', '合肥', '常州', '苏州', '无锡')
 
 
 def connect(db_path=None):
@@ -60,8 +62,14 @@ def ensure_tables(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS anjuke_fetch_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         city TEXT, url TEXT, http_status INTEGER, bytes INTEGER,
-        outcome TEXT, fetched_at TEXT
+        outcome TEXT, fetched_at TEXT,
+        fetch_scope TEXT DEFAULT 'current', period_hint TEXT
     )''')
+    log_columns = {row[1] for row in conn.execute('PRAGMA table_info(anjuke_fetch_log)')}
+    if 'fetch_scope' not in log_columns:
+        conn.execute("ALTER TABLE anjuke_fetch_log ADD COLUMN fetch_scope TEXT DEFAULT 'current'")
+    if 'period_hint' not in log_columns:
+        conn.execute('ALTER TABLE anjuke_fetch_log ADD COLUMN period_hint TEXT')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_anjuke_listing_period ON anjuke_city_listings(period, city)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_anjuke_fetch_city_time ON anjuke_fetch_log(city, fetched_at)')
     conn.commit()
@@ -261,15 +269,94 @@ def parse_anjuke_city_page(html, source_url, fetched_at=None, allow_small_fixtur
             'history_points': len(monthly), 'source_url': source_url}
 
 
+def _as_float(value):
+    if value is None:
+        return None
+    try:
+        return float(str(value).replace('%', '').strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_anjuke_year_page(html, source_url, expected_city, expected_year,
+                           allow_small_fixture=False):
+    """解析年度房价页的逐月二手房挂牌均价。
+
+    年度页当前把 1--12 月记录放在 Nuxt ``yearAreaData.yearList`` 中；部分城市或
+    早期年份虽有正常页面但价格为 ``-``。这种情况返回解析失败而不是写入 0。
+    """
+    raw = html.encode('utf-8') if isinstance(html, str) else html
+    blocked = is_blocked_response(raw, source_url)
+    if allow_small_fixture and len(raw) < 5000:
+        decoded = raw.decode('utf-8', errors='ignore')
+        blocked = any(marker in source_url + '\n' + decoded for marker in BLOCK_MARKERS)
+    if blocked:
+        raise PermissionError('blocked: 安居客访问验证页')
+    text = raw.decode('utf-8', errors='replace')
+    soup = BeautifulSoup(text, 'html.parser')
+    page_title = soup.title.get_text(' ', strip=True) if soup.title else ''
+    expected_year = int(expected_year)
+    if expected_city not in page_title or str(expected_year) not in page_title:
+        raise ValueError(
+            f'年度页面城市/年份错配: expected={expected_city}/{expected_year} title={page_title[:80]}')
+
+    script = _extract_nuxt_script(text)
+    aliases = _nuxt_aliases(script)
+    start = script.find('yearList:[')
+    if start < 0:
+        raise ValueError('年度页面缺少 yearList')
+    end_match = re.search(r'\]\s*,\s*otherCitiesInSameProvince:', script[start:])
+    if not end_match:
+        raise ValueError('年度页面 yearList 边界异常')
+    end = start + end_match.start()
+    region = script[start:end]
+    records = []
+    item_pattern = re.compile(
+        r'\{title:([^,{}]+),actionUrl:[^,{}]+,avgPrice:([^,{}]+),monthChange:([^,{}]+)\}')
+    for match in item_pattern.finditer(region):
+        title = str(_resolve(match.group(1), aliases) or '')
+        title_match = re.fullmatch(r'(20\d{2})年(\d{1,2})月房价', title)
+        if not title_match or int(title_match.group(1)) != expected_year:
+            continue
+        month = int(title_match.group(2))
+        price = _as_float(_resolve(match.group(2), aliases))
+        if price is None or not PRICE_MIN <= price <= PRICE_MAX:
+            continue
+        records.append({
+            'city': expected_city,
+            'period': f'{expected_year}-{month:02d}',
+            'avg_price': price,
+            'mom_pct': _as_float(_resolve(match.group(3), aliases)),
+            'yoy_pct': None,
+        })
+    records.sort(key=lambda row: row['period'])
+    if not records:
+        raise ValueError(f'{expected_city}{expected_year}年度页面正常返回但逐月挂牌字段为空')
+    return {
+        'city': expected_city,
+        'year': expected_year,
+        'records': records,
+        'history_points': len(records),
+        'source_url': source_url,
+    }
+
+
 def _cache_path(city, period):
     rel = os.path.join('data', 'anjuke_raw', period, f'{city_slug(city)}.html')
     return rel, os.path.join(ROOT, rel)
 
 
-def _log_fetch(conn, city, url, status, size, outcome, fetched_at):
+def _history_cache_path(city, year):
+    rel = os.path.join('data', 'anjuke_raw', 'history', city_slug(city), f'{int(year)}.html')
+    return rel, os.path.join(ROOT, rel)
+
+
+def _log_fetch(conn, city, url, status, size, outcome, fetched_at,
+               fetch_scope='current', period_hint=None):
     conn.execute('''INSERT INTO anjuke_fetch_log
-        (city,url,http_status,bytes,outcome,fetched_at) VALUES (?,?,?,?,?,?)''',
-                 (city, url, status, size, outcome, fetched_at))
+        (city,url,http_status,bytes,outcome,fetched_at,fetch_scope,period_hint)
+        VALUES (?,?,?,?,?,?,?,?)''',
+                 (city, url, status, size, outcome, fetched_at, fetch_scope, period_hint))
 
 
 def update_anjuke_listings(db_path=None, cities=None, sleep_range=(2.0, 4.0), max_requests=MAX_REQUESTS):
@@ -383,6 +470,192 @@ def update_anjuke_listings(db_path=None, cities=None, sleep_range=(2.0, 4.0), ma
             'finished_at': datetime.now().isoformat()}
 
 
+def _upsert_history_records(conn, city, records, source_url, fetched_at, raw_cached):
+    upserted = 0
+    for record in records:
+        cur = conn.execute('''INSERT INTO anjuke_city_listings
+            (city,period,avg_price,mom_pct,yoy_pct,data_status,source_url,fetched_at,raw_cached)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(city,period) DO UPDATE SET avg_price=excluded.avg_price,
+              mom_pct=excluded.mom_pct,yoy_pct=COALESCE(excluded.yoy_pct,anjuke_city_listings.yoy_pct),
+              data_status=excluded.data_status,source_url=excluded.source_url,
+              fetched_at=excluded.fetched_at,raw_cached=excluded.raw_cached''',
+            (city, record['period'], record['avg_price'], record.get('mom_pct'),
+             record.get('yoy_pct'), DATA_STATUS, source_url, fetched_at, raw_cached))
+        upserted += cur.rowcount
+    return upserted
+
+
+def _recompute_city_changes(conn, cities):
+    """按完整月度价格序列重算环比/同比，跨年度连接 12 月与 1 月。"""
+    updates = []
+    for city in cities:
+        rows = conn.execute('''SELECT period, avg_price FROM anjuke_city_listings
+            WHERE city=? ORDER BY period''', (city,)).fetchall()
+        prices = {row['period']: row['avg_price'] for row in rows}
+        for period, price in prices.items():
+            year, month = (int(x) for x in period.split('-'))
+            previous_month = f'{year - 1}-12' if month == 1 else f'{year}-{month - 1:02d}'
+            previous_year = f'{year - 1}-{month:02d}'
+            updates.append((_pct(price, prices.get(previous_month)),
+                            _pct(price, prices.get(previous_year)), city, period))
+    conn.executemany('''UPDATE anjuke_city_listings SET mom_pct=?, yoy_pct=?
+        WHERE city=? AND period=?''', updates)
+    return len(updates)
+
+
+def update_anjuke_history(db_path=None, cities=None, start_year=2010, end_year=None,
+                          sleep_range=(2.0, 4.0), max_requests=MAX_REQUESTS):
+    """分批回填年度页历史；单次网络请求硬上限默认 100。
+
+    已在数据库中完整覆盖的城市-年份直接跳过；已缓存的正常 HTML 只解析不联网。
+    验证页不缓存、不重试；网络错误或 5xx 最多重试两次。
+    """
+    selected = list(cities or FOCUS_CITIES)
+    now_dt = datetime.now()
+    end_year = min(int(end_year or now_dt.year), now_dt.year)
+    start_year = int(start_year)
+    if start_year > end_year:
+        raise ValueError('start_year 不能晚于 end_year')
+    if not 1 <= int(max_requests) <= MAX_REQUESTS:
+        raise ValueError(f'max_requests 必须在 1--{MAX_REQUESTS} 之间')
+
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.7',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://www.anjuke.com/fangjia/',
+    })
+    counters = {
+        'pages_ok': 0, 'pages_cached': 0, 'pages_skipped_complete': 0,
+        'pages_empty': 0, 'pages_blocked': 0, 'pages_failed': 0,
+        'records_upserted': 0, 'requests': 0,
+    }
+    errors = []
+    tasks = [(year, city) for year in range(start_year, end_year + 1) for city in selected]
+    processed = 0
+    network_pages = 0
+    limit_reached = False
+    with closing(connect(db_path)) as conn:
+        ensure_tables(conn)
+        for year, city in tasks:
+            expected_months = 12 if year < now_dt.year else now_dt.month
+            existing = conn.execute('''SELECT COUNT(DISTINCT period) FROM anjuke_city_listings
+                WHERE city=? AND period BETWEEN ? AND ?''',
+                (city, f'{year}-01', f'{year}-12')).fetchone()[0]
+            if existing >= expected_months:
+                counters['pages_skipped_complete'] += 1
+                processed += 1
+                continue
+            url = city_history_url(city, year)
+            if not url:
+                counters['pages_failed'] += 1
+                errors.append(f'{city}{year}: 无年度 URL 映射')
+                processed += 1
+                continue
+            fetched_at = datetime.now().isoformat()
+            rel_path, abs_path = _history_cache_path(city, year)
+            content = None
+            status = None
+            final_url = url
+            from_cache = os.path.exists(abs_path)
+            if from_cache:
+                counters['pages_cached'] += 1
+                with open(abs_path, 'rb') as fh:
+                    content = fh.read()
+                fetched_at = datetime.fromtimestamp(os.path.getmtime(abs_path)).isoformat()
+                status = 200
+            else:
+                if counters['requests'] >= max_requests:
+                    limit_reached = True
+                    break
+                if network_pages and sleep_range[1] > 0:
+                    time.sleep(random.uniform(*sleep_range))
+                response = None
+                last_error = None
+                for attempt in range(3):
+                    if counters['requests'] >= max_requests:
+                        limit_reached = True
+                        break
+                    if attempt:
+                        time.sleep(min(8.0, 2 ** (attempt + 1)) + random.uniform(0, 1))
+                    try:
+                        counters['requests'] += 1
+                        response = session.get(url, timeout=25, allow_redirects=True)
+                        if response.status_code >= 500:
+                            last_error = RuntimeError(f'HTTP {response.status_code}')
+                            continue
+                        break
+                    except requests.RequestException as exc:
+                        last_error = exc
+                network_pages += 1
+                if response is None or response.status_code >= 500:
+                    counters['pages_failed'] += 1
+                    status = response.status_code if response is not None else None
+                    size = len(response.content) if response is not None else 0
+                    _log_fetch(conn, city, url, status, size, 'http_fail', fetched_at,
+                               'history', str(year))
+                    errors.append(f'{city}{year}: {last_error}')
+                    conn.commit()
+                    processed += 1
+                    if limit_reached:
+                        break
+                    continue
+                content = response.content
+                status = response.status_code
+                final_url = response.url
+
+            if is_blocked_response(content, final_url):
+                counters['pages_blocked'] += 1
+                _log_fetch(conn, city, url, status, len(content), 'blocked', fetched_at,
+                           'history', str(year))
+                conn.commit()
+                processed += 1
+                continue
+
+            if not from_cache:
+                os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+                with open(abs_path, 'wb') as fh:
+                    fh.write(content)
+            try:
+                parsed = parse_anjuke_year_page(content, url, city, year)
+                counters['records_upserted'] += _upsert_history_records(
+                    conn, city, parsed['records'], url, fetched_at, rel_path)
+                counters['pages_ok'] += 1
+                _log_fetch(conn, city, url, status, len(content), 'success', fetched_at,
+                           'history', str(year))
+            except PermissionError:
+                counters['pages_blocked'] += 1
+                _log_fetch(conn, city, url, status, len(content), 'blocked', fetched_at,
+                           'history', str(year))
+            except Exception as exc:
+                counters['pages_empty'] += 1
+                _log_fetch(conn, city, url, status, len(content), 'history_empty', fetched_at,
+                           'history', str(year))
+                errors.append(f'{city}{year}: {exc}')
+            conn.commit()
+            processed += 1
+
+        recalculated = _recompute_city_changes(conn, selected)
+        conn.commit()
+    return {
+        'success': any(counters[key] for key in ('pages_ok', 'pages_cached', 'pages_skipped_complete')),
+        **counters,
+        'changes_recalculated': recalculated,
+        'tasks_total': len(tasks),
+        'tasks_processed': processed,
+        'tasks_remaining': max(0, len(tasks) - processed),
+        'request_limit_reached': limit_reached,
+        'start_year': start_year,
+        'end_year': end_year,
+        'cities': selected,
+        'errors': errors[:20],
+        'finished_at': datetime.now().isoformat(),
+    }
+
+
 def build_anjuke_payload(db_path=None):
     with closing(connect(db_path)) as conn:
         ensure_tables(conn)
@@ -392,7 +665,8 @@ def build_anjuke_payload(db_path=None):
         history_rows = [dict(r) for r in conn.execute('''SELECT city, period, avg_price, mom_pct, yoy_pct,
             data_status, source_url FROM anjuke_city_listings ORDER BY city, period''')]
         latest_logs = [dict(r) for r in conn.execute('''SELECT f.* FROM anjuke_fetch_log f JOIN
-            (SELECT city, MAX(id) id FROM anjuke_fetch_log GROUP BY city) x ON x.id=f.id''')]
+            (SELECT city, MAX(id) id FROM anjuke_fetch_log
+             WHERE COALESCE(fetch_scope,'current')='current' GROUP BY city) x ON x.id=f.id''')]
         blocked = sum(1 for r in latest_logs if r['outcome'] == 'blocked')
         failed = sum(1 for r in latest_logs if r['outcome'] == 'parse_fail')
         by_city = {r['city']: r for r in rows}
@@ -407,6 +681,10 @@ def build_anjuke_payload(db_path=None):
             })
         cov = dict(conn.execute('''SELECT COUNT(DISTINCT city) cities, COUNT(DISTINCT period) periods,
             COUNT(*) records, MIN(period) earliest, MAX(period) latest FROM anjuke_city_listings''').fetchone())
+        coverage_by_city = [dict(r) for r in conn.execute('''SELECT city, COUNT(*) records,
+            COUNT(DISTINCT SUBSTR(period,1,4)) years, MIN(period) earliest, MAX(period) latest,
+            SUM(CASE WHEN yoy_pct IS NOT NULL THEN 1 ELSE 0 END) yoy_points
+            FROM anjuke_city_listings GROUP BY city ORDER BY city''')]
     city_history = {}
     for row in history_rows:
         city_history.setdefault(row['city'], []).append(row)
@@ -424,9 +702,11 @@ def build_anjuke_payload(db_path=None):
         'cards': cards, 'city_table': rows,
         'history_cities': sorted(city_history),
         'city_history': city_history,
+        'coverage_by_city': coverage_by_city,
         'coverage': {**cov, 'mapped_cities': len(ANJUKE_CITY_SLUGS),
                      'extra_mapped_cities': len(ANJUKE_EXTRA_CITY_SLUGS)},
         'warnings': warnings,
         'notes': ['挂牌价是卖方要价，不是成交价；安居客为商业平台，属于非官方参考口径。',
+                  '年度页从 2010 年开始逐城侦察；正常页面中的空价格保持 missing，不补零。',
                   '原始 HTML 与独立 SQLite 仅保存在本机，不进入公开仓库或主库快照。'],
     }

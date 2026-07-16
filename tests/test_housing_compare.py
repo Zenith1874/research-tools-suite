@@ -72,6 +72,13 @@ class HousingCompareTests(unittest.TestCase):
         self.assertEqual(payload['history_summary']['points'], 3)
         self.assertEqual(payload['history_summary']['earliest'], '2026-05')
 
+    def test_official_history_is_available_without_listing_history(self):
+        payload = build_housing_compare_payload(self.official, self.listing, '2026-06')
+        official = payload['official_history_by_city']
+        self.assertEqual([r['period'] for r in official['北京']], ['2026-05', '2026-06'])
+        self.assertAlmostEqual(official['上海'][0]['official_second_yoy_pct'], -1.0)
+        self.assertEqual(official['上海'][0]['data_status'], 'official')
+
 
 if __name__ == '__main__':
     unittest.main()

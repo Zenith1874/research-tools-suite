@@ -2,8 +2,10 @@
 import unittest
 
 from services.housing_price_service import (
-    parse_70city_article, parse_dual_column_table, parse_period_from_title, _norm_city,
+    extract_70city_search_releases, parse_70city_article, parse_dual_column_table,
+    parse_period_from_title, _norm_city,
 )
+from services.anjuke_city_map import ANJUKE_CITY_SLUGS
 from bs4 import BeautifulSoup
 
 # 模拟统计局 70 城双列版式(城市名含全角空格是官方原样)
@@ -23,6 +25,7 @@ class HousingParserTests(unittest.TestCase):
 
     def test_norm_city_removes_fullwidth_spaces(self):
         self.assertEqual(_norm_city('北　　京'), '北京')
+        self.assertEqual(_norm_city('北　　京*'), '北京')
 
     def test_dual_column_table(self):
         t = BeautifulSoup(_TABLE, 'html.parser').find('table')
@@ -38,6 +41,68 @@ class HousingParserTests(unittest.TestCase):
         html = '<html><body>' + _TABLE + _TABLE + '</body></html>'
         with self.assertRaises(ValueError):
             parse_70city_article(html)
+
+    def test_old_six_table_layout_uses_labels_not_table_position(self):
+        def full_table(label, mom, yoy):
+            rows = ''.join(
+                f'<tr><td>{city}</td><td>{mom}</td><td>{yoy}</td><td>100.0</td></tr>'
+                for city in ANJUKE_CITY_SLUGS)
+            return f'<table><tr><th>{label}</th></tr>{rows}</table>'
+
+        new_residential = full_table('新建住宅价格指数', 100.8, 106.8)
+        new_commodity = full_table('新建商品住宅价格指数', 101.0, 109.1)
+        second = full_table('二手住宅价格指数', 100.3, 102.6)
+        html = '<html><body>' + new_residential + new_commodity + second
+        html += new_residential + new_commodity + second + '</body></html>'
+        parsed = parse_70city_article(html)
+        self.assertEqual(len(parsed['new']), 70)
+        self.assertEqual(len(parsed['second']), 70)
+        self.assertEqual(parsed['new']['北京'], (101.0, 109.1))
+        self.assertEqual(parsed['second']['北京'], (100.3, 102.6))
+
+    def test_search_release_extraction_is_strict_and_prefers_release_page(self):
+        payload = {'resultDocs': [
+            {'data': {'titleO': '2011年1月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/xxgk/sjfb/zxfb2020/old.html'}},
+            {'data': {'titleO': '2011年1月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/sj/zxfb/release.html'}},
+            {'data': {'titleO': '#数据发布# 2011年1月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/sj/zxfb/social.html'}},
+            {'data': {'titleO': '2010年12月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/sj/zxfb/old-regime.html'}},
+        ]}
+        rows = extract_70city_search_releases(payload, 2011, 2011)
+        self.assertEqual(rows, [('2011-01', 'https://www.stats.gov.cn/sj/zxfb/release.html',
+                                 '2011年1月份70个大中城市住宅销售价格变动情况')])
+
+    def test_search_release_extraction_accepts_2016_hot_city_suffix(self):
+        title = ('2016年9月份70个大中城市及10月上半月一线和热点二线城市'
+                 '住宅销售价格变动情况')
+        payload = {'resultDocs': [{'data': {
+            'titleO': title,
+            'url': 'https://www.stats.gov.cn/sj/zxfb/2016-09.html',
+        }}]}
+        rows = extract_70city_search_releases(payload, 2016, 2016)
+        self.assertEqual(rows, [('2016-09',
+                                 'https://www.stats.gov.cn/sj/zxfb/2016-09.html',
+                                 title)])
+
+    def test_article_reads_caption_before_wrapping_div(self):
+        def wrapped_table(caption, mom, yoy):
+            rows = ''.join(
+                f'<tr><td>{city}</td><td>{mom}</td><td>{yoy}</td><td>100.0</td></tr>'
+                for city in ANJUKE_CITY_SLUGS)
+            return f'<p>{caption}</p><div><table>{rows}</table></div>'
+
+        html = '<html><body>'
+        html += wrapped_table('表2 新建商品住宅销售价格指数', 100.4, 104.2)
+        html += wrapped_table('表3 二手住宅销售价格指数', 99.8, 101.5)
+        html += '</body></html>'
+        parsed = parse_70city_article(html)
+        self.assertEqual(len(parsed['new']), 70)
+        self.assertEqual(len(parsed['second']), 70)
+        self.assertEqual(parsed['new']['北京'], (100.4, 104.2))
+        self.assertEqual(parsed['second']['北京'], (99.8, 101.5))
 
 
 if __name__ == '__main__':

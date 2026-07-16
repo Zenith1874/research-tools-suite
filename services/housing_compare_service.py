@@ -4,7 +4,10 @@ import math
 import os
 import sqlite3
 
-from services.anjuke_listing_service import DEFAULT_DB_PATH as DEFAULT_LISTING_DB
+from services.anjuke_listing_service import (
+    DEFAULT_DB_PATH as DEFAULT_LISTING_DB,
+    FOCUS_CITIES,
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OFFICIAL_DB = os.path.join(ROOT, 'pboc_data.db')
@@ -161,6 +164,17 @@ def build_housing_compare_payload(official_db_path=None, listing_db_path=None, p
 
     official_history = _read_official_history(official_db)
     listing_history = _read_listing_history(listing_db)
+    official_history_by_city = {}
+    for (city, history_period), official_row in official_history.items():
+        if city not in FOCUS_CITIES:
+            continue
+        official_history_by_city.setdefault(city, []).append({
+            'city': city,
+            'period': history_period,
+            'official_second_yoy_pct': round(float(official_row['value']) - 100, 2),
+            'data_status': 'official',
+            'source_url': official_row['source_url'],
+        })
     history_by_city = {}
     for (city, history_period), listed in listing_history.items():
         official_row = official_history.get((city, history_period))
@@ -191,6 +205,7 @@ def build_housing_compare_payload(official_db_path=None, listing_db_path=None, p
         },
         'scatter_data': [{'city': r['city'], 'x': r['official_second_yoy_pct'],
                           'y': r['listing_yoy_pct']} for r in comparison],
+        'official_history_by_city': official_history_by_city,
         'history_by_city': history_by_city,
         'history_summary': {
             'cities': len(history_by_city),

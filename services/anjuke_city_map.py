@@ -93,5 +93,11 @@ def city_market_url(city):
     return f'https://{slug}.anjuke.com/market/' if slug else None
 
 
+def city_history_url(city, year):
+    """返回安居客年度房价页；年度页统一位于全国 ``/fangjia/`` 路径。"""
+    slug = city_slug(city)
+    return f'https://www.anjuke.com/fangjia/{slug}{int(year)}/' if slug else None
+
+
 def city_slug(city):
     return ANJUKE_CITY_SLUGS.get(city) or ANJUKE_EXTRA_CITY_SLUGS.get(city)
