@@ -60,6 +60,7 @@ def main():
             end_year=args.end_year,
             sleep_range=(args.sleep_min, args.sleep_max),
             max_requests=args.max_requests,
+            allow_network=not args.no_network,
         )
     elif args.source == 'anjuke-yearly':
         result = update_anjuke_yearly_rankings(

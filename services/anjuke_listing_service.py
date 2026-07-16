@@ -695,7 +695,8 @@ def _recompute_city_changes(conn, cities):
 
 
 def update_anjuke_history(db_path=None, cities=None, start_year=2010, end_year=None,
-                          sleep_range=(2.0, 4.0), max_requests=MAX_REQUESTS):
+                          sleep_range=(2.0, 4.0), max_requests=MAX_REQUESTS,
+                          allow_network=True):
     """分批回填年度页历史；单次网络请求硬上限默认 100。
 
     已在数据库中完整覆盖的城市-年份直接跳过；已缓存的正常 HTML 只解析不联网。
@@ -758,6 +759,12 @@ def update_anjuke_history(db_path=None, cities=None, start_year=2010, end_year=N
                 fetched_at = datetime.fromtimestamp(os.path.getmtime(abs_path)).isoformat()
                 status = 200
             else:
+                if not allow_network:
+                    # --no-network:缺缓存则跳过,绝不发起网络请求(与 CLI 承诺一致)
+                    _log_fetch(conn, city, url, None, 0, 'skipped_offline', fetched_at, 'history', str(year))
+                    conn.commit()
+                    processed += 1
+                    continue
                 if counters['requests'] >= max_requests:
                     limit_reached = True
                     break
@@ -831,7 +838,9 @@ def update_anjuke_history(db_path=None, cities=None, start_year=2010, end_year=N
         recalculated = _recompute_city_changes(conn, selected)
         conn.commit()
     return {
-        'success': any(counters[key] for key in ('pages_ok', 'pages_cached', 'pages_skipped_complete')),
+        # success 只看真正解析成功(pages_ok)或已完整(pages_skipped_complete);
+        # pages_cached 含"缓存是被拦截验证页"的情形,不能算成功(否则全被拦也报 success)。
+        'success': counters['pages_ok'] > 0 or counters['pages_skipped_complete'] > 0,
         **counters,
         'changes_recalculated': recalculated,
         'tasks_total': len(tasks),
@@ -850,8 +859,13 @@ def build_anjuke_payload(db_path=None):
     with closing(connect(db_path)) as conn:
         ensure_tables(conn)
         latest = conn.execute('SELECT MAX(period) FROM anjuke_city_listings').fetchone()[0]
-        rows = [] if not latest else [dict(r) for r in conn.execute(
-            'SELECT * FROM anjuke_city_listings WHERE period=? ORDER BY city', (latest,))]
+        # 按城市各取其最新月份(而非全局 MAX(period));否则某城多出一个新月份时,
+        # 其余城市会被漏掉、卡片退回年度快照、丢失 mom/yoy。
+        rows = [] if not latest else [dict(r) for r in conn.execute('''
+            SELECT l.* FROM anjuke_city_listings l
+            JOIN (SELECT city, MAX(period) mp FROM anjuke_city_listings GROUP BY city) m
+              ON m.city=l.city AND m.mp=l.period
+            ORDER BY l.city''')]
         history_rows = [dict(r) for r in conn.execute('''SELECT city, period, avg_price, mom_pct, yoy_pct,
             data_status, source_url FROM anjuke_city_listings ORDER BY city, period''')]
         yearly_rank_rows = [dict(r) for r in conn.execute('''SELECT city, year, snapshot_period,
