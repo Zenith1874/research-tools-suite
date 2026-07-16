@@ -64,6 +64,10 @@ from services.us_macro_service import (
     update_us_macro,
 )
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
+from services.housing_price_service import (
+    build_housing_payload,
+    update_housing_prices,
+)
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -1453,6 +1457,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
+            elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
             elif path == '/api/abdc/astar/semantic-search':
                 from services.astar_semantic_service import semantic_search
                 p = self._query_params()
@@ -1479,6 +1484,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
             elif path in ('/us-macro', '/us-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
+            elif path in ('/housing', '/housing/'):
+                self.send_file(os.path.join(STATIC_DIR, 'housing.html'))
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
@@ -1499,6 +1506,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job('china_rates', lambda: update_china_rates(DB_PATH, backfill=backfill)))
         elif path == '/api/us-macro/update':
             self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
+        elif path == '/api/housing/update':
+            self.send_json(_run_update_job('housing', lambda: update_housing_prices(DB_PATH)))
         elif path == '/api/fiscal-debt/local-government-debt/update':
             self.send_json(_run_update_job('local_government_debt', lambda: run_fiscal_module_update(DB_PATH, 'local_government_debt')))
         elif path == '/api/fiscal-debt/central-government-debt/update':
@@ -1818,7 +1827,8 @@ def rates_scheduler_thread(interval_hours=24):
         try:
             r1 = _run_update_job('china_rates', lambda: update_china_rates(DB_PATH), blocking=True)
             r2 = _run_update_job('us_macro', lambda: update_us_macro(DB_PATH), blocking=True)
-            log.info(f"利率/宏观更新完成：cn={r1.get('records_upserted')} us={r2.get('records_upserted')}")
+            r3 = _run_update_job('housing', lambda: update_housing_prices(DB_PATH), blocking=True)
+            log.info(f"利率/宏观/房价更新：cn={r1.get('records_upserted')} us={r2.get('records_upserted')} housing={r3.get('records_upserted')}")
         except Exception as e:
             log.warning(f'利率/宏观更新失败（旧数据保留）: {e}')
         time.sleep(interval_hours * 3600)

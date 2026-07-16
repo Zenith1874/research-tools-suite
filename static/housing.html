@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>中国房价 · 70城 + BIS</title>
+<script src="/vendor/react.min.js"></script>
+<script src="/vendor/react-dom.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
+<style>
+:root{--bg:#07111f;--panel:#0d1728;--panel2:#111d31;--bd:#22324b;--text:#e5edf7;--muted:#8ea0b8;--dim:#b8c6d8;--blue:#4f8fff;--green:#00d4aa;--red:#ff5b78;--yellow:#f5a623}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+h1{font-size:20px;margin:0 0 6px}.sub,.muted{color:var(--muted);font-size:12px;line-height:1.7}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{min-height:34px;background:var(--panel2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:7px 12px;text-decoration:none;font:inherit;font-size:12px;cursor:pointer;display:inline-flex;align-items:center}
+.btn:hover{border-color:var(--blue)}.btn.primary{background:rgba(79,143,255,.15);border-color:rgba(79,143,255,.5)}.btn:disabled{opacity:.5}
+.banner{border:1px solid rgba(245,166,35,.45);background:var(--panel);border-radius:6px;padding:10px 12px;margin:12px 0;font-size:12px;color:#f8d89b}
+.breadth{display:flex;gap:18px;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px 16px;margin:14px 0;font-size:13px;flex-wrap:wrap;align-items:center}
+.breadth b{font-size:20px}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}
+.metric{background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:13px}
+.metric-label{font-size:12px;color:var(--muted)}.metric-value{font-size:22px;font-weight:750;margin:6px 0;font-variant-numeric:tabular-nums}
+.delta-up{color:var(--red)}.delta-down{color:var(--green)}
+.metric-meta{font-size:11px;color:var(--muted);line-height:1.8}
+.badge{display:inline-block;border:1px solid rgba(0,212,170,.55);border-radius:4px;padding:1px 6px;font-size:10px;color:#a9efd8}
+a.source-link{color:#9ec2ff;text-decoration:none}
+.chart{margin:14px 0;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px}
+.chartsvg{width:100%;height:190px;display:block;cursor:crosshair}.chart-title{font-size:12px;color:var(--dim);margin-bottom:6px}
+.tip{position:absolute;top:8px;transform:translateX(-50%);background:rgba(13,23,40,.96);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:11px;line-height:1.7;pointer-events:none;white-space:nowrap;z-index:5}
+.tip b{color:var(--dim);font-size:10px}.tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:6px}.legend span{display:inline-flex;align-items:center;gap:5px}.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
+.table-title{font-size:12px;color:var(--dim);margin:14px 0 7px}.scroll{overflow:auto;border:1px solid rgba(34,50,75,.75);border-radius:6px;max-height:520px}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:680px}th,td{padding:7px 9px;border-bottom:1px solid rgba(34,50,75,.6);text-align:left}
+th{color:var(--muted);font-weight:600;background:var(--panel);position:sticky;top:0}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{padding:16px;border:1px dashed var(--bd);border-radius:6px;color:var(--muted);font-size:12px}
+@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const {useEffect,useState}=React;
+function fmt(v,d=1){if(v===null||v===undefined)return '—';return Number(v).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function Delta({v}){if(v===null||v===undefined)return null;const d=v-100;const cls=d>0?'delta-up':(d<0?'delta-down':'');return <span className={cls}>{d>0?'+':''}{d.toFixed(1)}%</span>}
+function mergeSeries(map){const byP={};Object.entries(map).forEach(([k,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[k]=r.value}));return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
+function Chart({title,data,series,unit='',digits=1}){
+  const [hover,setHover]=useState(null);
+  const pts=(data||[]).filter(d=>series.some(s=>typeof d[s.key]==='number'));
+  if(pts.length<2)return <div className="empty">{title}：数据点不足(随月份累积)。</div>;
+  const W=640,H=190,L=50,R=12,T=12,B=22,vals=[];
+  series.forEach(s=>pts.forEach(d=>{if(typeof d[s.key]==='number')vals.push(d[s.key])}));
+  let mn=Math.min(...vals),mx=Math.max(...vals);if(mn===mx){mn-=1;mx+=1}
+  const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(v-mn)/(mx-mn));
+  const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
+  const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const i=Math.round((x-L)/(W-L-R)*(pts.length-1));setHover(Math.max(0,Math.min(pts.length-1,i)))};
+  const hp=hover===null?null:pts[hover];
+  const tipLeft=hover===null?0:Math.max(10,Math.min(90,sx(hover)/W*100));
+  return <div className="chart"><div className="chart-title">{title}</div>
+    <div style={{position:'relative'}}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" preserveAspectRatio="none" onMouseMove={onMove} onMouseLeave={()=>setHover(null)}>
+      {[mn,(mn+mx)/2,mx].map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t,digits)}</text></g>)}
+      {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6"/>)}
+      {hp&&<g><line x1={sx(hover)} x2={sx(hover)} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
+        {series.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
+      <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
+      <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{pts[pts.length-1].period}</text>
+    </svg>
+    {hp&&<div className="tip" style={{left:tipLeft+'%'}}><b>{hp.period}</b>{series.map(s=>typeof hp[s.key]==='number'?<div key={s.key}><i style={{background:s.color}}/>{s.label}：{fmt(hp[s.key],digits)} {unit}</div>:null)}</div>}
+    </div>
+    <div className="legend">{series.map(s=><span key={s.key}><i style={{background:s.color}}/>{s.label}</span>)}{unit&&<span className="muted">单位：{unit}</span>}</div>
+  </div>;
+}
+function csvDownload(rows){
+  const cols=[['city','城市'],['new_home_mom_idx','新房环比'],['new_home_yoy_idx','新房同比'],['second_home_mom_idx','二手环比'],['second_home_yoy_idx','二手同比']];
+  const head=cols.map(c=>c[1]).join(',');
+  const body=rows.map(r=>cols.map(([k])=>r[k]??'').join(',')).join('\n');
+  const blob=new Blob(['﻿'+head+'\n'+body],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='housing_70city.csv';a.click();URL.revokeObjectURL(a.href);
+}
+function App(){
+  const [p,setP]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
+  async function load(){const r=await fetch('/api/housing/data');setP(await r.json())}
+  async function update(){
+    setBusy(true);
+    try{
+      const r=await fetch('/api/housing/update',{method:'POST'});const j=await r.json();setMsg(j.message||j.status);
+      const t=setInterval(async()=>{
+        const js=await (await fetch('/api/jobs')).json();
+        const job=js.jobs&&js.jobs.housing;
+        if(job&&job.status!=='running'){clearInterval(t);setBusy(false);setMsg(job.status==='done'?'更新完成':'更新失败:'+(job.error||''));load()}
+      },3000);
+    }catch(e){setBusy(false);setMsg('请求失败:'+e)}
+  }
+  useEffect(()=>{load()},[]);
+  if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;
+  const b=p.breadth;
+  const cityYoY=mergeSeries(Object.fromEntries(Object.entries(p.city_series||{}).map(([c,rows])=>[c,rows])));
+  const bis=mergeSeries({real:(p.national||{}).QCNR628BIS||[],nominal:(p.national||{}).QCNN628BIS||[]});
+  return <div className="wrap">
+    <div className="top"><div><h1>中国房价</h1>
+      <div className="sub">统计局 70 城商品住宅价格指数(月度,官方) + BIS 全国住宅价格指数(季度,2005起) · 最新期：{p.latest_period||'—'}
+        {' · '}<a className="source-link" href={p.source_pages?.nbs} target="_blank" rel="noreferrer">统计局发布页</a></div></div>
+      <div className="actions">
+        <button className="btn primary" disabled={busy} onClick={update}>{busy?'更新中…':'更新数据'}</button>
+        <a className="btn" href="/">首页</a></div></div>
+    {msg&&<div className="banner">{msg}</div>}
+    {(p.warnings||[]).map((w,i)=><div key={i} className="banner">{w}</div>)}
+    {b&&<div className="breadth">
+      <span>📉 70城新房环比({b.period})：</span>
+      <span>上涨 <b className="delta-up">{b.up}</b> 城</span>
+      <span>持平 <b>{b.flat}</b> 城</span>
+      <span>下跌 <b className="delta-down">{b.down}</b> 城</span>
+      <span className="muted">derived · {b.formula}</span>
+    </div>}
+    <div className="grid">{(p.cards||[]).map(c=><div className="metric" key={c.label}>
+      <div className="metric-label">{c.label} <span className="badge">{c.data_status}</span></div>
+      <div className="metric-value">{fmt(c.value)} <Delta v={c.value}/></div>
+      <div className="metric-meta">
+        新房同比 {fmt(c.extra?.['新房同比'])} <Delta v={c.extra?.['新房同比']}/><br/>
+        二手环比 {fmt(c.extra?.['二手环比'])} <Delta v={c.extra?.['二手环比']}/> · 二手同比 {fmt(c.extra?.['二手同比'])} <Delta v={c.extra?.['二手同比']}/><br/>
+        {c.source_url&&<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">月报原文</a>}
+      </div>
+    </div>)}</div>
+    <Chart title="BIS 中国住宅价格指数(2010=100,季度,2005 起)" data={bis} series={[{key:'real',label:'实际(剔通胀)',color:'var(--blue)'},{key:'nominal',label:'名义',color:'var(--yellow)'}]} unit=""/>
+    <Chart title="一线城市新房价格同比(上年同月=100,随月份累积)" data={cityYoY} series={[{key:'北京',label:'北京',color:'var(--blue)'},{key:'上海',label:'上海',color:'var(--red)'},{key:'广州',label:'广州',color:'var(--yellow)'},{key:'深圳',label:'深圳',color:'var(--green)'}]} unit=""/>
+    <div className="table-title">70 城全表({p.latest_period}) <a className="source-link" style={{cursor:'pointer'}} onClick={()=>csvDownload(p.city_table||[])}>⬇ CSV</a></div>
+    <div className="scroll"><table><thead><tr><th>城市</th><th>新房环比</th><th>新房同比</th><th>二手环比</th><th>二手同比</th></tr></thead>
+      <tbody>{(p.city_table||[]).map(r=><tr key={r.city}>
+        <td>{r.city}</td>
+        <td className="num">{fmt(r.new_home_mom_idx)} <Delta v={r.new_home_mom_idx}/></td>
+        <td className="num">{fmt(r.new_home_yoy_idx)} <Delta v={r.new_home_yoy_idx}/></td>
+        <td className="num">{fmt(r.second_home_mom_idx)} <Delta v={r.second_home_mom_idx}/></td>
+        <td className="num">{fmt(r.second_home_yoy_idx)} <Delta v={r.second_home_yoy_idx}/></td>
+      </tr>)}</tbody></table></div>
+    <div className="muted" style={{marginTop:10}}>{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

@@ -52,6 +52,8 @@ _PROBES = [
      "SELECT MAX(period) FROM us_macro_observations WHERE indicator_code='UNRATE'"),
     ('pboc_monthly', '央行金融统计(月度)',
      'SELECT MAX(month) FROM monthly_data'),
+    ('housing_70city', '70城房价(月度)',
+     'SELECT MAX(period) FROM housing_city_observations'),
 ]
 
 
