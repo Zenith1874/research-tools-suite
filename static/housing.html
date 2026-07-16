@@ -100,28 +100,28 @@ function ScatterChart({data}){
     </svg>{hp&&<div className="tip" style={{left:Math.max(12,Math.min(88,sx(hp.x)/W*100))+'%'}}><b>{hp.city}</b><div>官方二手：{fmt(hp.x,2)}%</div><div>挂牌：{fmt(hp.y,2)}%</div></div>}
   </div></div>
 }
-function csvDownload(rows){
-  const cols=[['city','城市'],['new_home_mom_idx','新房环比'],['new_home_yoy_idx','新房同比'],['second_home_mom_idx','二手环比'],['second_home_yoy_idx','二手同比']];
-  const head=cols.map(c=>c[1]).join(',');
-  const body=rows.map(r=>cols.map(([k])=>r[k]??'').join(',')).join('\n');
+// RFC4180 转义:含逗号/引号/换行的字段包引号并把内部引号翻倍(URL/标题里常含逗号)
+function csvCell(v){const s=(v===null||v===undefined)?'':String(v);return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
+function csvSave(cols,rows,filename){
+  const head=cols.map(c=>csvCell(c[1])).join(',');
+  const body=rows.map(r=>cols.map(([k])=>csvCell(r[k]??'')).join(',')).join('\n');
   const blob=new Blob(['﻿'+head+'\n'+body],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='housing_70city.csv';a.click();URL.revokeObjectURL(a.href);
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;a.click();URL.revokeObjectURL(a.href);
 }
-function listingCsv(rows){
-  const cols=[['city','城市'],['period','月份'],['avg_price','挂牌均价(元/㎡)'],['mom_pct','环比%'],['yoy_pct','同比%'],['data_status','状态'],['source_url','来源']];
-  const body=rows.map(r=>cols.map(([k])=>r[k]??'').join(',')).join('\n');const blob=new Blob(['﻿'+cols.map(c=>c[1]).join(',')+'\n'+body],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='anjuke_listing_history_reference.csv';a.click();URL.revokeObjectURL(a.href);
-}
-function yearlyListingCsv(map){
-  const rows=Object.values(map||{}).flat(),cols=[['city','城市'],['year','年份'],['period','快照月份'],['avg_price','挂牌均价(元/㎡)'],['source_grain','来源粒度'],['data_status','状态'],['detail_url','城市年度页'],['source_url','全国历史页']];
-  const body=rows.map(r=>cols.map(([k])=>r[k]??'').join(',')).join('\n');const blob=new Blob(['﻿'+cols.map(c=>c[1]).join(',')+'\n'+body],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='anjuke_yearly_snapshots_reference.csv';a.click();URL.revokeObjectURL(a.href);
-}
-function compareHistoryCsv(map){
-  const rows=Object.values(map||{}).flat(),cols=[['city','城市'],['period','月份'],['official_second_yoy_pct','官方二手同比%'],['listing_yoy_pct','挂牌同比%'],['divergence','分歧(百分点)'],['data_status','状态']];
-  const body=rows.map(r=>cols.map(([k])=>r[k]??'').join(',')).join('\n');const blob=new Blob(['﻿'+cols.map(c=>c[1]).join(',')+'\n'+body],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='housing_dual_basis_history.csv';a.click();URL.revokeObjectURL(a.href);
-}
+function csvDownload(rows){csvSave([['city','城市'],['new_home_mom_idx','新房环比'],['new_home_yoy_idx','新房同比'],['second_home_mom_idx','二手环比'],['second_home_yoy_idx','二手同比']],rows,'housing_70city.csv')}
+function listingCsv(rows){csvSave([['city','城市'],['period','月份'],['avg_price','挂牌均价(元/㎡)'],['mom_pct','环比%'],['yoy_pct','同比%'],['data_status','状态'],['source_url','来源']],rows,'anjuke_listing_history_reference.csv')}
+function yearlyListingCsv(map){csvSave([['city','城市'],['year','年份'],['period','快照月份'],['avg_price','挂牌均价(元/㎡)'],['source_grain','来源粒度'],['data_status','状态'],['detail_url','城市年度页'],['source_url','全国历史页']],Object.values(map||{}).flat(),'anjuke_yearly_snapshots_reference.csv')}
+function compareHistoryCsv(map){csvSave([['city','城市'],['period','月份'],['official_second_yoy_pct','官方二手同比%'],['listing_yoy_pct','挂牌同比%'],['divergence','分歧(百分点)'],['data_status','状态']],Object.values(map||{}).flat(),'housing_dual_basis_history.csv')}
 function App(){
   const [p,setP]=useState(null),[listing,setListing]=useState(null),[compare,setCompare]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false),[listingBusy,setListingBusy]=useState(false),[historyCity,setHistoryCity]=useState('北京'),[visibleCities,setVisibleCities]=useState(null),[historyStart,setHistoryStart]=useState('2010');
-  async function load(){const [a,b,c]=await Promise.all([fetch('/api/housing/data'),fetch('/api/housing/anjuke'),fetch('/api/housing/compare')]);setP(await a.json());setListing(await b.json());setCompare(await c.json())}
+  async function load(){
+    // 官方70城为核心视图,必须独立成功;安居客/对比为辅助,失败不拖垮页面。
+    const grab=async u=>{try{const r=await fetch(u);return r.ok?await r.json():null}catch(e){return null}};
+    const [a,b,c]=await Promise.all([grab('/api/housing/data'),grab('/api/housing/anjuke'),grab('/api/housing/compare')]);
+    if(a) setP(a); else {setP({error:true}); setMsg('官方房价数据加载失败,请稍后刷新');}
+    setListing(b||{}); setCompare(c||{});
+    if(a&&(!b||!c)) setMsg('部分辅助数据(挂牌/对比)暂不可用,官方70城不受影响');
+  }
   async function update(){
     setBusy(true);
     try{

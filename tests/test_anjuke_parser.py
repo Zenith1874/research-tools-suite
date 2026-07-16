@@ -12,6 +12,7 @@ from services.anjuke_listing_service import (
     parse_anjuke_city_page,
     parse_anjuke_ranking_page,
     parse_anjuke_year_page,
+    update_anjuke_yearly_rankings,
 )
 from services.anjuke_city_map import city_history_url, city_market_url
 
@@ -176,6 +177,37 @@ class AnjukeParserTests(unittest.TestCase):
             self.assertEqual(shanghai['data_status'], 'listing_year_snapshot')
             self.assertEqual(shanghai['period'], '2010-12')
             self.assertIsNone(shanghai['mom_pct'])
+
+
+class AnjukeYearlyRankingIntegrationTests(unittest.TestCase):
+    """年度排名整合流程的端到端护栏(被拦截路径:不入库、不绕过)。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.tmp.name, 'listing.db')
+        conn = connect(self.db)
+        try:
+            ensure_tables(conn)
+        finally:
+            conn.close()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_blocked_cached_page_writes_nothing(self):
+        # 缓存是验证页(访问验证)→ blocked=True、success=False、库里 0 条,绝不硬凑。
+        blocked = os.path.join(self.tmp.name, 'blocked.html')
+        with open(blocked, 'w', encoding='utf-8') as fh:
+            fh.write('<html><title>请输入验证码</title><body>访问验证</body></html>')
+        res = update_anjuke_yearly_rankings(db_path=self.db, cached_path=blocked, allow_network=False)
+        self.assertTrue(res['blocked'])
+        self.assertFalse(res['success'])
+        conn = connect(self.db)
+        try:
+            n = conn.execute('SELECT COUNT(*) FROM anjuke_city_yearly_rankings').fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(n, 0)
 
 
 if __name__ == '__main__':

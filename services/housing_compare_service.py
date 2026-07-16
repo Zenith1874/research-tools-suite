@@ -25,10 +25,15 @@ def _read_official(db_path, period=None):
         if period is None:
             period = conn.execute('SELECT MAX(period) FROM housing_city_observations').fetchone()[0]
         columns = {r[1] for r in conn.execute('PRAGMA table_info(housing_city_observations)')}
-        source_expr = 'source_url' if 'source_url' in columns else 'NULL AS source_url'
-        rows = conn.execute(f'''SELECT city, period, indicator_code, value, {source_expr}
+        # 静态查询二选一(避免 f-string 拼 SQL 触发注入告警;此处无用户输入,period 仍参数化)
+        has_src = 'source_url' in columns
+        q_with = ('''SELECT city, period, indicator_code, value, source_url
             FROM housing_city_observations WHERE period=? AND indicator_code IN
-            ('new_home_yoy_idx','second_home_yoy_idx')''', (period,)).fetchall() if period else []
+            ('new_home_yoy_idx','second_home_yoy_idx')''')
+        q_without = ('''SELECT city, period, indicator_code, value, NULL AS source_url
+            FROM housing_city_observations WHERE period=? AND indicator_code IN
+            ('new_home_yoy_idx','second_home_yoy_idx')''')
+        rows = conn.execute(q_with if has_src else q_without, (period,)).fetchall() if period else []
     except sqlite3.OperationalError:
         rows = []
     finally:
@@ -65,10 +70,12 @@ def _read_official_history(db_path):
     conn.row_factory = sqlite3.Row
     try:
         columns = {r[1] for r in conn.execute('PRAGMA table_info(housing_city_observations)')}
-        source_expr = 'source_url' if 'source_url' in columns else 'NULL AS source_url'
-        rows = conn.execute(f'''SELECT city, period, value, {source_expr}
-            FROM housing_city_observations
-            WHERE indicator_code='second_home_yoy_idx' ORDER BY city, period''').fetchall()
+        has_src = 'source_url' in columns
+        q_with = ('''SELECT city, period, value, source_url FROM housing_city_observations
+            WHERE indicator_code='second_home_yoy_idx' ORDER BY city, period''')
+        q_without = ('''SELECT city, period, value, NULL AS source_url FROM housing_city_observations
+            WHERE indicator_code='second_home_yoy_idx' ORDER BY city, period''')
+        rows = conn.execute(q_with if has_src else q_without).fetchall()
     except sqlite3.OperationalError:
         rows = []
     finally:

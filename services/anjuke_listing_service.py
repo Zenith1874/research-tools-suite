@@ -602,7 +602,10 @@ def update_anjuke_yearly_rankings(db_path=None, cached_path=None, allow_network=
             with open(candidate, 'rb') as fh:
                 content = fh.read()
             fetched_at = datetime.fromtimestamp(os.path.getmtime(candidate)).isoformat()
-            raw_cached = os.path.relpath(candidate, ROOT)
+            try:
+                raw_cached = os.path.relpath(candidate, ROOT)
+            except ValueError:      # 跨盘(如缓存在其它盘)无法算相对路径,退回绝对路径
+                raw_cached = candidate
             from_cache = True
             break
 

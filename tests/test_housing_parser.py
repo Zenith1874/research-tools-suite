@@ -87,6 +87,20 @@ class HousingParserTests(unittest.TestCase):
                                  'https://www.stats.gov.cn/sj/zxfb/2016-09.html',
                                  title)])
 
+    def test_search_release_extraction_filters_by_year_window(self):
+        # 窗口外的年份(2010/2012)必须被排除,只保留 2011。
+        payload = {'resultDocs': [
+            {'data': {'titleO': '2010年12月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/sj/zxfb/201012.html'}},
+            {'data': {'titleO': '2011年1月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/sj/zxfb/201101.html'}},
+            {'data': {'titleO': '2012年1月份70个大中城市住宅销售价格变动情况',
+                      'url': 'https://www.stats.gov.cn/sj/zxfb/201201.html'}},
+        ]}
+        rows = extract_70city_search_releases(payload, start_year=2011, end_year=2011)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], '2011-01')
+
     def test_article_reads_caption_before_wrapping_div(self):
         def wrapped_table(caption, mom, yoy):
             rows = ''.join(

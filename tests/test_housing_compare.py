@@ -55,6 +55,14 @@ class HousingCompareTests(unittest.TestCase):
         self.assertIn('成都', missing)
         self.assertIn('official_second_yoy', missing['成都'])
 
+    def test_no_comparable_cities_for_period(self):
+        # 请求一个两侧都无数据的月份 → 优雅返回空,而非崩溃或造数。
+        payload = build_housing_compare_payload(self.official, self.listing, '2099-12')
+        self.assertEqual(payload['comparison_table'], [])
+        self.assertEqual(payload['summary']['comparable_cities'], 0)
+        self.assertIsNone(payload['summary']['pearson_correlation'])
+        self.assertIsNone(payload['summary']['direction_agreement_pct'])
+
     def test_summary_and_scatter_contract(self):
         payload = build_housing_compare_payload(self.official, self.listing, '2026-06')
         self.assertEqual(payload['summary']['comparable_cities'], 2)
