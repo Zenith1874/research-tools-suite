@@ -53,6 +53,6 @@ python scripts\backfill_housing_history.py --source anjuke-yearly --no-network
 
 ## 验证
 
-- 解析器与对比服务定向测试通过；完整测试套件 48 项通过。
+- 解析器与对比服务定向测试通过；完整测试套件 50 项通过。
 - 统计局真实 2018-01、2018-02 页面均解析为 70 城新房 + 70 城二手。
-- Playwright 实页验收通过：默认 2010 起点、十城按钮、上海官方单城线、起点切换和北京单城图均正常；控制台 0 errors（仅保留开发态 Babel warning）。
+- Playwright 实页验收通过：默认十城年度线、上海 2010–2026 年度单城线、上海逐月缺失说明和 2015 起点切换均正常；控制台 0 errors（仅保留开发态 Babel warning）。
