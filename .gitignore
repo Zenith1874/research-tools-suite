@@ -53,3 +53,4 @@ data/anjuke_raw/
 .env.local
 outputs/*.db
 outputs/*.log
+outputs/*.jsonl

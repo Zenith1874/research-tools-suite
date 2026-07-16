@@ -82,11 +82,15 @@ python scripts/backfill_housing_history.py --source nbs --start-year 2011 --end-
 
 # 安居客点名十城年度页（2010 起，低频、本机保存，验证页即跳过）
 python scripts/backfill_housing_history.py --source anjuke --start-year 2010 --end-year 2026 --max-requests 90
+
+# 安居客全国历史排名页（独立年度快照层；优先复用本地缓存）
+python scripts/backfill_housing_history.py --source anjuke-yearly --no-network
 ```
 
 统计局 2010 年仍是旧发布制度，不与 2011 年后的逐城序列拼接。安居客挂牌数据和原始页只写入
-gitignored 的 `data/housing_listing.db` 与 `data/anjuke_raw/history/`，不会进入公开仓库；年度页正常但
-价格为 `-` 时保留缺失，不补零、不用区县均价替代。
+gitignored 的 `data/housing_listing.db` 与 `data/anjuke_raw/`，不会进入公开仓库。全国历史排名页形成
+独立的年度低频快照，城市年度页形成逐月序列；年度点不复制成 12 个月，也不进入与官方二手指数的
+月度对比。页面价格为 `-` 时保留缺失，不补零、不用区县均价替代。
 
 ## 数据说明
 

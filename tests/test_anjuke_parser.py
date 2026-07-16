@@ -10,6 +10,7 @@ from services.anjuke_listing_service import (
     ensure_tables,
     is_blocked_response,
     parse_anjuke_city_page,
+    parse_anjuke_ranking_page,
     parse_anjuke_year_page,
 )
 from services.anjuke_city_map import city_history_url, city_market_url
@@ -81,6 +82,22 @@ class AnjukeParserTests(unittest.TestCase):
                 html, 'https://example.invalid/fangjia/example2010/', '示例城', 2010,
                 allow_small_fixture=True)
 
+    def test_ranking_page_is_parsed_as_one_snapshot_per_year(self):
+        html = '''<html><body><script>
+        window.__NUXT__=(function(a,b,c,d){return {data:[{},{avgPriceData:[
+        {title:a,actionUrl:b,avgPrice:"22491",monthChange:"1.68"},
+        {title:c,actionUrl:d,avgPrice:"52557",monthChange:"-5.87"}]}],fetch:[]}}("2010年上海房价","https://www.anjuke.com/fangjia/shanghai2010/",
+        "2026年深圳房价","https://www.anjuke.com/fangjia/shenzhen2026/"));
+        </script></body></html>'''
+        parsed = parse_anjuke_ranking_page(
+            html, fetched_at='2026-07-16T12:00:00', cities=('上海', '深圳'),
+            allow_small_fixture=True)
+        rows = {(row['city'], row['year']): row for row in parsed['records']}
+        self.assertEqual(rows[('上海', 2010)]['snapshot_period'], '2010-12')
+        self.assertEqual(rows[('上海', 2010)]['avg_price'], 22491.0)
+        self.assertEqual(rows[('深圳', 2026)]['snapshot_period'], '2026-07')
+        self.assertEqual(rows[('深圳', 2026)]['source_change_pct'], -5.87)
+
     def test_recompute_changes_connects_year_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, 'listing.db')
@@ -127,6 +144,38 @@ class AnjukeParserTests(unittest.TestCase):
                              ['2026-05', '2026-06'])
             self.assertEqual(payload['coverage']['records'], 2)
             self.assertEqual(payload['coverage_by_city'][0]['earliest'], '2026-05')
+
+    def test_payload_keeps_yearly_snapshot_separate_and_fills_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, 'listing.db')
+            conn = connect(db_path)
+            try:
+                ensure_tables(conn)
+                conn.execute('''INSERT INTO anjuke_city_listings
+                    (city,period,avg_price,data_status,source_url)
+                    VALUES (?,?,?,?,?)''',
+                    ('北京', '2010-12', 24733, 'listing_reference',
+                     'https://www.anjuke.com/fangjia/beijing2010/'))
+                conn.execute('''INSERT INTO anjuke_city_yearly_rankings
+                    (city,year,snapshot_period,avg_price,source_change_pct,data_status,
+                     source_url,detail_url,fetched_at,raw_cached)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    ('上海', 2010, '2010-12', 22491, 1.68, 'listing_year_snapshot',
+                     'https://www.anjuke.com/fangjia/',
+                     'https://www.anjuke.com/fangjia/shanghai2010/',
+                     '2026-07-16', 'synthetic.html'))
+                conn.commit()
+            finally:
+                conn.close()
+            payload = build_anjuke_payload(db_path)
+            self.assertEqual(payload['yearly_history_by_city']['北京'][0]['source_grain'],
+                             'monthly_year_end')
+            self.assertEqual(payload['yearly_history_by_city']['上海'][0]['avg_price'], 22491)
+            self.assertEqual(payload['yearly_coverage_by_city'][1]['ranking_points'], 1)
+            shanghai = next(card for card in payload['cards'] if card['city'] == '上海')
+            self.assertEqual(shanghai['data_status'], 'listing_year_snapshot')
+            self.assertEqual(shanghai['period'], '2010-12')
+            self.assertIsNone(shanghai['mom_pct'])
 
 
 if __name__ == '__main__':

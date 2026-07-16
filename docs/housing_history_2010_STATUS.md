@@ -7,8 +7,9 @@
 - 新增可恢复的历史回填命令 `scripts/backfill_housing_history.py`，分别支持统计局官方数据和安居客本地挂牌数据。
 - 统计局历史发现使用官网站内搜索，按发布标题和发布页优先级去重；并兼容 2011 旧版多表、2016 特殊标题、2018 外置表题。
 - 安居客年度页按城市-年份缓存，完整年份自动跳过；空页、验证页、网络失败分别记录，不删除旧数据。
+- 安居客全国历史排名页另存为年度低频快照；历史年对应年末、当年对应抓取月，不扩写成月度记录。
 - 挂牌环比和同比在全城市序列上重新计算，确保跨年度边界一致。
-- `/housing` 增加 2010/2015/2020/2023/2025 起点、十城点击筛选、多城绝对/相对挂牌图、官方二手同比图和历史双口径分歧图。
+- `/housing` 增加 2010/2015/2020/2023/2025 起点、十城点击筛选、年度快照图、多城月度绝对/相对挂牌图、官方二手同比图和历史双口径分歧图。
 
 ## 数据审计
 
@@ -25,6 +26,8 @@
 - 2010-01 起连续：北京、广州、深圳、南京、苏州。
 - 其他最早有效月：无锡 2010-02、合肥 2011-08、厦门 2011-10、常州 2011-10。
 - 上海：2010–2026 正常年度页的全市逐月挂牌字段均为空，保持缺失。
+- 全国历史排名页直取 76 个点名城市-年度快照；与逐月页年末可交叉核对的 59 点全部在 1 元舍入误差内。
+- 年度低频合并层共 167 个城市-年度点、覆盖十城；上海有 2010–2026 共 17 点。厦门、合肥、常州在原站 2010 年均无有效全市值，因此从 2011 年开始，不造数补齐。
 - 常州：2015-03 原页为 `-`，形成唯一一个位于有效覆盖区间内的月度缺口。
 - 商业挂牌具体值、数据库和原始 HTML 均不进入仓库。
 
@@ -33,6 +36,7 @@
 ```powershell
 python -u scripts\backfill_housing_history.py --source nbs --start-year 2011 --end-year 2026 --nbs-workers 3
 python -u scripts\backfill_housing_history.py --source anjuke --start-year 2010 --end-year 2026 --max-requests 90
+python scripts\backfill_housing_history.py --source anjuke-yearly --no-network
 ```
 
 - 统计局修复增量：31 个发布页，8,680 条 upsert，约 202 秒。
@@ -44,6 +48,7 @@ python -u scripts\backfill_housing_history.py --source anjuke --start-year 2010 
 - 官方库：`pboc_data.db`（公开数据，可由命令重建；仓库策略另行管理快照）。
 - 挂牌库：`data/housing_listing.db`（gitignored）。
 - 挂牌原始年度页：`data/anjuke_raw/history/`（gitignored）。
+- 全国历史排名页缓存：`data/anjuke_raw/yearly_rankings/`；本轮复用既有侦察缓存（均 gitignored）。
 - 页面：`http://127.0.0.1:5001/housing`。
 
 ## 验证
