@@ -54,6 +54,8 @@ _PROBES = [
      'SELECT MAX(month) FROM monthly_data'),
     ('housing_70city', '70城房价(月度)',
      'SELECT MAX(period) FROM housing_city_observations'),
+    ('anjuke_listing', '安居客挂牌(月度)',
+     'SELECT MAX(period) FROM anjuke_listing.anjuke_city_listings'),
 ]
 
 
@@ -80,6 +82,12 @@ def check_and_record_new_periods(db_path):
     new_events = []
     with connect(db_path) as conn:
         ensure_events_table(conn)
+        listing_db = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'data', 'housing_listing.db')
+        if os.path.exists(listing_db):
+            try:
+                conn.execute('ATTACH DATABASE ? AS anjuke_listing', (listing_db,))
+            except sqlite3.OperationalError:
+                pass
         now = datetime.now().isoformat()
         for module, title, sql in _PROBES:
             try:

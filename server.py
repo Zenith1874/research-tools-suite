@@ -68,6 +68,8 @@ from services.housing_price_service import (
     build_housing_payload,
     update_housing_prices,
 )
+from services.anjuke_listing_service import build_anjuke_payload, update_anjuke_listings
+from services.housing_compare_service import build_housing_compare_payload
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -1458,6 +1460,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
             elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
+            elif path == '/api/housing/anjuke':   self.send_json(build_anjuke_payload())
+            elif path == '/api/housing/compare':  self.send_json(build_housing_compare_payload(DB_PATH))
             elif path == '/api/abdc/astar/semantic-search':
                 from services.astar_semantic_service import semantic_search
                 p = self._query_params()
@@ -1508,6 +1512,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
         elif path == '/api/housing/update':
             self.send_json(_run_update_job('housing', lambda: update_housing_prices(DB_PATH)))
+        elif path == '/api/housing/anjuke/update':
+            self.send_json(_run_update_job('anjuke', update_anjuke_listings))
         elif path == '/api/fiscal-debt/local-government-debt/update':
             self.send_json(_run_update_job('local_government_debt', lambda: run_fiscal_module_update(DB_PATH, 'local_government_debt')))
         elif path == '/api/fiscal-debt/central-government-debt/update':
@@ -1846,6 +1852,19 @@ def fiscal_scheduler_thread(interval_hours=168):
             log.warning(f'财政债务更新失败（旧数据保留）: {e}')
         time.sleep(interval_hours * 3600)
 
+
+def anjuke_scheduler_thread(interval_hours=168):
+    """安居客挂牌价每周低频检查；验证页只记录 blocked，不影响官方住房模块。"""
+    log.info(f'安居客挂牌价调度器启动，每 {interval_hours}h 低频检查')
+    time.sleep(2700)
+    while True:
+        try:
+            result = _run_update_job('anjuke', update_anjuke_listings, blocking=True)
+            log.info(f"安居客挂牌价更新：ok={result.get('cities_ok')} blocked={result.get('cities_blocked')} failed={result.get('cities_failed')}")
+        except Exception as e:
+            log.warning(f'安居客挂牌价更新失败（旧数据保留，官方70城不受影响）: {e}')
+        time.sleep(interval_hours * 3600)
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     print('''
@@ -1880,6 +1899,9 @@ if __name__ == '__main__':
         threading.Thread(target=astar_scheduler_thread, daemon=True).start()
     if os.environ.get('FISCAL_AUTO', '1') != '0':
         threading.Thread(target=fiscal_scheduler_thread, daemon=True).start()
+    # 三城人工确认并完成首次全量验收前默认关闭；验收后改为默认开启。
+    if os.environ.get('ANJUKE_AUTO', '0') != '0':
+        threading.Thread(target=anjuke_scheduler_thread, daemon=True).start()
     if os.environ.get('RATES_AUTO', '1') != '0':
         threading.Thread(target=rates_scheduler_thread, daemon=True).start()
     if os.environ.get('BACKUP_AUTO', '1') != '0':

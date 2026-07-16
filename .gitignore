@@ -44,6 +44,9 @@ backups/
 data/astar_emb*.npy
 data/astar_emb_meta.json
 data/astar_texts.jsonl.gz
+# 安居客商业挂牌数据仅限本机：不得进入公开仓库或 pboc_data.db 快照
+data/housing_listing.db*
+data/anjuke_raw/
 .secrets
 .env
 .env.local
