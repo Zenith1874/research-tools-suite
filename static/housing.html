@@ -31,10 +31,10 @@ h1{font-size:20px;margin:0 0 6px}.sub,.muted{color:var(--muted);font-size:12px;l
 .notice{border-left:3px solid var(--yellow);background:rgba(245,166,35,.07);padding:9px 11px;margin:10px 0;color:#f8d89b;font-size:12px;line-height:1.7}
 a.source-link{color:#9ec2ff;text-decoration:none}
 .chart{margin:14px 0;background:var(--panel);border:1px solid var(--bd);border-radius:6px;padding:12px}
-.chartsvg{width:100%;height:190px;display:block;cursor:crosshair}.chart-title{font-size:12px;color:var(--dim);margin-bottom:6px}
+.chartsvg{width:100%;height:190px;display:block;cursor:crosshair}.chart-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:7px}.chart-title{font-size:12px;color:var(--dim)}.chart-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.chart-controls label{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:10px}.chart-controls select,.chart-controls input{height:27px;background:var(--panel2);border:1px solid var(--bd);border-radius:5px;color:var(--text);font:inherit;font-size:10px;padding:3px 7px}.chart-controls input{width:84px}.chart-reset{height:27px;border:1px solid var(--bd);border-radius:5px;background:var(--panel2);color:var(--dim);font:inherit;font-size:10px;padding:3px 8px;cursor:pointer}.chart-reset:hover{border-color:var(--blue)}
 .tip{position:absolute;top:8px;transform:translateX(-50%);background:rgba(13,23,40,.96);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:11px;line-height:1.7;pointer-events:none;white-space:nowrap;z-index:5}
 .tip b{color:var(--dim);font-size:10px}.tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
-.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:6px}.legend span{display:inline-flex;align-items:center;gap:5px}.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
+.legend{display:flex;gap:7px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:7px}.legend span,.legend button{display:inline-flex;align-items:center;gap:5px}.legend button{border:1px solid transparent;border-radius:12px;background:transparent;color:var(--dim);font:inherit;font-size:11px;padding:3px 7px;cursor:pointer}.legend button:hover{border-color:var(--bd);background:var(--panel2)}.legend button.off{opacity:.38;text-decoration:line-through}.legend button.on{background:rgba(255,255,255,.035)}.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
 .table-title{font-size:12px;color:var(--dim);margin:14px 0 7px}.scroll{overflow:auto;border:1px solid rgba(34,50,75,.75);border-radius:6px;max-height:520px}
 table{width:100%;border-collapse:collapse;font-size:12px;min-width:680px}th,td{padding:7px 9px;border-bottom:1px solid rgba(34,50,75,.6);text-align:left}
 th{color:var(--muted);font-weight:600;background:var(--panel);position:sticky;top:0}
@@ -55,31 +55,46 @@ function Pct({v}){if(v===null||v===undefined)return <span>—</span>;const n=Num
 function mergeSeries(map){const byP={};Object.entries(map).forEach(([k,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[k]=r.value}));return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function historyMatrix(map,field,indexed=false){const byP={};Object.entries(map||{}).forEach(([city,rows])=>{const base=(rows||[]).find(r=>typeof r[field]==='number')?.[field];(rows||[]).forEach(r=>{if(typeof r[field]!=='number'||(indexed&&!base))return;(byP[r.period]=byP[r.period]||{period:r.period})[city]=indexed?Number((r[field]/base*100).toFixed(2)):r[field]})});return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function filterHistory(map,startYear){const floor=`${startYear}-01`;return Object.fromEntries(Object.entries(map||{}).map(([city,rows])=>[city,(rows||[]).filter(r=>r.period>=floor)]))}
-function Chart({title,data,series,unit='',digits=1,height=190}){
-  const [hover,setHover]=useState(null);
-  const pts=(data||[]).filter(d=>series.some(s=>typeof d[s.key]==='number'));
-  if(pts.length<2)return <div className="empty">{title}：数据点不足(随月份累积)。</div>;
-  const W=640,H=height,L=50,R=12,T=12,B=22,vals=[];
-  series.forEach(s=>pts.forEach(d=>{if(typeof d[s.key]==='number')vals.push(d[s.key])}));
-  let mn=Math.min(...vals),mx=Math.max(...vals);if(mn===mx){mn-=1;mx+=1}
-  const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(v-mn)/(mx-mn));
+function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false,allowLog=false,visibleKeys=null,onToggleSeries=null,onOnlySeries=null,onShowAll=null}){
+  const [hover,setHover]=useState(null),[axisMode,setAxisMode]=useState('visible'),[customMin,setCustomMin]=useState(''),[customMax,setCustomMax]=useState(''),[clipId]=useState(()=>`chart-clip-${Math.random().toString(36).slice(2)}`);
+  const activeSeries=visibleKeys===null?series:series.filter(s=>visibleKeys.includes(s.key));
+  let chartData=data||[],displayUnit=unit,displayDigits=digits;
+  if(axisMode==='indexed'){
+    const bases=Object.fromEntries(activeSeries.map(s=>[s.key,chartData.find(d=>typeof d[s.key]==='number')?.[s.key]]));
+    chartData=chartData.map(d=>{const row={period:d.period};activeSeries.forEach(s=>{if(typeof d[s.key]==='number'&&bases[s.key])row[s.key]=d[s.key]/bases[s.key]*100});return row});
+    displayUnit='指数';displayDigits=1;
+  }
+  const pts=chartData.filter(d=>activeSeries.some(s=>typeof d[s.key]==='number'));
+  if(pts.length<2)return <div className="empty">{title}：当前选择的数据点不足；可点“全部显示”恢复。</div>;
+  const W=640,H=height,L=55,R=12,T=12,B=22;
+  const scaleSeries=axisMode==='global'?series:activeSeries,vals=[];
+  scaleSeries.forEach(s=>chartData.forEach(d=>{if(typeof d[s.key]==='number')vals.push(d[s.key])}));
+  let dataMin=Math.min(...vals),dataMax=Math.max(...vals),mn=dataMin,mx=dataMax;
+  const customLo=Number(customMin),customHi=Number(customMax),customValid=axisMode==='custom'&&customMin!==''&&customMax!==''&&Number.isFinite(customLo)&&Number.isFinite(customHi)&&customLo<customHi;
+  if(customValid){mn=customLo;mx=customHi}
+  if(mn===mx){mn-=1;mx+=1}
+  let scale=v=>v,scaleMin=mn,scaleMax=mx,ticks;
+  if(axisMode==='log'&&mn>0){scale=Math.log;scaleMin=Math.log(mn);scaleMax=Math.log(mx);const pad=(scaleMax-scaleMin)*.05;scaleMin-=pad;scaleMax+=pad;ticks=[Math.exp(scaleMin),Math.exp((scaleMin+scaleMax)/2),Math.exp(scaleMax)]}
+  else {if(!customValid){const pad=(mx-mn)*.05;mn-=pad;mx+=pad}scaleMin=mn;scaleMax=mx;ticks=[mn,(mn+mx)/2,mx]}
+  const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(scale(v)-scaleMin)/(scaleMax-scaleMin));
   const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
   const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const i=Math.round((x-L)/(W-L-R)*(pts.length-1));setHover(Math.max(0,Math.min(pts.length-1,i)))};
   const hp=hover===null?null:pts[hover];
   const tipLeft=hover===null?0:Math.max(10,Math.min(90,sx(hover)/W*100));
-  return <div className="chart"><div className="chart-title">{title}</div>
+  return <div className="chart"><div className="chart-head"><div className="chart-title">{title}</div>{axisControls&&<div className="chart-controls">{onShowAll&&<button className="chart-reset" onClick={onShowAll}>全部显示</button>}<label>Y轴<select aria-label={`${title} Y轴模式`} value={axisMode} onChange={e=>setAxisMode(e.target.value)}><option value="visible">可见城市自动缩放</option><option value="global">固定全局范围</option><option value="indexed">首期=100</option>{allowLog&&<option value="log">对数尺度</option>}<option value="custom">自定义范围</option></select></label>{axisMode==='custom'&&<><label>下限<input aria-label={`${title} Y轴下限`} type="number" step="any" value={customMin} placeholder={String(Math.floor(dataMin))} onChange={e=>setCustomMin(e.target.value)}/></label><label>上限<input aria-label={`${title} Y轴上限`} type="number" step="any" value={customMax} placeholder={String(Math.ceil(dataMax))} onChange={e=>setCustomMax(e.target.value)}/></label></>}</div>}</div>
     <div style={{position:'relative'}}>
     <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" style={{height}} preserveAspectRatio="none" onMouseMove={onMove} onMouseLeave={()=>setHover(null)}>
-      {[mn,(mn+mx)/2,mx].map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t,digits)}</text></g>)}
-      {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6" strokeDasharray={s.dash||undefined}/>)}
+      <defs><clipPath id={clipId}><rect x={L} y={T} width={W-L-R} height={H-T-B}/></clipPath></defs>
+      {ticks.map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t,displayDigits)}</text></g>)}
+      <g clipPath={`url(#${clipId})`}>{activeSeries.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6" strokeDasharray={s.dash||undefined}/>)}</g>
       {hp&&<g><line x1={sx(hover)} x2={sx(hover)} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
-        {series.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
+        {activeSeries.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
       <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
       <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{pts[pts.length-1].period}</text>
     </svg>
-    {hp&&<div className="tip" style={{left:tipLeft+'%'}}><b>{hp.period}</b>{series.map(s=>typeof hp[s.key]==='number'?<div key={s.key}><i style={{background:s.color}}/>{s.label}：{fmt(hp[s.key],digits)} {unit}</div>:null)}</div>}
+    {hp&&<div className="tip" style={{left:tipLeft+'%'}}><b>{hp.period}</b>{activeSeries.map(s=>typeof hp[s.key]==='number'?<div key={s.key}><i style={{background:s.color}}/>{s.label}：{fmt(hp[s.key],displayDigits)} {displayUnit}</div>:null)}</div>}
     </div>
-    <div className="legend">{series.map(s=><span key={s.key}><i style={{background:s.color}}/>{s.label}</span>)}{unit&&<span className="muted">单位：{unit}</span>}</div>
+    <div className="legend">{series.map(s=>{const on=activeSeries.some(a=>a.key===s.key);return onToggleSeries?<button key={s.key} className={on?'on':'off'} aria-pressed={on} title="单击显示/隐藏；双击只看该城市" onClick={()=>onToggleSeries(s.key)} onDoubleClick={()=>onOnlySeries&&onOnlySeries(s.key)}><i style={{background:s.color}}/>{s.label}</button>:<span key={s.key}><i style={{background:s.color}}/>{s.label}</span>})}{displayUnit&&<span className="muted">单位：{displayUnit}</span>}{onToggleSeries&&<span className="muted">单击切换 · 双击单看</span>}</div>
   </div>;
 }
 function ScatterChart({data}){
@@ -154,8 +169,9 @@ function App(){
   const yearlyHistory=filteredYearlyMap?.[activeHistoryCity]||[];
   const allListingHistory=Object.values(listing?.city_history||{}).flat();
   const compareHistory=filteredCompareMap?.[activeHistoryCity]||[];
-  const citySeries=shownCities.filter(city=>filteredListingMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
-  const yearlyCitySeries=shownCities.filter(city=>filteredYearlyMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
+  const citySeries=FOCUS_CITIES.filter(city=>filteredListingMap?.[city]?.length).map(city=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[FOCUS_CITIES.indexOf(city)]}));
+  const yearlyCitySeries=FOCUS_CITIES.filter(city=>filteredYearlyMap?.[city]?.length).map(city=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[FOCUS_CITIES.indexOf(city)]}));
+  const visibleCitySeriesCount=citySeries.filter(s=>shownCities.includes(s.key)).length,visibleYearlySeriesCount=yearlyCitySeries.filter(s=>shownCities.includes(s.key)).length;
   const officialCitySeries=shownCities.filter(city=>filteredOfficialMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
   const compareCitySeries=shownCities.filter(city=>filteredCompareMap?.[city]?.length).map((city,i)=>({key:city,label:city,color:CITY_COLORS[city],dash:LINE_DASHES[i]}));
   const priceHistoryMatrix=historyMatrix(filteredListingMap,'avg_price');
@@ -212,9 +228,9 @@ function App(){
       <div className="grid">{(listing?.cards||[]).map(c=><div className="metric" key={c.city}><div className="metric-label">{c.city} <span className="badge listing">{c.data_status==='listing_reference'?'月度挂牌':(c.data_status==='listing_year_snapshot'?'年度快照':'missing')}</span></div><div className="metric-value">{c.avg_price==null?'—':fmt(c.avg_price,0)} <span style={{fontSize:12}}>元/㎡</span></div><div className="metric-meta">{c.data_status==='listing_reference'?<>环比 <Pct v={c.mom_pct}/> · 同比 <Pct v={c.yoy_pct}/></>:<>快照月份 {c.period||'—'} · 不参与月度同比对比</>}<br/>{c.source_url&&<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">安居客原页</a>}</div></div>)}</div>
       <div className="table-title">点名十城历史图 · 月度已入库 {listingHistoryCities.length}/10 城 · 年度快照 {yearlyHistoryCities.length}/10 城 · 当前图表从 {historyStart}-01 起</div><div className="city-controls"><button className="city-chip all" onClick={()=>setVisibleCities(null)}>全部显示</button>{FOCUS_CITIES.map(city=>{const hasListing=listingHistoryCities.includes(city),hasYearly=yearlyHistoryCities.includes(city),hasOfficial=Boolean(compare?.official_history_by_city?.[city]?.length),active=shownCities.includes(city),coverage=coverageByCity[city],yearlyCoverage=yearlyCoverageByCity[city],points=listing?.city_history?.[city]?.length||0,yearPoints=yearlyCoverage?.records||0;return <button key={city} aria-pressed={active} title={`单击显示/隐藏；双击只看该城；月度 ${hasListing?`${coverage?.earliest||'—'} 至 ${coverage?.latest||'—'}`:'缺失'}；年度 ${hasYearly?`${yearlyCoverage?.earliest_year} 至 ${yearlyCoverage?.latest_year}`:'缺失'}；官方二手 ${hasOfficial?'有':'不在70城口径'}`} style={{'--city-color':CITY_COLORS[city]}} className={`city-chip ${active?'active':''} ${hasListing?'':'missing'}`} onClick={()=>toggleCity(city)} onDoubleClick={()=>showOnlyCity(city)}>{city} {hasListing?`${points}月`:'月缺'} / {yearPoints}年</button>})}<span className="control-help">单击显示/隐藏，双击只看该城；虚线表示该城缺少逐月挂牌序列，不代表年度快照也缺失。</span></div>
       <div className="scroll"><table><thead><tr><th>城市</th><th>月度范围</th><th>月度点</th><th>可算同比点</th><th>年度范围</th><th>年度点</th><th>排名页直取</th></tr></thead><tbody>{FOCUS_CITIES.map(city=>{const c=coverageByCity[city],y=yearlyCoverageByCity[city];return <tr key={city}><td>{city}</td><td>{c?`${c.earliest} 至 ${c.latest}`:'missing'}</td><td className="num">{c?.records??0}</td><td className="num">{c?.yoy_points??0}</td><td>{y?.records?`${y.earliest_year} 至 ${y.latest_year}`:'missing'}</td><td className="num">{y?.records??0}</td><td className="num">{y?.ranking_points??0}</td></tr>})}</tbody></table></div>
-      <Chart title={`安居客十城年度低频挂牌快照（全国排名页优先，其余取逐月页年末/当前期；${historyStart} 起；${yearlyCitySeries.length} 条有值线）`} data={yearlyPriceMatrix} series={yearlyCitySeries} unit="元/㎡" digits={0} height={300}/>
-      <Chart title={`安居客多城市二手挂牌均价（月度，${historyStart}-01 起；当前 ${citySeries.length} 条有值线）`} data={priceHistoryMatrix} series={citySeries} unit="元/㎡" digits={0} height={280}/>
-      <Chart title={`安居客多城市挂牌价相对走势（月度，${historyStart}-01 起；各城市可见首期=100）`} data={priceIndexMatrix} series={citySeries} unit="指数" digits={1} height={280}/>
+      <Chart title={`安居客十城年度低频挂牌快照（全国排名页优先，其余取逐月页年末/当前期；${historyStart} 起；当前 ${visibleYearlySeriesCount} 条线）`} data={yearlyPriceMatrix} series={yearlyCitySeries} unit="元/㎡" digits={0} height={300} axisControls allowLog visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity} onShowAll={()=>setVisibleCities(null)}/>
+      <Chart title={`安居客多城市二手挂牌均价（月度，${historyStart}-01 起；当前 ${visibleCitySeriesCount} 条线）`} data={priceHistoryMatrix} series={citySeries} unit="元/㎡" digits={0} height={280} axisControls allowLog visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity} onShowAll={()=>setVisibleCities(null)}/>
+      <Chart title={`安居客多城市挂牌价相对走势（月度，${historyStart}-01 起；各城市可见首期=100）`} data={priceIndexMatrix} series={citySeries} unit="指数" digits={1} height={280} visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity}/>
       <Chart title={`统计局官方二手住宅同比（月度，${historyStart}-01 起；当前 ${officialCitySeries.length} 条有值线）`} data={officialHistoryMatrix} series={officialCitySeries} unit="%" digits={1} height={280}/>
       {yearlyHistory.length?<><Chart title={`${activeHistoryCity||'城市'}安居客年度低频挂牌快照（${yearlyHistory[0]?.year}–${yearlyHistory[yearlyHistory.length-1]?.year}；${yearlyHistory.length}点）`} data={yearlyHistory} series={[{key:'avg_price',label:'年度快照',color:CITY_COLORS[activeHistoryCity]}]} unit="元/㎡" digits={0}/><div className="table-title">{activeHistoryCity}年度快照明细（最新在前）</div><div className="scroll"><table><thead><tr><th>年份</th><th>快照月份</th><th>挂牌均价</th><th>来源粒度</th><th>原页</th></tr></thead><tbody>{yearlyHistory.slice().reverse().map(r=><tr key={r.year}><td>{r.year}</td><td>{r.period}</td><td className="num">{fmt(r.avg_price,0)} 元/㎡</td><td>{r.source_grain==='ranking_page_snapshot'?'全国历史排名页':'逐月页年末/当前期'}</td><td>{(r.detail_url||r.source_url)&&<a className="source-link" href={r.detail_url||r.source_url} target="_blank" rel="noreferrer">查看</a>}</td></tr>)}</tbody></table></div></>:<div className="empty">{activeHistoryCity}没有可用年度快照。</div>}
       {listingHistory.length?<Chart title={`${activeHistoryCity||'城市'}安居客二手挂牌均价（月度，${historyStart}-01 起；${listingHistory.length}个月）`} data={listingHistory} series={[{key:'avg_price',label:'挂牌均价',color:'var(--yellow)'}]} unit="元/㎡" digits={0}/>:<div className="empty">{activeHistoryCity}没有可用的全市逐月挂牌历史；年度快照仍单独显示，但不参与月度官方二手同比对比。</div>}
