@@ -123,7 +123,9 @@ function App(){
   async function update(){
     setUpdating(true);
     try{
-      await fetch(`${API}/api/financial/update`,{method:'POST'});
+      const response=await fetch(`${API}/api/financial/update`,{method:'POST'});
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
       // 更新已在后台运行：轮询 /api/jobs 到 financial 任务结束再刷新
       const poll=setInterval(async()=>{
         try{
@@ -133,7 +135,7 @@ function App(){
           else if(!job&&!js.update_lock_busy){clearInterval(poll);await load();setUpdating(false);}
         }catch(e){}
       },3000);
-    }catch(e){setUpdating(false)}
+    }catch(e){setError(e.message||'更新请求失败');setUpdating(false)}
   }
   function loadDemo(){
     setPayload({

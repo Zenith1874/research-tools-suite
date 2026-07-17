@@ -48,7 +48,14 @@ class ResearchNavigationContractTests(unittest.TestCase):
             self.assertIn(slug, navigation)
             self.assertIn(slug, radar)
 
+    def test_shared_navigation_exposes_access_mode(self):
+        navigation = (STATIC / 'research-nav.js').read_text(encoding='utf-8')
+        self.assertIn("fetch('/api/health'", navigation)
+        self.assertIn('局域网只读', navigation)
+        self.assertIn('本机管理', navigation)
+        self.assertIn('protectReadOnlyControls', navigation)
+        self.assertIn('MutationObserver', navigation)
+
 
 if __name__ == '__main__':
     unittest.main()
-

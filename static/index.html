@@ -104,7 +104,7 @@
       <h1>研究工作台</h1>
       <p>跨中国宏观、美国宏观与商科文献的个人研究入口。</p>
     </div>
-    <div class="freshness">导航与研究模块已连接</div>
+    <div class="freshness" id="access-status">正在检查访问模式…</div>
   </section>
 
   <section id="whats-new" aria-live="polite"></section>
@@ -167,10 +167,25 @@
     </section>
   </div>
 
-  <div class="footer">Research Tools Suite · localhost:5001</div>
+  <div class="footer" id="runtime-address">Research Tools Suite</div>
 </main>
 
 <script>
+(async function(){
+  const status = document.getElementById('access-status');
+  const address = document.getElementById('runtime-address');
+  address.textContent = 'Research Tools Suite · ' + window.location.host;
+  try{
+    const response = await fetch('/api/health', {cache:'no-store'});
+    const health = await response.json();
+    status.textContent = health.client_can_write
+      ? '本机管理模式 · 可以更新数据'
+      : '局域网只读模式 · 数据受到保护';
+  }catch(error){
+    status.textContent = '服务状态暂时不可用';
+  }
+})();
+
 (async function(){
   try{
     const response = await fetch('/api/whats-new');

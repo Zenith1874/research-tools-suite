@@ -12,7 +12,7 @@
 | `/abdc` | ABDC 期刊质量列表查询（2010–2025 六个版本，按名称/ISSN/FoR 搜索） |
 | `/abdc-astar-research` | **A\* 研究动态（Research Radar）**：追踪 ABDC A\* 期刊最新文章，规则分类 + 个人研究相关性评分 + FT50/UTD24 标签。详见 [docs/abdc_astar_research_PROGRESS.md](docs/abdc_astar_research_PROGRESS.md) |
 | `/china-rates` | 中国利率与汇率（LPR、SHIBOR、人民币对美元中间价；中国货币网官方接口，每日自动更新） |
-| `/us-macro` | 美国宏观（失业率、JOLTS 离职率、联邦基金利率、10Y 美债收益率；FRED 免 key CSV） |
+| `/us-macro` | 美国宏观（就业、通胀、增长、财政债务、利率金融五组；BLS/劳工部/BEA/财政部/美联储等经 FRED 免 key CSV） |
 | `/housing` | 中国房价（统计局 70 城新房/二手官方指数 + BIS 全国指数 + 安居客二手挂牌价参考及历史双口径走势；挂牌数据仅存本机独立库，不入仓库） |
 
 ## 全站信息架构
@@ -60,11 +60,22 @@ python scripts/watchdog.py --start-if-down
 三层保险：登录启动项 → 看门狗 → server.py（异步更新 + 全局写锁，不自锁死）。
 
 ### 环境变量
+- `SERVER_HOST` — 服务监听地址；默认 `0.0.0.0`，允许校园网其他电脑查看。只需本机使用时设为 `127.0.0.1`。
+- `SERVER_PORT` — 服务端口，默认 `5001`。
+- `ALLOW_REMOTE_WRITES=1` — 明确允许远程电脑触发更新、保存和情景运行；默认关闭。
+- `ADMIN_TOKEN` — 可选远程管理令牌。远程 API 调用在 `X-Research-Admin-Token` 请求头携带该值后才可执行写操作。
+- `CORS_ORIGIN` — 可选的跨站访问来源；默认不开放 CORS。普通浏览器同源访问无需设置。
 - `ASTAR_MAILTO` — OpenAlex / Crossref polite-pool 联系邮箱（建议设为你的真实邮箱；默认占位）。
 - `ASTAR_AUTO=0` — 关闭 A\* 雷达每天一次的后台增量抓取。
 - `FISCAL_AUTO=0` — 关闭政府债务模块每周一次的官方来源检查。
 - `RATES_AUTO=0` — 关闭利率/汇率与美国宏观每日一次的自动更新。
 - `ANJUKE_AUTO=1` — 开启安居客挂牌价每周低频检查；首次 70 城人工验收完成前默认关闭（验证码页自动跳过，不绕过）。
+
+### 校园网访问安全
+
+默认配置保留局域网查看能力：其他电脑可打开 `http://<本机校园网IP>:5001`，但只能读取页面和数据；更新数据、保存文章、重新分类与运行情景等写操作默认仅允许服务器本机执行。这样无需公开商业挂牌数据库，也避免校园网内其他设备误触发长任务。
+
+如只在本机使用，可在 `.secrets` 中加入 `SERVER_HOST=127.0.0.1`。不建议在校园网设置 `ALLOW_REMOTE_WRITES=1`；确需远程管理时优先配置随机的 `ADMIN_TOKEN`，并通过受控客户端请求头传递，令牌文件已被 `.gitignore` 排除。
 
 ### 财政收支与政府债务数据更新
 

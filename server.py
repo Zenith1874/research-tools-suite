@@ -5,7 +5,7 @@
   - ABDC 期刊质量列表查询
 """
 
-import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys, shutil
+import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys, shutil, hmac, ipaddress
 import html as html_lib
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -101,7 +101,6 @@ logging.basicConfig(level=logging.INFO,
     format='%(asctime)s  %(levelname)-7s  %(message)s', datefmt='%H:%M:%S')
 log = logging.getLogger(__name__)
 
-PORT       = 5001
 _ROOT      = os.path.dirname(os.path.abspath(__file__))
 
 def _load_secrets():
@@ -120,6 +119,13 @@ def _load_secrets():
     except Exception:
         pass
 _load_secrets()
+
+HOST       = os.environ.get('SERVER_HOST', '0.0.0.0').strip() or '0.0.0.0'
+PORT       = int(os.environ.get('SERVER_PORT', '5001'))
+ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '')
+CORS_ORIGIN = os.environ.get('CORS_ORIGIN', '').strip()
+ALLOW_REMOTE_WRITES = os.environ.get('ALLOW_REMOTE_WRITES', '0').strip().lower() in ('1', 'true', 'yes')
+MAX_POST_BYTES = 1024 * 1024
 
 DB_PATH    = os.path.join(_ROOT, 'pboc_data.db')
 STATIC_DIR = os.path.join(_ROOT, 'static')
@@ -1357,13 +1363,37 @@ def scrape_and_update():
         return {'status':'error','message':str(e)}
 
 # ── HTTP API ──────────────────────────────────────────────────────────────────
-def cors_headers():
-    return {
-        'Access-Control-Allow-Origin': '*',
+def _is_loopback_address(address):
+    """Return True only for a real loopback client, including IPv4-mapped IPv6."""
+    try:
+        ip = ipaddress.ip_address(str(address).split('%', 1)[0])
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        return ip.is_loopback
+    except ValueError:
+        return False
+
+
+def _write_request_allowed(client_ip, supplied_token=''):
+    """Keep LAN viewing available while protecting all state-changing routes."""
+    if _is_loopback_address(client_ip) or ALLOW_REMOTE_WRITES:
+        return True
+    return bool(ADMIN_TOKEN and supplied_token and
+                hmac.compare_digest(ADMIN_TOKEN, supplied_token))
+
+
+def cors_headers(origin=None):
+    headers = {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Research-Admin-Token',
         'Content-Type': 'application/json; charset=utf-8',
     }
+    # Same-origin browser requests need no CORS header. Cross-origin access is
+    # opt-in so an arbitrary website cannot read or mutate the local service.
+    if CORS_ORIGIN and origin and (CORS_ORIGIN == '*' or origin == CORS_ORIGIN):
+        headers['Access-Control-Allow-Origin'] = origin if CORS_ORIGIN != '*' else '*'
+        headers['Vary'] = 'Origin'
+    return headers
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
@@ -1372,7 +1402,9 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         try:
             self.send_response(code)
-            for k,v in cors_headers().items(): self.send_header(k,v)
+            for k,v in cors_headers(self.headers.get('Origin')).items(): self.send_header(k,v)
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'same-origin')
             self.send_header('Content-Length', len(body))
             self.end_headers()
             self.wfile.write(body)
@@ -1389,6 +1421,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', mime or 'application/octet-stream')
             self.send_header('Content-Length', len(body))
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'same-origin')
             # 缓存策略：HTML 每次向服务器校验(改完立即生效，不用强刷)；
             # vendor 第三方库文件不变，长缓存一年。
             if os.sep + 'vendor' + os.sep in file_path:
@@ -1415,7 +1449,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        for k,v in cors_headers().items(): self.send_header(k,v)
+        for k,v in cors_headers(self.headers.get('Origin')).items(): self.send_header(k,v)
         self.end_headers()
 
     def do_GET(self):
@@ -1424,7 +1458,12 @@ class Handler(BaseHTTPRequestHandler):
             # API routes
             if   path == '/api/data':       self._api_data()
             elif path == '/api/status':     self._api_status()
-            elif path == '/api/health':     self.send_json({'status':'ok','time':datetime.now().isoformat()})
+            elif path == '/api/health':
+                can_write = _write_request_allowed(
+                    self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+                self.send_json({'status':'ok', 'time':datetime.now().isoformat(),
+                                'bound_host': HOST, 'client_can_write': can_write,
+                                'access_mode': 'manage' if can_write else 'read_only'})
             elif path == '/api/jobs':
                 with _JOBS_LOCK:
                     jobs = dict(_JOBS)
@@ -1471,6 +1510,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_json(semantic_search(q, topk=int(p.get('topk', 30))))
             # Static page routes
+            elif path == '/favicon.ico':
+                self.send_response(204)
+                self.send_header('Cache-Control', 'public, max-age=86400')
+                self.end_headers()
             elif path in ('/', ''):         self.send_file(os.path.join(STATIC_DIR, 'index.html'))
             elif path in ('/dashboard', '/dashboard.html'):
                 self.send_file(os.path.join(STATIC_DIR, 'dashboard.html'))
@@ -1498,6 +1541,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        try:
+            content_length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            self.send_json({'error': 'invalid Content-Length'}, 400)
+            return
+        if content_length > MAX_POST_BYTES:
+            self.send_json({'error': 'request body too large', 'max_bytes': MAX_POST_BYTES}, 413)
+            return
+        if not _write_request_allowed(
+                self.client_address[0], self.headers.get('X-Research-Admin-Token', '')):
+            self.send_json({
+                'error': '当前为局域网只读访问；更新、保存和情景运行仅允许本机操作',
+                'code': 'remote_write_forbidden',
+            }, 403)
+            return
         if path == '/api/scrape':
             self.send_json(_run_update_job('pboc_scrape', scrape_and_update))
         elif path == '/api/financial/update':
@@ -1914,8 +1972,8 @@ if __name__ == '__main__':
         dedup_article_sources()             # 来源表去重 + 建唯一索引（幂等）
     except Exception as e:
         log.warning(f'prestige lists 载入失败: {e}')
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
-    log.info(f'服务启动 → http://localhost:{PORT}')
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    log.info(f'服务启动 → http://localhost:{PORT} (bind={HOST}, remote_writes={ALLOW_REMOTE_WRITES})')
     try:
         server.serve_forever()
     except KeyboardInterrupt:

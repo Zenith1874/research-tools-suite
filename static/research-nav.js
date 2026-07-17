@@ -18,7 +18,7 @@
       summary: '美国宏观总览',
       defaultHref: '/us-macro',
       items: [
-        { label: '美国宏观总览', href: '/us-macro', description: '失业率、JOLTS、联邦基金利率与 10Y 美债。' }
+        { label: '美国宏观总览', href: '/us-macro', description: '就业、通胀、增长、联邦财政债务与完整利率曲线。' }
       ]
     },
     research: {
@@ -95,7 +95,8 @@
     const shell = document.createElement('header');
     shell.className = 'research-nav-shell';
     shell.innerHTML = '<div class="research-nav-inner">' +
-      '<a class="research-nav-brand" href="/">研究工作台</a>' +
+      '<div class="research-nav-brand-block"><a class="research-nav-brand" href="/">研究工作台</a>' +
+      '<span class="research-nav-access" aria-live="polite">检查权限…</span></div>' +
       '<nav class="research-nav-tabs" aria-label="主要研究领域">' +
       Object.keys(groups).map(function (key) {
         const group = groups[key];
@@ -116,8 +117,36 @@
     const shell = buildNav();
     const search = shell.querySelector('.research-nav-search input');
     const results = shell.querySelector('.research-nav-search-results');
+    const access = shell.querySelector('.research-nav-access');
     let searchMatches = [];
     let highlighted = -1;
+
+    function protectReadOnlyControls() {
+      const writeLabel = /(更新|同步观测表|全量回填|重新分类|健康检查|补全|保存)/;
+      document.querySelectorAll('button').forEach(function (button) {
+        if (!writeLabel.test((button.textContent || '').trim())) return;
+        button.disabled = true;
+        button.classList.add('research-nav-write-disabled');
+        button.title = '局域网只读模式：请在服务器本机执行此操作';
+      });
+    }
+
+    fetch('/api/health', { cache: 'no-store' })
+      .then(function (response) { return response.json(); })
+      .then(function (health) {
+        const canWrite = Boolean(health.client_can_write);
+        access.textContent = canWrite ? '本机管理' : '局域网只读';
+        access.classList.add(canWrite ? 'is-manage' : 'is-read-only');
+        document.body.dataset.accessMode = canWrite ? 'manage' : 'read-only';
+        if (!canWrite) {
+          protectReadOnlyControls();
+          new MutationObserver(protectReadOnlyControls).observe(document.body, {
+            childList: true,
+            subtree: true
+          });
+        }
+      })
+      .catch(function () { access.textContent = '状态未知'; });
 
     function closeSearch() {
       results.classList.remove('is-open');

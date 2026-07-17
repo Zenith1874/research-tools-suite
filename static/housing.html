@@ -142,16 +142,16 @@ function App(){
   async function update(){
     setBusy(true);
     try{
-      const r=await fetch('/api/housing/update',{method:'POST'});const j=await r.json();setMsg(j.message||j.status);
+      const r=await fetch('/api/housing/update',{method:'POST'});const j=await r.json();if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);setMsg(j.message||j.status);
       const t=setInterval(async()=>{
         const js=await (await fetch('/api/jobs')).json();
         const job=js.jobs&&js.jobs.housing;
         if(job&&job.status!=='running'){clearInterval(t);setBusy(false);setMsg(job.status==='done'?'更新完成':'更新失败:'+(job.error||''));load()}
       },3000);
-    }catch(e){setBusy(false);setMsg('请求失败:'+e)}
+    }catch(e){setBusy(false);setMsg('请求失败:'+(e.message||e))}
   }
   async function updateListing(){
-    setListingBusy(true);try{const j=await (await fetch('/api/housing/anjuke/update',{method:'POST'})).json();setMsg(j.message||j.status);const t=setInterval(async()=>{const js=await (await fetch('/api/jobs')).json();const job=js.jobs&&js.jobs.anjuke;if(job&&job.status!=='running'){clearInterval(t);setListingBusy(false);setMsg(job.status==='done'?'挂牌价更新完成':'挂牌价更新失败:'+(job.error||''));load()}},3000)}catch(e){setListingBusy(false);setMsg('挂牌价请求失败:'+e)}
+    setListingBusy(true);try{const r=await fetch('/api/housing/anjuke/update',{method:'POST'});const j=await r.json();if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);setMsg(j.message||j.status);const t=setInterval(async()=>{const js=await (await fetch('/api/jobs')).json();const job=js.jobs&&js.jobs.anjuke;if(job&&job.status!=='running'){clearInterval(t);setListingBusy(false);setMsg(job.status==='done'?'挂牌价更新完成':'挂牌价更新失败:'+(job.error||''));load()}},3000)}catch(e){setListingBusy(false);setMsg('挂牌价请求失败:'+(e.message||e))}
   }
   useEffect(()=>{load()},[]);
   if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;

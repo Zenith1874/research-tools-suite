@@ -199,7 +199,12 @@ const NAV_FIELD_SLUGS = Object.fromEntries(Object.entries(NAV_FIELD_MAP).map(([s
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),5000)}
 async function getJSON(u){const r=await fetch(API+u);return r.json()}
-async function postJSON(u,b){const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+async function postJSON(u,b){
+  const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+  const data=await r.json();
+  if(!r.ok){toast(data.error||`请求失败 (HTTP ${r.status})`);return Object.assign({success:false,blocked:true},data)}
+  return data;
+}
 
 function relClass(s){s=s||0;return s>=60?'rel-hi':(s>=35?'rel-mid':'rel-lo')}
 
@@ -555,8 +560,8 @@ async function renderDebug(){
 // ── 操作 ──
 async function runUpdate(mode,days){
   const body={mode:mode,days:days,abdc_version:'latest'};
-  toast('已启动：'+mode+'（219 个 A* 期刊，预计数分钟，可在 Debug 看进度）');
   const r=await postJSON('/api/abdc/astar/update',body);
+  if(r.blocked)return;
   toast(r.message||'已启动');
   setTimeout(loadStatus,8000);
 }
