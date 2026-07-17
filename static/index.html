@@ -3,149 +3,202 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>研究工具集</title>
+<title>研究工作台</title>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#060c1a;--panel:#0d1626;--panel2:#111d30;--border:#1e2d45;
+    --text:#e2e8f0;--dim:#94a3b8;--muted:#64748b;--blue:#4f8fff;
+    --green:#00d4aa;--amber:#f5a623;--purple:#a78bfa;
+  }
+  * { box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-    background: #060c1a;
-    color: #e2e8f0;
+    margin: 0;
     min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 40px 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   }
-  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 8px; color: #f1f5f9; }
-  .subtitle { font-size: 0.88rem; color: #64748b; margin-bottom: 48px; }
-  .cards { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
-  .card {
-    background: #0d1626;
-    border: 1px solid #1e2d45;
-    border-radius: 14px;
-    padding: 32px 28px;
-    width: 260px;
-    text-decoration: none;
-    color: inherit;
-    transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+  .portal-home { width: min(100%, 1420px); margin: 0 auto; padding: 38px 24px 56px; }
+  .home-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding-bottom:22px; border-bottom:1px solid var(--border); }
+  .home-heading h1 { margin:0; color:#f3f7fc; font-size:26px; line-height:1.2; }
+  .home-heading p { margin:8px 0 0; color:var(--dim); font-size:13px; line-height:1.7; }
+  .freshness { display:inline-flex; align-items:center; gap:8px; color:var(--dim); font-size:12px; white-space:nowrap; }
+  .freshness::before { width:8px; height:8px; border-radius:50%; background:var(--green); content:""; }
+  #whats-new { display:none; margin:20px 0 0; border:1px solid var(--border); border-radius:8px; background:var(--panel); padding:13px 16px; color:#b8c6d8; font-size:12px; line-height:1.8; }
+  .update-title { color:#f1f5f9; font-weight:700; }
+  .update-row { display:flex; flex-wrap:wrap; gap:5px 18px; margin-top:5px; }
+  .update-row a { color:#9ec2ff; text-decoration:none; }
+  .update-row a:hover { text-decoration:underline; }
+  .update-new { color:var(--green); font-weight:700; }
+  .domain-list { display:grid; gap:16px; margin-top:24px; }
+  .domain {
+    display:grid;
+    grid-template-columns:260px minmax(0,1fr);
+    min-height:190px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:var(--panel);
+    overflow:hidden;
   }
-  .card:hover {
-    border-color: #4f8fff;
-    transform: translateY(-3px);
-    box-shadow: 0 8px 32px rgba(79,143,255,0.12);
+  .domain-intro { padding:26px 24px; border-right:1px solid var(--border); background:rgba(255,255,255,.012); }
+  .domain-kicker { color:var(--muted); font-size:10px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
+  .domain h2 { margin:9px 0 8px; color:#f1f5f9; font-size:20px; }
+  .domain-intro p { margin:0; color:var(--dim); font-size:12px; line-height:1.65; }
+  .domain-count { display:block; margin-top:21px; color:var(--muted); font-size:10px; }
+  .domain-body { padding:14px 22px; }
+  .module-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:28px; }
+  .module-link {
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto;
+    gap:14px;
+    min-height:74px;
+    align-items:center;
+    padding:12px 2px;
+    border-bottom:1px solid rgba(30,45,69,.8);
+    color:inherit;
+    text-decoration:none;
   }
-  .card-icon { font-size: 2rem; }
-  .card-title { font-size: 1.05rem; font-weight: 700; color: #f1f5f9; }
-  .card-desc { font-size: 0.82rem; color: #64748b; line-height: 1.6; }
-  .card-tag {
-    display: inline-block;
-    font-size: 0.72rem;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 4px;
-    margin-top: auto;
+  .module-link:hover .module-title, .module-link:focus-visible .module-title { color:var(--blue); }
+  .module-link:focus-visible { outline:2px solid rgba(79,143,255,.55); outline-offset:3px; border-radius:4px; }
+  .module-title { display:block; color:#e6edf7; font-size:14px; font-weight:700; }
+  .module-desc { display:block; margin-top:5px; color:var(--muted); font-size:10.5px; line-height:1.45; }
+  .module-route { color:#60738d; font-size:10px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+  .domain-us .module-list { grid-template-columns:minmax(0,1fr); }
+  .domain-us .module-link { max-width:650px; }
+  .research-body { display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,.82fr); gap:28px; }
+  .discipline-title { margin:12px 0 10px; color:#b8c6d8; font-size:11px; font-weight:700; }
+  .disciplines { display:flex; flex-wrap:wrap; gap:8px; }
+  .discipline {
+    display:inline-flex;
+    align-items:center;
+    min-height:36px;
+    border:1px solid var(--border);
+    border-radius:6px;
+    background:var(--panel2);
+    padding:7px 10px;
+    color:#cad5e4;
+    font-size:11px;
+    text-decoration:none;
   }
-  .tag-blue { background: rgba(79,143,255,0.15); color: #4f8fff; }
-  .tag-green { background: rgba(0,212,170,0.12); color: #00d4aa; }
-  .tag-amber { background: rgba(245,166,35,0.14); color: #f5a623; }
-  .tag-purple { background: rgba(167,139,250,0.15); color: #a78bfa; }
-  .footer { margin-top: 48px; font-size: 0.78rem; color: #334155; }
+  .discipline:hover, .discipline:focus-visible { border-color:rgba(79,143,255,.65); color:#fff; outline:none; }
+  .footer { margin-top:26px; color:#42516a; font-size:10px; text-align:right; }
+  @media (max-width:900px) {
+    .domain { grid-template-columns:1fr; }
+    .domain-intro { border-right:0; border-bottom:1px solid var(--border); }
+    .research-body { grid-template-columns:1fr; }
+  }
+  @media (max-width:650px) {
+    .portal-home { padding:26px 14px 44px; }
+    .home-heading { flex-direction:column; }
+    .module-list { grid-template-columns:1fr; }
+    .domain-body { padding:10px 16px 18px; }
+  }
 </style>
 </head>
 <body>
-  <h1>研究工具集</h1>
-  <p class="subtitle">localhost:5001</p>
+<main class="portal-home">
+  <section class="home-heading">
+    <div>
+      <h1>研究工作台</h1>
+      <p>跨中国宏观、美国宏观与商科文献的个人研究入口。</p>
+    </div>
+    <div class="freshness">导航与研究模块已连接</div>
+  </section>
 
-  <div id="whats-new" style="display:none;max-width:1080px;margin:0 auto 26px;text-align:left;
-       background:#0d1728;border:1px solid #22324b;border-radius:8px;padding:14px 18px;font-size:0.82rem;line-height:1.9;color:#b8c6d8;">
+  <section id="whats-new" aria-live="polite"></section>
+
+  <div class="domain-list">
+    <section class="domain domain-china">
+      <div class="domain-intro">
+        <div class="domain-kicker">China Macro</div>
+        <h2>中国宏观</h2>
+        <p>把货币金融、财政债务、利率汇率和房地产放到同一个研究分组中。</p>
+        <span class="domain-count">4 个研究模块</span>
+      </div>
+      <div class="domain-body">
+        <div class="module-list">
+          <a class="module-link" href="/dashboard"><span><span class="module-title">宏观总览</span><span class="module-desc">央行金融统计与货币信用核心指标</span></span><span class="module-route">/dashboard</span></a>
+          <a class="module-link" href="/fiscal-debt"><span><span class="module-title">财政收支与债务</span><span class="module-desc">年度财政收支、未来情景、政府债务与央行口径</span></span><span class="module-route">/fiscal-debt</span></a>
+          <a class="module-link" href="/china-rates"><span><span class="module-title">利率与汇率</span><span class="module-desc">LPR、SHIBOR 与人民币中间价</span></span><span class="module-route">/china-rates</span></a>
+          <a class="module-link" href="/housing"><span><span class="module-title">房地产</span><span class="module-desc">70 城、BIS 与安居客挂牌价双口径</span></span><span class="module-route">/housing</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="domain domain-us">
+      <div class="domain-intro">
+        <div class="domain-kicker">US Macro</div>
+        <h2>美国宏观</h2>
+        <p>集中查看美国就业、政策利率和国债收益率，后续新增模块继续归入这里。</p>
+        <span class="domain-count">1 个研究模块</span>
+      </div>
+      <div class="domain-body">
+        <div class="module-list">
+          <a class="module-link" href="/us-macro"><span><span class="module-title">美国宏观总览</span><span class="module-desc">失业率、JOLTS、联邦基金利率与 10Y 美债</span></span><span class="module-route">/us-macro</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="domain domain-research">
+      <div class="domain-intro">
+        <div class="domain-kicker">Business Research</div>
+        <h2>ABDC 商科研究</h2>
+        <p>把期刊质量清单、A* 最新研究和与你相关的学科频道放在同一研究域。</p>
+        <span class="domain-count">2 个工具 · 5 个学科频道</span>
+      </div>
+      <div class="domain-body research-body">
+        <div class="module-list">
+          <a class="module-link" href="/abdc"><span><span class="module-title">ABDC 期刊列表</span><span class="module-desc">按名称、ISSN、FoR、等级和版本查询</span></span><span class="module-route">/abdc</span></a>
+          <a class="module-link" href="/abdc-astar-research"><span><span class="module-title">A* 研究雷达</span><span class="module-desc">最新文章、研究主题、方法与机会</span></span><span class="module-route">/abdc-astar-research</span></a>
+        </div>
+        <div>
+          <div class="discipline-title">学科频道</div>
+          <div class="disciplines">
+            <a class="discipline" href="/abdc-astar-research?field=information-systems">Information Systems</a>
+            <a class="discipline" href="/abdc-astar-research?field=management">Management</a>
+            <a class="discipline" href="/abdc-astar-research?field=marketing">Marketing</a>
+            <a class="discipline" href="/abdc-astar-research?field=ob-hr">OB / HR</a>
+            <a class="discipline" href="/abdc-astar-research?field=computational-social-science">计算社会科学</a>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
-  <div class="cards">
-    <a class="card" href="/dashboard">
-      <span class="card-icon">📊</span>
-      <div class="card-title">央行金融统计</div>
-      <div class="card-desc">中国人民银行月度数据监控，涵盖 M2、M1、贷款、存款、社融、利率等核心指标，自动爬取更新。</div>
-      <span class="card-tag tag-blue">实时数据</span>
-    </a>
-    <a class="card" href="/abdc">
-      <span class="card-icon">📚</span>
-      <div class="card-title">ABDC 期刊查询</div>
-      <div class="card-desc">澳大利亚商学院院长理事会期刊质量列表，支持按名称、ISSN、FoR 代码搜索，涵盖 2010–2025 六个版本。</div>
-      <span class="card-tag tag-green">2651 种期刊</span>
-    </a>
-    <a class="card" href="/fiscal-debt">
-      <span class="card-icon">🏛️</span>
-      <div class="card-title">政府债务监控</div>
-      <div class="card-desc">分开追踪国债、地方政府债、城投债、财政缺口与到期还本压力。</div>
-      <span class="card-tag tag-amber">财政债务</span>
-    </a>
-    <a class="card" href="/abdc-astar-research">
-      <span class="card-icon">🛰️</span>
-      <div class="card-title">A* 研究动态</div>
-      <div class="card-desc">追踪 ABDC A* 期刊最新文章，识别研究主题、方法、数据和与你研究方向相关的机会。</div>
-      <span class="card-tag tag-purple">A* Research Radar</span>
-    </a>
-    <a class="card" href="/china-rates">
-      <span class="card-icon">💹</span>
-      <div class="card-title">中国利率与汇率</div>
-      <div class="card-desc">LPR、SHIBOR、人民币对美元中间价，数据来自中国货币网官方接口，每日自动更新。</div>
-      <span class="card-tag tag-blue">利率 / 汇率</span>
-    </a>
-    <a class="card" href="/housing">
-      <span class="card-icon">🏠</span>
-      <div class="card-title">中国房价</div>
-      <div class="card-desc">统计局 70 城商品住宅价格指数（新房/二手，环比/同比）+ BIS 全国住宅价格长指数（2005 起）。</div>
-      <span class="card-tag tag-amber">70城 / BIS</span>
-    </a>
-    <a class="card" href="/us-macro">
-      <span class="card-icon">🇺🇸</span>
-      <div class="card-title">美国宏观 (FRED)</div>
-      <div class="card-desc">失业率、JOLTS 离职率、联邦基金利率、10 年期美债收益率，来自 FRED 官方镜像。</div>
-      <span class="card-tag tag-green">US Macro</span>
-    </a>
-  </div>
-
-  <div class="footer">http://localhost:5001</div>
+  <div class="footer">Research Tools Suite · localhost:5001</div>
+</main>
 
 <script>
 (async function(){
   try{
-    const r = await fetch('/api/whats-new');
-    if(!r.ok) return;
-    const d = await r.json();
+    const response = await fetch('/api/whats-new');
+    if(!response.ok) return;
+    const data = await response.json();
     const box = document.getElementById('whats-new');
     const lastVisit = localStorage.getItem('wn_last_visit') || '';
-    localStorage.setItem('wn_last_visit', d.generated_at || new Date().toISOString());
-    const esc = s => String(s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-    let html = '<b style="color:#e5edf7">📌 What\'s New</b>';
-
-    const ev = (d.events||[]).slice(0,8);
-    if(ev.length){
-      html += '<div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:6px;">' + ev.map(e=>{
-        const isNew = lastVisit && e.created_at > lastVisit;
-        return '<span>'+(isNew?'🆕 ':'· ')+esc(e.title)+' <b style="color:'+(isNew?'#00d4aa':'#8ea0b8')+'">'+esc(e.period)+'</b></span>';
+    localStorage.setItem('wn_last_visit', data.generated_at || new Date().toISOString());
+    const esc = value => String(value || '').replace(/[&<>"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]));
+    let html = '<span class="update-title">最近更新</span>';
+    const events = (data.events || []).slice(0, 8);
+    if(events.length){
+      html += '<div class="update-row">' + events.map(event => {
+        const isNew = lastVisit && event.created_at > lastVisit;
+        return '<span>' + (isNew ? '<span class="update-new">新</span> ' : '') + esc(event.title) + ' <b>' + esc(event.period) + '</b></span>';
       }).join('') + '</div>';
     }
-    if(d.astar_week_count){
-      html += '<div style="margin-top:6px;">🛰️ 近7天 A* 新文章 <b style="color:#e5edf7">'+d.astar_week_count+'</b> 篇';
-      const hi = d.astar_recent_high||[];
-      if(hi.length){
-        html += '，高相关 <b style="color:#00d4aa">'+hi.length+'</b> 篇：' +
-          hi.slice(0,3).map(a=>'<a href="/abdc-astar-research" style="color:#9ec2ff;text-decoration:none">'+esc((a.title||'').slice(0,46))+'…('+a.relevance_score+')</a>').join(' · ');
-      }
-      html += '</div>';
+    if(data.astar_week_count){
+      const recent = data.astar_recent_high || [];
+      html += '<div class="update-row"><span>近 7 天 A* 新文章 <b>' + data.astar_week_count + '</b> 篇</span>' +
+        recent.slice(0, 3).map(article => '<a href="/abdc-astar-research">' + esc((article.title || '').slice(0, 46)) + '… (' + esc(article.relevance_score) + ')</a>').join('') + '</div>';
     }
-    if((d.update_failures||[]).length){
-      html += '<div style="margin-top:6px;color:#f8d89b;">⚠️ 近7天抓取失败：' +
-        d.update_failures.map(f=>esc(f.source_type)).join('、') + '（详见各模块 Debug）</div>';
+    if((data.update_failures || []).length){
+      html += '<div class="update-row" style="color:#f8d89b"><span>近 7 天抓取失败：' + data.update_failures.map(item => esc(item.source_type)).join('、') + '</span></div>';
     }
     box.innerHTML = html;
     box.style.display = 'block';
-  }catch(e){}
+  }catch(error){}
 })();
 </script>
 </body>

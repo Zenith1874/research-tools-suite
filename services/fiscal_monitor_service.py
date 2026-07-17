@@ -437,6 +437,25 @@ def build_fiscal_monitor_payload(db_path):
         scenario_count = conn.execute('SELECT COUNT(*) FROM fiscal_debt_scenario_runs').fetchone()[0]
 
     sections = {
+        'fiscal_revenue_expenditure': {
+            'title': '全国财政收入、支出与收支差额',
+            'status': ('partial' if any(row.get('data_status') == 'partial'
+                                        for row in budget.get('annual_series', []))
+                       else ('official' if budget.get('annual_series') else 'missing')),
+            'cards': budget.get('annual_cards', []),
+            'latest_ytd_cards': budget.get('cards', []),
+            'tables': {
+                'annual': budget.get('annual_series', []),
+                'ytd': budget.get('series', []),
+            },
+            'forecast': budget.get('forecast', {}),
+            'coverage': budget.get('coverage', {}),
+            'notes': budget.get('notes', []),
+            'warnings': budget.get('warnings', []) + [
+                '收支差额均为收入减支出的 derived 分析值，不等于法定预算赤字。',
+                '未来值为透明情景估计，不是财政部预测。',
+            ],
+        },
         'government_debt_overview': {
             'title': '政府债务总览', 'status': _section_status(overview_cards),
             'cards': overview_cards,
@@ -495,6 +514,12 @@ def build_fiscal_monitor_payload(db_path):
                                   'latest_period': local_records[-1]['period'] if local_records else None},
         'pboc_balance_sheet': balance.get('coverage'), 'pboc_gov_bond_omo': omo.get('coverage'),
         'pboc_buyout_reverse_repo': buyout.get('coverage'), 'mof_treasury_bonds': treasury_issuance.get('coverage'),
+        'fiscal_budget': {
+            'records': budget.get('coverage', {}).get('periods', 0),
+            'earliest_period': budget.get('coverage', {}).get('earliest'),
+            'latest_period': budget.get('coverage', {}).get('latest'),
+            'annual_periods': budget.get('coverage', {}).get('annual_periods', 0),
+        },
     }
     warnings = [warning for section in sections.values() for warning in section.get('warnings', [])]
     return {
@@ -507,7 +532,10 @@ def _result_counts(result):
     inserted = result.get('new_records', 0)
     updated = result.get('updated_records', 0)
     if not inserted and not updated:
-        updated = result.get('records', result.get('parsed_records', result.get('operation_records', 0))) or 0
+        updated = result.get(
+            'records_upserted',
+            result.get('records', result.get('parsed_records', result.get('operation_records', 0)))
+        ) or 0
     return int(inserted or 0), int(updated or 0)
 
 
@@ -577,6 +605,7 @@ def run_all_fiscal_updates(db_path):
 
 def build_fiscal_monitor_debug(db_path):
     base = build_fiscal_debt_debug_payload(db_path)
+    budget = build_fiscal_budget_payload(db_path)
     with connect(db_path) as conn:
         ensure_fiscal_tables(conn)
         balance = build_pboc_balance_sheet_debug(conn)
@@ -614,12 +643,14 @@ def build_fiscal_monitor_debug(db_path):
     base.update({
         'modules': {'fiscal_debt': {'indicator_coverage': base.get('indicator_coverage', [])},
                     'pboc_balance_sheet': balance, 'pboc_gov_bond_omo': omo,
-                    'pboc_buyout_reverse_repo': buyout, 'mof_treasury_bonds': treasury},
+                    'pboc_buyout_reverse_repo': buyout, 'mof_treasury_bonds': treasury,
+                    'fiscal_budget': budget},
         'coverage': {'fiscal_debt': base.get('indicator_coverage', []),
                      'pboc_balance_sheet': balance.get('coverage'),
                      'pboc_gov_bond_omo': omo.get('coverage'),
                      'pboc_buyout_reverse_repo': buyout.get('coverage'),
-                     'mof_treasury_bonds': treasury.get('coverage')},
+                     'mof_treasury_bonds': treasury.get('coverage'),
+                     'fiscal_budget': budget.get('coverage')},
         'recent_source_records': recent_sources,
         'recent_observation_records': recent_fiscal,
         'recent_update_logs': update_logs,

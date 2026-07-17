@@ -8,12 +8,22 @@
 | 页面 | 说明 |
 |---|---|
 | `/dashboard` | 中国人民银行金融统计监控（M2/M1/贷款/存款/社融/利率，observation 层 + 来源追踪） |
-| `/fiscal-debt` | 政府债务监控（国债、地方债、央行资产负债表、国债买卖、买断式逆回购、国债发行明细） |
+| `/fiscal-debt` | 财政收支与政府债务监控（2010 年起一般公共预算年度收支、2012 年起政府性基金年度收支、YTD 进度、三情景估计、国债、地方债及央行相关口径） |
 | `/abdc` | ABDC 期刊质量列表查询（2010–2025 六个版本，按名称/ISSN/FoR 搜索） |
 | `/abdc-astar-research` | **A\* 研究动态（Research Radar）**：追踪 ABDC A\* 期刊最新文章，规则分类 + 个人研究相关性评分 + FT50/UTD24 标签。详见 [docs/abdc_astar_research_PROGRESS.md](docs/abdc_astar_research_PROGRESS.md) |
 | `/china-rates` | 中国利率与汇率（LPR、SHIBOR、人民币对美元中间价；中国货币网官方接口，每日自动更新） |
 | `/us-macro` | 美国宏观（失业率、JOLTS 离职率、联邦基金利率、10Y 美债收益率；FRED 免 key CSV） |
 | `/housing` | 中国房价（统计局 70 城新房/二手官方指数 + BIS 全国指数 + 安居客二手挂牌价参考及历史双口径走势；挂牌数据仅存本机独立库，不入仓库） |
+
+## 全站信息架构
+
+顶部导航把研究工具固定分为三个一级研究域：
+
+- **中国宏观**：`/dashboard`、`/fiscal-debt`、`/china-rates`、`/housing`
+- **美国宏观**：`/us-macro`
+- **ABDC 商科研究**：`/abdc`、`/abdc-astar-research`
+
+ABDC 研究域下另设 Information Systems、Management、Marketing、OB / HR、计算社会科学五个学科频道。频道链接复用 `/abdc-astar-research?field=...`，直接应用文章筛选，不创建空白占位页面。
 
 ## 运行
 
@@ -56,7 +66,7 @@ python scripts/watchdog.py --start-if-down
 - `RATES_AUTO=0` — 关闭利率/汇率与美国宏观每日一次的自动更新。
 - `ANJUKE_AUTO=1` — 开启安居客挂牌价每周低频检查；首次 70 城人工验收完成前默认关闭（验证码页自动跳过，不绕过）。
 
-### 政府债务数据更新
+### 财政收支与政府债务数据更新
 
 ```powershell
 # 更新所有已接入的财政部和央行来源
@@ -70,6 +80,8 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 # 验证来源、覆盖和更新日志
 python scripts/verify_fiscal_debt.py
 ```
+
+财政收支年度历史来自财政部国库司年度“财政收支情况”原文：一般公共预算覆盖 2010 年起，政府性基金覆盖 2012 年起。页面中的收支差额均为 `收入 - 支出` 的 derived 分析值，不等于法定预算赤字；“两本账”仅作简单相加，未抵销调入调出。未来三年为可切换情景估计，不写入 official observation。
 
 财政债务调度器默认每 168 小时检查一次已接入来源。抓取失败会写入
 `fiscal_debt_update_logs`，不会清空或用假数据覆盖旧 observation。

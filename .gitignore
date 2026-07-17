@@ -54,3 +54,5 @@ data/anjuke_raw/
 outputs/*.db
 outputs/*.log
 outputs/*.jsonl
+# 本地界面 QA 截图，仅用于实现核验，不进入公开仓库
+outputs/research-navigation-qa/
