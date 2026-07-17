@@ -8,6 +8,7 @@
 | 页面 | 说明 |
 |---|---|
 | `/dashboard` | 中国人民银行金融统计监控（M2/M1/贷款/存款/社融/利率，observation 层 + 来源追踪） |
+| `/macro-analytics` | 宏观统计分析（中国/美国/中美对照；定位、领先滞后相关、Sahm、倒挂经验表；不含预测） |
 | `/fiscal-debt` | 财政收支与政府债务监控（2010 年起一般公共预算年度收支、2012 年起政府性基金年度收支、YTD 进度、三情景估计、国债、地方债及央行相关口径） |
 | `/abdc` | ABDC 期刊质量列表查询（2010–2025 六个版本，按名称/ISSN/FoR 搜索） |
 | `/abdc-astar-research` | **A\* 研究动态（Research Radar）**：追踪 ABDC A\* 期刊最新文章，规则分类 + 个人研究相关性评分 + FT50/UTD24 标签。详见 [docs/abdc_astar_research_PROGRESS.md](docs/abdc_astar_research_PROGRESS.md) |

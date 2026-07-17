@@ -3,3 +3,4 @@ requests>=2.31          # 所有抓取(PBOC/MOF/chinamoney/FRED/OpenAlex/Crossre
 beautifulsoup4>=4.12    # PBOC/MOF 页面解析
 openpyxl>=3.1           # 央行资产负债表 xlsx、ABDC 清单导入
 pypdf>=4.0              # 财政部中央政府债务 PDF 解析
+numpy>=2.0              # 宏观统计分析层的数组、相关、滚动统计与Z分数

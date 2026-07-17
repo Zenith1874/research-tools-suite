@@ -63,6 +63,7 @@ from services.us_macro_service import (
     build_us_macro_payload,
     update_us_macro,
 )
+from services.macro_analytics_service import build_macro_analytics_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
 from services.housing_price_service import (
     build_housing_payload,
@@ -284,6 +285,8 @@ _UPDATE_LOCK = threading.Lock()     # 全局写任务串行锁(同一时刻只�
 _DATA_CACHE = {'body': None, 'ts': 0.0}
 _DATA_CACHE_LOCK = threading.Lock()
 _DATA_CACHE_TTL = 600
+_ANALYTICS_CACHE = {'body': None, 'ts': 0.0}
+_ANALYTICS_CACHE_LOCK = threading.Lock()
 
 def _data_cache_get():
     with _DATA_CACHE_LOCK:
@@ -299,6 +302,18 @@ def _data_cache_set(body):
 def _data_cache_clear():
     with _DATA_CACHE_LOCK:
         _DATA_CACHE['body'] = None
+    with _ANALYTICS_CACHE_LOCK:
+        _ANALYTICS_CACHE['body'] = None
+
+def _analytics_payload():
+    with _ANALYTICS_CACHE_LOCK:
+        if (_ANALYTICS_CACHE['body'] is not None and
+                time.time() - _ANALYTICS_CACHE['ts'] < _DATA_CACHE_TTL):
+            return _ANALYTICS_CACHE['body']
+    body = build_macro_analytics_payload(DB_PATH)
+    with _ANALYTICS_CACHE_LOCK:
+        _ANALYTICS_CACHE.update(body=body, ts=time.time())
+    return body
 
 def _run_update_job(name, fn, blocking=False):
     """在后台守护线程里跑 fn()，串行(共享 _UPDATE_LOCK)。
@@ -1497,6 +1512,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
+            elif path == '/api/analytics': self.send_json(_analytics_payload())
+            elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross'):
+                self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
             elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
             elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
             elif path == '/api/housing/anjuke':   self.send_json(build_anjuke_payload())
@@ -1531,6 +1549,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
             elif path in ('/us-macro', '/us-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
+            elif path in ('/macro-analytics', '/macro-analytics/'):
+                self.send_file(os.path.join(STATIC_DIR, 'macro_analytics.html'))
             elif path in ('/housing', '/housing/'):
                 self.send_file(os.path.join(STATIC_DIR, 'housing.html'))
             else:

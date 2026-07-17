@@ -40,6 +40,7 @@ SERIES = [
     ('GDPC1', '实际 GDP', '十亿美元', 'quarterly', 'BEA 2017 年链式美元，季调年率', 'growth'),
     ('INDPRO', '工业产出指数', '指数', 'monthly', '美联储 G.17，经季调', 'growth'),
     ('RSAFS', '零售和餐饮销售额', '百万美元', 'monthly', '美国人口普查局，经季调', 'growth'),
+    ('USREC', 'NBER 衰退期标记', '0/1', 'monthly', 'NBER via FRED', 'growth'),
     ('FGRECPT', '联邦政府经常性收入', '十亿美元', 'quarterly', 'BEA NIPA，季调年率', 'fiscal'),
     ('FGEXPND', '联邦政府经常性支出', '十亿美元', 'quarterly', 'BEA NIPA，季调年率', 'fiscal'),
     ('FYFSD', '联邦财政年度盈余/赤字', '百万美元', 'annual', '美国财政部/OMB，财政年度', 'fiscal'),
@@ -58,6 +59,7 @@ SERIES = [
     ('T10Y2Y', '10Y－2Y 国债期限利差', '百分点', 'daily', 'FRED 由美联储 H.15 序列计算', 'financial'),
     ('T10YIE', '10年期盈亏平衡通胀率', '%', 'daily', 'FRED 由名义与通胀保值国债计算', 'financial'),
     ('MORTGAGE30US', '30年期固定房贷利率', '%', 'weekly', 'Freddie Mac PMMS', 'financial'),
+    ('QUSR628BIS', 'BIS 美国实际住宅价格指数（2010=100）', '指数', 'quarterly', 'BIS via FRED', 'financial'),
 ]
 
 GROUP_META = {

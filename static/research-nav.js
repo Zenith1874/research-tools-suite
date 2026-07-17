@@ -8,6 +8,7 @@
       defaultHref: '/dashboard',
       items: [
         { label: '宏观总览', href: '/dashboard', description: '央行金融统计、货币与信用核心指标。' },
+        { label: '宏观统计分析', href: '/macro-analytics', description: '中国、美国与中美对照的派生统计分析。' },
         { label: '财政收支与债务', href: '/fiscal-debt', description: '年度财政收支、未来情景、政府债务与央行相关工具。' },
         { label: '利率与汇率', href: '/china-rates', description: 'LPR、SHIBOR 与人民币中间价。' },
         { label: '房地产', href: '/housing', description: '70 城官方指数、BIS 与挂牌价双口径。' }
@@ -40,7 +41,7 @@
   };
 
   function activeGroupForPath(pathname) {
-    if (/^\/(dashboard|fiscal-debt|financial\/debug|china-rates|housing)/.test(pathname)) return 'china';
+    if (/^\/(dashboard|macro-analytics|fiscal-debt|financial\/debug|china-rates|housing)/.test(pathname)) return 'china';
     if (/^\/us-macro/.test(pathname)) return 'us';
     if (/^\/(abdc|abdc-astar-research)/.test(pathname)) return 'research';
     return '';
