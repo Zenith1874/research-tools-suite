@@ -405,6 +405,67 @@ def _diffusion_from_rows(rows):
     return series
 
 
+CITY_RENAMES = {'襄樊': '襄阳'}  # 2010年12月襄樊市更名襄阳市,统计局2011-07起改用新称
+
+
+def chain_mom_index(rows):
+    """环比指数(上月=100)链式累乘为定基指数(基期=首期前一月=100)。
+    缺月即断链,只保留最后一段连续区间,绝不跨缺月桥接。"""
+    ordered = sorted((r for r in rows if r.get('value') is not None),
+                     key=lambda r: str(r['period']))
+    segments, current, prev_key = [], [], None
+    for row in ordered:
+        key = _period_key(row['period'])
+        if prev_key is not None and key != prev_key + 1:
+            segments.append(current)
+            current = []
+        current.append(row)
+        prev_key = key
+    if current:
+        segments.append(current)
+    if not segments or not segments[-1]:
+        return []
+    index, out = 100.0, []
+    for row in segments[-1]:
+        index *= row['value'] / 100.0
+        out.append({'period': str(row['period'])[:7], 'value': round(index, 4)})
+    return out
+
+
+def drawdown_from_index(index_rows):
+    """定基指数的峰值回撤:峰值期、当前相对峰值涨跌幅、距峰值月数。"""
+    if not index_rows:
+        return None
+    peak_i = max(range(len(index_rows)), key=lambda i: index_rows[i]['value'])
+    peak, last = index_rows[peak_i], index_rows[-1]
+    return {'peak_period': peak['period'],
+            'drawdown_pct': round((last['value'] / peak['value'] - 1) * 100, 2),
+            'months_since_peak': len(index_rows) - 1 - peak_i}
+
+
+def current_decline_streak(mom_rows):
+    """尾部连续环比<100的月数;>=100(持平或上涨)即中断。"""
+    ordered = sorted((r for r in mom_rows if r.get('value') is not None),
+                     key=lambda r: str(r['period']))
+    streak = 0
+    for row in reversed(ordered):
+        if row['value'] < 100:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def cross_city_dispersion(rows):
+    """按期计算跨城市样本标准差(ddof=1);单城期不计。输入 rows 含 period,value。"""
+    buckets = {}
+    for row in rows:
+        if row.get('value') is not None:
+            buckets.setdefault(str(row['period'])[:7], []).append(row['value'])
+    return [{'period': period, 'value': round(float(np.std(buckets[period], ddof=1)), 4)}
+            for period in sorted(buckets) if len(buckets[period]) >= 2]
+
+
 def vu_ratio_series(vacancy_rows, unemployment_rows):
     """劳动力市场紧张度 V/U = 空缺率/失业率，同月配对，缺月不桥接，分母为0跳过。"""
     keys, values = _align(vacancy_rows, unemployment_rows)
@@ -944,6 +1005,9 @@ def build_housing_analytics(db_path):
         sec_rows = [dict(r) for r in conn.execute(
             "SELECT city,period,value FROM housing_city_observations "
             "WHERE indicator_code='second_home_mom_idx' AND value IS NOT NULL ORDER BY period")]
+        sec_yoy_rows = [dict(r) for r in conn.execute(
+            "SELECT period,value FROM housing_city_observations "
+            "WHERE indicator_code='second_home_yoy_idx' AND value IS NOT NULL ORDER BY period")]
         sales_area_official = _rows(conn, 'housing_national_observations',
                                     'sales_area_ytd_yoy_official')
         sales_area_level = _rows(conn, 'housing_national_observations', 'sales_area_ytd')
@@ -1081,9 +1145,58 @@ def build_housing_analytics(db_path):
         caveats=['分母为全国口径；常用的“/地方一般预算收入”口径因无地方分列数据不做。',
                  '年度描述性指标，不做相关或因果解读。'])
 
+    by_city = {}
+    for row in sec_rows:
+        by_city.setdefault(CITY_RENAMES.get(row['city'], row['city']), []).append(
+            {'period': row['period'], 'value': row['value']})
+    city_table = []
+    for city, rows in by_city.items():
+        stats = drawdown_from_index(chain_mom_index(rows))
+        if stats:
+            city_table.append({'city': city, 'peak_period': stats['peak_period'],
+                               'drawdown': stats['drawdown_pct'],
+                               'months_since_peak': stats['months_since_peak'],
+                               'streak': current_decline_streak(rows)})
+    city_table.sort(key=lambda r: r['drawdown'])
+    if city_table:
+        deepest = city_table[0]
+        median_dd = float(np.median([r['drawdown'] for r in city_table]))
+        declining = sum(1 for r in city_table if r['streak'] > 0)
+        drawdown_item = _item('70城二手累计回撤',
+            (f'70城二手房自各自峰值的中位累计回撤 {median_dd:.1f}%；最深 {deepest["city"]} '
+             f'{deepest["drawdown"]:.1f}%（峰值 {deepest["peak_period"]}）；'
+             f'{declining}/{len(city_table)} 城最新仍在连跌。'),
+            {'cities': city_table,
+             'summary': {'median_drawdown': round(median_dd, 2), 'declining': declining,
+                         'total': len(city_table)}}, [],
+            '官方二手环比指数逐城链式累乘为定基指数(基期=首期前一月=100)，取峰值至今涨跌幅；'
+            '连跌=尾部连续环比<100的月数；缺月断链不桥接',
+            n_obs=len(sec_rows),
+            caveats=['官方不发布定基指数，此为环比链式 derived 估计；环比保留0.1精度，'
+                     '长期累乘存在约±1-2个百分点量级的舍入累积误差。',
+                     '襄樊2010年更名襄阳，两段序列已按同城合并。',
+                     '官方指数为成交结构加权，回撤幅度通常温和于挂牌价口径。'])
+        drawdown_item.update(
+            sample_start=str(min(rows[0]['period'] for rows in by_city.values()))[:7],
+            sample_end=str(max(row['period'] for row in sec_rows))[:7])
+    else:
+        drawdown_item = _item('70城二手累计回撤', '逐城环比序列缺失，未计算。', None, [],
+                              '官方二手环比链式累乘', 'missing')
+
+    dispersion = cross_city_dispersion(sec_yoy_rows)
+    dispersion_item = _position_item('70城同比分化度', dispersion, transform='rate')
+    if dispersion:
+        z = dispersion_item['value'].get('z_score')
+        dispersion_item['conclusion'] = (
+            f'70城二手同比的跨城标准差 {dispersion[-1]["value"]:.2f}，'
+            f'历史分位 {dispersion_item["value"]["percentile"]:.0f}%——'
+            + ('城市间分化偏高，各走各路。' if (z or 0) > 0 else '城市间趋同，同涨同跌。'))
+    dispersion_item['method'] = '每期70城二手同比指数的跨城样本标准差(ddof=1)；高=分化、低=同涨同跌'
+    dispersion_item['caveats'] = ['分化度只计离散程度，不区分涨跌方向。', '统计关联不代表因果。']
+
     return {'positioning': [new_pos, sec_pos, area_pos, land_pos],
-            'analyses': [diverge_item, split_item, sales_price_lag, sales_land_lag,
-                         rolling_item, dependency_item]}
+            'analyses': [diverge_item, split_item, drawdown_item, dispersion_item,
+                         sales_price_lag, sales_land_lag, rolling_item, dependency_item]}
 
 
 def build_macro_analytics_payload(db_path):

@@ -12,6 +12,7 @@ from services.macro_analytics_service import (
     land_fiscal_dependency, preferred_official_yoy, ytd_to_monthly_increment, yoy,
     monotonic_ytd, net_principal_pressure, ratio_series, rollover_dependency,
     beveridge_points, vu_ratio_series,
+    chain_mom_index, cross_city_dispersion, current_decline_streak, drawdown_from_index,
 )
 from services.whats_new_service import make_anomaly_event
 
@@ -176,6 +177,40 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         self.assertEqual(result['latest'], result['points'][-1])
         self.assertEqual(result['latest']['u'], 4.28)
         self.assertIsNone(beveridge_points([], []))
+
+    def test_chain_mom_index_compounds_and_breaks_at_gap(self):
+        rows = [{'period': '2024-01', 'value': 100.0}, {'period': '2024-02', 'value': 101.0},
+                {'period': '2024-03', 'value': 99.0}]
+        chain = chain_mom_index(rows)
+        self.assertEqual([r['value'] for r in chain], [100.0, 101.0, 99.99])
+        # 缺月断链:只保留最后一段连续区间,不跨缺月桥接
+        gapped = rows + [{'period': '2024-06', 'value': 98.0}, {'period': '2024-07', 'value': 100.5}]
+        chain = chain_mom_index(gapped)
+        self.assertEqual([r['period'] for r in chain], ['2024-06', '2024-07'])
+        self.assertEqual(chain[0]['value'], 98.0)
+
+    def test_drawdown_from_index_finds_peak(self):
+        idx = [{'period': '2024-01', 'value': 100.0}, {'period': '2024-02', 'value': 102.0},
+               {'period': '2024-03', 'value': 101.0}, {'period': '2024-04', 'value': 99.0}]
+        stats = drawdown_from_index(idx)
+        self.assertEqual(stats['peak_period'], '2024-02')
+        self.assertAlmostEqual(stats['drawdown_pct'], (99.0 / 102.0 - 1) * 100, places=2)
+        self.assertEqual(stats['months_since_peak'], 2)
+        self.assertIsNone(drawdown_from_index([]))
+
+    def test_decline_streak_counts_tail_and_resets_on_flat(self):
+        rows = [{'period': '2024-01', 'value': 99.0}, {'period': '2024-02', 'value': 100.0},
+                {'period': '2024-03', 'value': 99.5}, {'period': '2024-04', 'value': 99.8}]
+        self.assertEqual(current_decline_streak(rows), 2)  # 100.0(持平)中断更早的下跌
+        rows[-1]['value'] = 100.2
+        self.assertEqual(current_decline_streak(rows), 0)
+
+    def test_cross_city_dispersion_needs_two_cities(self):
+        rows = [{'period': '2024-01', 'value': 98.0}, {'period': '2024-01', 'value': 102.0},
+                {'period': '2024-02', 'value': 100.0}]  # 2月仅1城,不计
+        result = cross_city_dispersion(rows)
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result[0]['value'], 2.8284, places=3)  # std([98,102], ddof=1)
 
     def test_anomaly_probe_triggers_only_above_threshold(self):
         normal = [{'period': f'2020-{i+1:02d}', 'value': float(i % 3)} for i in range(12)]
