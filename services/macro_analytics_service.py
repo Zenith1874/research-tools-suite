@@ -218,6 +218,29 @@ def interest_burden_series(interest_rows, receipt_rows):
             for period, interest, receipts in zip(keys, *values) if receipts]
 
 
+def preferred_official_yoy(official_rows, level_rows):
+    """Use the published comparable-basis YoY whenever present; level-ratio YoY is audit-only."""
+    official = sorted((row for row in official_rows if row.get('value') is not None),
+                      key=lambda row: row['period'])
+    derived = yoy(level_rows, 12)
+    selected = official if official else derived
+    return selected, derived, 'official' if official else ('derived' if derived else 'missing')
+
+
+def land_fiscal_dependency(land_rows, fund_rows, general_rows):
+    """Annual December-only land revenue dependency under two nationwide denominators."""
+    december = lambda rows: [row for row in rows if str(row['period'])[5:7] == '12']
+    keys, values = _align(december(land_rows), december(fund_rows), december(general_rows))
+    fund_share, combined_share = [], []
+    for period, land, fund, general in zip(keys, *values):
+        if fund:
+            fund_share.append({'period': period[:4], 'value': round(land / fund * 100, 4)})
+        if fund + general:
+            combined_share.append({'period': period[:4],
+                                   'value': round(land / (fund + general) * 100, 4)})
+    return fund_share, combined_share
+
+
 LOAN_STOCK_COMPONENTS = (
     ('居民短期', 'loan_hh_st_bal'), ('居民中长期', 'loan_hh_lt_bal'),
     ('企业短期', 'loan_corp_st_bal'), ('企业中长期', 'loan_corp_lt_bal'),
@@ -649,7 +672,51 @@ def build_housing_analytics(db_path):
         sec_rows = [dict(r) for r in conn.execute(
             "SELECT city,period,value FROM housing_city_observations "
             "WHERE indicator_code='second_home_mom_idx' AND value IS NOT NULL ORDER BY period")]
+        sales_area_official = _rows(conn, 'housing_national_observations',
+                                    'sales_area_ytd_yoy_official')
+        sales_area_level = _rows(conn, 'housing_national_observations', 'sales_area_ytd')
+        sales_value_official = _rows(conn, 'housing_national_observations',
+                                     'sales_value_ytd_yoy_official')
+        sales_value_level = _rows(conn, 'housing_national_observations', 'sales_value_ytd')
+        land_official = _rows(conn, 'fiscal_budget_observations',
+                              'govfund_land_transfer_revenue_ytd_yoy_official')
+        land_level = _rows(conn, 'fiscal_budget_observations',
+                           'govfund_land_transfer_revenue_ytd')
+        fund_level = _rows(conn, 'fiscal_budget_observations', 'gov_fund_revenue_ytd')
+        general_level = _rows(conn, 'fiscal_budget_observations', 'general_budget_revenue_ytd')
     new_diff, sec_diff = _diffusion_from_rows(new_rows), _diffusion_from_rows(sec_rows)
+
+    area_yoy, area_derived, area_source = preferred_official_yoy(
+        sales_area_official, sales_area_level)
+    value_yoy, value_derived, value_source = preferred_official_yoy(
+        sales_value_official, sales_value_level)
+    land_yoy, land_derived, land_source = preferred_official_yoy(land_official, land_level)
+
+    def comparison_caveat(official, derived, label):
+        keys, values = _align(official, derived)
+        if not keys:
+            return '累计值直除同比仅作补充；统计范围调整年份与官方可比口径同比存在偏差。'
+        difference = values[0][-1] - values[1][-1]
+        return (f'{keys[-1][:7]}{label}官方同比与累计值直除同比相差 {difference:+.2f} 个百分点；'
+                '统计范围调整年份与官方可比口径同比存在偏差。')
+
+    area_pos = _position_item('商品房销售面积累计同比', area_yoy, transform='rate')
+    area_pos['method'] = ('优先使用国家统计局公布的累计同比（可比口径）；无官方同比时才以同月累计值直除补充；'
+                          f'本卡当前来源={area_source}')
+    area_pos['caveats'] = [comparison_caveat(sales_area_official, area_derived, '销售面积'),
+                           '1-2月合并记为2月，不拆分或桥接1月。', '统计关联不代表因果。']
+    if len(area_yoy) < MONTHLY_MIN_N:
+        area_pos.update(conclusion='月频有效样本不足24期，拒绝定位判断。', value=None,
+                        data_status='insufficient_sample')
+
+    land_pos = _position_item('土地出让收入累计同比', land_yoy, transform='rate')
+    land_pos['method'] = ('优先使用财政部公布的国有土地使用权出让收入累计同比（可比口径）；'
+                          f'无官方同比时才以同月累计值直除补充；本卡当前来源={land_source}')
+    land_pos['caveats'] = [comparison_caveat(land_official, land_derived, '土地出让收入'),
+                           '统计关联不代表因果。']
+    if len(land_yoy) < MONTHLY_MIN_N:
+        land_pos.update(conclusion='月频有效样本不足24期，拒绝定位判断。', value=None,
+                        data_status='insufficient_sample')
 
     new_pos = _position_item('70城新房扩散指数', new_diff, transform='rate')
     n = new_diff[-1] if new_diff else None
@@ -683,7 +750,68 @@ def build_housing_analytics(db_path):
         '一线(北京/上海/广州/深圳)新房扩散指数 − 其余城市扩散指数；四个一线为公认口径',
         caveats=['一线仅4城，扩散指数粒度较粗。', '统计关联不代表因果。'])
 
-    return {'positioning': [new_pos, sec_pos], 'analyses': [diverge_item, split_item]}
+    def lag_item(title, x_rows, y_rows, x_label, y_label):
+        keys, values = _align(x_rows, y_rows)
+        result = (cross_correlation(*values, 12, min_n=MONTHLY_MIN_N) if keys else
+                  {'lags': [], 'peak_lag': None, 'peak_corr': None,
+                   'n': 0, 'data_status': 'insufficient_sample'})
+        conclusion = (
+            f'峰值相关 lag={result["peak_lag"]:+d} 月，r={result["peak_corr"]:.3f}；'
+            f'{"前者领先后者" if result["peak_lag"] > 0 else "前者滞后后者" if result["peak_lag"] < 0 else "两者同步"}。'
+            if result.get('peak_lag') is not None else '共同月频同比样本不足24期，拒绝计算。')
+        item = _item(title, conclusion,
+                     {'peak_lag': result.get('peak_lag'), 'peak_corr': result.get('peak_corr')},
+                     [{'period': row['lag'], 'value': row['r']} for row in result['lags']
+                      if row['r'] is not None],
+                     f'仅用官方累计同比；corr({x_label}[t], {y_label}[t+lag])，lag ±12月；正lag表示前者领先',
+                     result['data_status'], n_obs=result.get('n', 0),
+                     caveats=['领先、滞后与同步相关均不代表因果。'])
+        if keys:
+            item.update(sample_start=keys[0][:7], sample_end=keys[-1][:7])
+        return item
+
+    sales_price_lag = lag_item('销售与房价扩散领先滞后', area_yoy, sec_diff,
+                               '销售面积官方累计同比', '70城二手扩散指数')
+    sales_land_lag = lag_item('销售与土地收入领先滞后', value_yoy, land_yoy,
+                              '销售额官方累计同比', '土地出让收入官方累计同比')
+
+    roll_keys, roll_values = _align(value_yoy, land_yoy)
+    roll = (rolling_corr(*roll_values, window=24, periods=[key[:7] for key in roll_keys])
+            if len(roll_keys) >= 24 else [])
+    rolling_item = _item('销售额与土地收入24月滚动相关',
+        f'最新24月滚动相关为 {roll[-1]["value"]:.3f}。' if roll else '共同月频同比样本不足24期，拒绝计算。',
+        roll[-1]['value'] if roll else None, roll,
+        '销售额官方累计同比与土地出让收入官方累计同比，同月对齐后的24月滚动Pearson相关',
+        'derived' if roll else 'insufficient_sample',
+        n_obs=len(roll_keys),
+        caveats=['滚动相关只描述传导紧密程度变化，不代表因果。'])
+    if roll_keys:
+        rolling_item.update(sample_start=roll_keys[0][:7], sample_end=roll_keys[-1][:7])
+
+    fund_share, combined_share = land_fiscal_dependency(land_level, fund_level, general_level)
+    if fund_share and combined_share:
+        peak = max(fund_share, key=lambda row: row['value'])
+        dependency_conclusion = (
+            f'{fund_share[-1]["period"]}年土地收入占政府性基金收入 {fund_share[-1]["value"]:.1f}%，'
+            f'占两本账收入 {combined_share[-1]["value"]:.1f}%；基金口径峰值为'
+            f'{peak["period"]}年 {peak["value"]:.1f}%。')
+        dependency_status = 'derived'
+    else:
+        dependency_conclusion, dependency_status = '完整年度共同样本缺失。', 'missing'
+    dependency_series = [
+        {'period': row['period'], 'value': row['value'],
+         'combined_share': next((x['value'] for x in combined_share if x['period'] == row['period']), None)}
+        for row in fund_share]
+    dependency_item = _item('土地财政依赖度', dependency_conclusion,
+        {'fund_share': fund_share, 'combined_share': combined_share}, dependency_series,
+        '仅取12月累计：土地出让收入/政府性基金收入，以及土地出让收入/(一般公共预算收入+基金收入)×100',
+        dependency_status,
+        caveats=['分母为全国口径；常用的“/地方一般预算收入”口径因无地方分列数据不做。',
+                 '年度描述性指标，不做相关或因果解读。'])
+
+    return {'positioning': [new_pos, sec_pos, area_pos, land_pos],
+            'analyses': [diverge_item, split_item, sales_price_lag, sales_land_lag,
+                         rolling_item, dependency_item]}
 
 
 def build_macro_analytics_payload(db_path):

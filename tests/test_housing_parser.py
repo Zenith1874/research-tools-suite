@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 import unittest
+import sqlite3
+import tempfile
+from datetime import datetime
+from pathlib import Path
 
 from services.housing_price_service import (
     extract_70city_search_releases, parse_70city_article, parse_dual_column_table,
-    parse_period_from_title, _norm_city,
+    parse_period_from_title, parse_sales_article, parse_sales_period_from_title,
+    ensure_housing_tables, _upsert_sales_release, _norm_city,
 )
 from services.anjuke_city_map import ANJUKE_CITY_SLUGS
 from bs4 import BeautifulSoup
@@ -19,6 +24,48 @@ _TABLE = """
 
 
 class HousingParserTests(unittest.TestCase):
+    def test_sales_article_parses_two_wording_generations_and_signs(self):
+        old = parse_sales_article(
+            '1-12月份，商品房销售面积171654万平方米，同比下降1.8%；'
+            '商品房销售额133308亿元，同比增长4.9%。')
+        self.assertEqual(old, {
+            'sales_area_ytd': 171654.0, 'sales_area_ytd_yoy_official': -1.8,
+            'sales_value_ytd': 133308.0, 'sales_value_ytd_yoy_official': 4.9})
+        new = parse_sales_article(
+            '1—10月份，新建商品房销售面积71982万平方米，同比下降6.8%；'
+            '新建商品房销售额69017亿元，下降9.6%。')
+        self.assertEqual(new['sales_area_ytd_yoy_official'], -6.8)
+        self.assertEqual(new['sales_value_ytd'], 69017.0)
+        self.assertEqual(new['sales_value_ytd_yoy_official'], -9.6)
+
+    def test_sales_article_prefers_precise_national_table_over_regional_prose(self):
+        html = '''
+        <p>商品房销售面积17363万平方米，同比增长1.05倍；
+           商品房销售额19151亿元，增长1.33倍。</p>
+        <p>中部地区商品房销售面积5004万平方米，增长95.1%。</p>
+        <table>
+          <tr><td>商品房销售面积（万平方米）</td><td>17,363</td><td>104.9</td></tr>
+          <tr><td>商品房销售额（亿元）</td><td>19,151</td><td>133.4</td></tr>
+        </table>'''
+        self.assertEqual(parse_sales_article(html), {
+            'sales_area_ytd': 17363.0, 'sales_area_ytd_yoy_official': 104.9,
+            'sales_value_ytd': 19151.0, 'sales_value_ytd_yoy_official': 133.4})
+
+    def test_sales_february_combined_period_and_idempotent_upsert(self):
+        self.assertEqual(parse_sales_period_from_title(
+            '2026年1—2月份全国房地产市场基本情况'), '2026-02')
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / 'x.db')
+            conn = sqlite3.connect(db); ensure_housing_tables(conn)
+            values = {'sales_area_ytd': 100.0, 'sales_area_ytd_yoy_official': -2.0}
+            for _ in range(2):
+                _upsert_sales_release(conn, values, '2026-02', 'https://www.stats.gov.cn/x',
+                                      datetime.now().isoformat())
+                conn.commit()
+            count = conn.execute('SELECT COUNT(*) FROM housing_national_observations').fetchone()[0]
+            conn.close()
+        self.assertEqual(count, 2)
+
     def test_period_from_title(self):
         self.assertEqual(parse_period_from_title('2026年6月份70个大中城市商品住宅销售价格变动情况'), '2026-06')
         self.assertIsNone(parse_period_from_title('其他新闻'))

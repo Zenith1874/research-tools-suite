@@ -10,9 +10,25 @@ from services.fiscal_budget_service import (
 
 
 class FiscalBudgetParserTests(unittest.TestCase):
+    def test_land_transfer_revenue_fullwidth_growth_and_decline(self):
+        decline = parse_budget_report_text(
+            '其中，国有土地使用权出让收入６，８０１亿元，同比下降２７．２０％。')
+        self.assertEqual(decline['govfund_land_transfer_revenue_ytd'], 6801.0)
+        self.assertEqual(decline['govfund_land_transfer_revenue_ytd_yoy_official'], -27.2)
+        growth = parse_budget_report_text(
+            '其中，国有土地使用权出让收入12,345亿元，比上年同期增长10.25%。')
+        self.assertEqual(growth['govfund_land_transfer_revenue_ytd'], 12345.0)
+        self.assertEqual(growth['govfund_land_transfer_revenue_ytd_yoy_official'], 10.25)
+
+    def test_land_revenue_does_not_parse_related_expenditure(self):
+        values = parse_budget_report_text(
+            '国有土地使用权出让收入相关支出53606亿元，同比下降15.4%。')
+        self.assertNotIn('govfund_land_transfer_revenue_ytd', values)
+
     def test_period_parser_accepts_legacy_annual_title(self):
         self.assertEqual(parse_budget_period_from_title('2011年公共财政收支情况'), '2011-12')
         self.assertEqual(parse_budget_period_from_title('2026年1-5月财政收支情况'), '2026-05')
+        self.assertEqual(parse_budget_period_from_title('2024年11月财政收支情况'), '2024-11')
 
     def test_legacy_report_prefers_cumulative_value_over_month_value(self):
         values = parse_budget_report_text('''

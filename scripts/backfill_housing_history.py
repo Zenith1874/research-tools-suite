@@ -3,6 +3,7 @@
 
 示例：
   python scripts/backfill_housing_history.py --source nbs --start-year 2011
+  python scripts/backfill_housing_history.py --source nbs-sales --start-year 2015
   python scripts/backfill_housing_history.py --source anjuke --start-year 2010 --max-requests 90
   python scripts/backfill_housing_history.py --source anjuke-yearly --no-network
 
@@ -24,12 +25,14 @@ from services.anjuke_listing_service import (  # noqa: E402
     update_anjuke_history,
     update_anjuke_yearly_rankings,
 )
-from services.housing_price_service import backfill_housing_city_history  # noqa: E402
+from services.housing_price_service import (  # noqa: E402
+    backfill_housing_city_history, backfill_housing_sales_history,
+)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='回填 2010 起挂牌价与 2011 起官方 70 城指数')
-    parser.add_argument('--source', choices=('anjuke', 'anjuke-yearly', 'nbs'), required=True)
+    parser.add_argument('--source', choices=('anjuke', 'anjuke-yearly', 'nbs', 'nbs-sales'), required=True)
     parser.add_argument('--start-year', type=int)
     parser.add_argument('--end-year', type=int, default=datetime.now().year)
     parser.add_argument('--db-path', help='覆盖默认数据库路径')
@@ -68,13 +71,20 @@ def main():
             cached_path=args.ranking_cache,
             allow_network=not args.no_network,
         )
-    else:
+    elif args.source == 'nbs':
         result = backfill_housing_city_history(
             db_path=args.db_path or os.path.join(ROOT, 'pboc_data.db'),
             start_year=args.start_year or 2011,
             end_year=args.end_year,
             sleep_seconds=args.nbs_sleep,
             workers=args.nbs_workers,
+        )
+    else:
+        result = backfill_housing_sales_history(
+            db_path=args.db_path or os.path.join(ROOT, 'pboc_data.db'),
+            start_year=args.start_year or 2015,
+            end_year=args.end_year,
+            sleep_seconds=args.nbs_sleep,
         )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get('success') else 1

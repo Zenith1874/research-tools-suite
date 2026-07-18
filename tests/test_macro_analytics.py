@@ -9,7 +9,7 @@ from services.macro_analytics_service import (
     build_inversion_analysis, calculate_sahm, cumulative_share, curve_snapshots,
     cross_correlation, _diffusion_from_rows, identify_inversion_episodes,
     interest_burden_series, loan_stock_structure, pct_rank, rolling_z,
-    ytd_to_monthly_increment, yoy,
+    land_fiscal_dependency, preferred_official_yoy, ytd_to_monthly_increment, yoy,
 )
 from services.whats_new_service import make_anomaly_event
 
@@ -78,6 +78,12 @@ class StatisticalPrimitiveTests(unittest.TestCase):
             {'period': '2025-01', 'value': 2}, {'period': '2025-02', 'value': 3},
             {'period': '2025-05', 'value': 3}])
 
+    def test_february_combined_yoy_does_not_invent_january(self):
+        rows = [{'period': '2025-02', 'value': 100}, {'period': '2026-02', 'value': 90}]
+        self.assertEqual(yoy(rows, 12), [{'period': '2026-02', 'value': -10.0}])
+        self.assertEqual(yoy(rows + [{'period': '2026-03', 'value': 95}], 12),
+                         [{'period': '2026-02', 'value': -10.0}])
+
     def test_cumulative_share_requires_both_same_month(self):
         hh = [{'period': '2026-01', 'value': 2}, {'period': '2026-02', 'value': 3}]
         corp = [{'period': '2026-01', 'value': 6}, {'period': '2026-03', 'value': 7}]
@@ -98,6 +104,22 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         receipts = [{'period':'2025-01-01','value':1000}, {'period':'2025-07-01','value':1100}]
         self.assertEqual(interest_burden_series(interest, receipts),
                          [{'period':'2025-01-01','value':10.0}])
+
+    def test_official_yoy_is_preferred_over_level_ratio(self):
+        official = [{'period': '2022-02', 'value': -9.6}]
+        levels = [{'period': '2021-02', 'value': 100}, {'period': '2022-02', 'value': 80}]
+        selected, derived, source = preferred_official_yoy(official, levels)
+        self.assertEqual(selected, official)
+        self.assertEqual(derived[0]['value'], -20.0)
+        self.assertEqual(source, 'official')
+
+    def test_land_dependency_uses_december_only(self):
+        land = [{'period':'2024-11','value':50}, {'period':'2024-12','value':80}]
+        fund = [{'period':'2024-11','value':70}, {'period':'2024-12','value':100}]
+        general = [{'period':'2024-12','value':300}]
+        fund_share, combined = land_fiscal_dependency(land, fund, general)
+        self.assertEqual(fund_share, [{'period':'2024','value':80.0}])
+        self.assertEqual(combined, [{'period':'2024','value':20.0}])
 
     def test_shared_inversion_analysis_supports_both_spreads(self):
         spread = [{'period':f'2025-{m:02d}','value':v} for m,v in enumerate((1,-.2,-.3,1),1)]
@@ -184,6 +206,18 @@ class PayloadContractTests(unittest.TestCase):
         self.assertIn('70城新房扩散指数', titles)
         split = next(i for i in block['analyses'] if i['title'] == '一线-非一线分化')
         self.assertGreater(split['value'], 0)  # 一线扩散(100%) 高于其余(0%)
+
+    def test_housing_triangle_payload_contract_when_data_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'triangle.db'); self._db(path)
+            block = build_macro_analytics_payload(path)['housing']
+        by_title = {item['title']: item for item in block['positioning'] + block['analyses']}
+        for title in ('商品房销售面积累计同比', '土地出让收入累计同比',
+                      '销售与房价扩散领先滞后', '销售与土地收入领先滞后',
+                      '销售额与土地收入24月滚动相关', '土地财政依赖度'):
+            self.assertIn(title, by_title)
+            for field in ('method','sample_start','sample_end','n_obs','data_status'):
+                self.assertIn(field, by_title[title])
 
 
 if __name__ == '__main__':

@@ -11,9 +11,12 @@ import re
 import sqlite3
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from statistics import median
 from urllib.parse import urljoin
+
+import requests
 
 from services.fiscal_debt_service import fetch_url
 
@@ -27,17 +30,24 @@ INDICATORS = {
     'general_budget_balance_ytd': '全国一般公共预算收支差额(YTD)',
     'gov_fund_revenue_ytd': '全国政府性基金预算收入(YTD)',
     'gov_fund_expenditure_ytd': '全国政府性基金预算支出(YTD)',
+    'govfund_land_transfer_revenue_ytd': '国有土地使用权出让收入(YTD)',
+    'govfund_land_transfer_revenue_ytd_yoy_official': '国有土地使用权出让收入同比(官方可比口径)',
     'gov_fund_balance_ytd': '全国政府性基金预算收支差额(YTD)',
     'combined_budget_revenue_ytd': '一般公共预算 + 政府性基金收入(YTD，简单相加)',
     'combined_budget_expenditure_ytd': '一般公共预算 + 政府性基金支出(YTD，简单相加)',
     'combined_budget_balance_ytd': '一般公共预算 + 政府性基金收支差额(YTD，简单相加)',
 }
 
-OFFICIAL_INDICATORS = (
+CORE_OFFICIAL_INDICATORS = (
     'general_budget_revenue_ytd',
     'general_budget_expenditure_ytd',
     'gov_fund_revenue_ytd',
     'gov_fund_expenditure_ytd',
+)
+
+OFFICIAL_INDICATORS = CORE_OFFICIAL_INDICATORS + (
+    'govfund_land_transfer_revenue_ytd',
+    'govfund_land_transfer_revenue_ytd_yoy_official',
 )
 
 FORMULAS = {
@@ -87,6 +97,9 @@ def parse_budget_period_from_title(title):
     m2 = re.search(r'1-(\d{1,2})月', title)
     if m2:
         return f'{year}-{int(m2.group(1)):02d}'
+    direct_month = re.search(r'20\d{2}年(\d{1,2})月份?财政收支情况', title)
+    if direct_month:
+        return f'{year}-{int(direct_month.group(1)):02d}'
     for kw, mm in [('一季度', '03'), ('上半年', '06'), ('前三季度', '09'), ('三季度', '09')]:
         if kw in title:
             return f'{year}-{mm}'
@@ -162,6 +175,14 @@ def parse_budget_report_text(text):
         value = _first_report_value(t, labels)
         if value is not None:
             out[code] = value
+    land_match = re.search(
+        r'国有土地使用权出让收入(?!相关支出)(?:为)?([\d.]+)亿元'
+        r'[^。；;]{0,36}?(?:同比|比上年同期|比上年)(增长|上升|下降)([\d.]+)%', t)
+    if land_match:
+        out['govfund_land_transfer_revenue_ytd'] = float(land_match.group(1))
+        sign = -1 if land_match.group(2) == '下降' else 1
+        out['govfund_land_transfer_revenue_ytd_yoy_official'] = round(
+            sign * float(land_match.group(3)), 4)
     return derive_budget_values(out)
 
 
@@ -169,28 +190,31 @@ def discover_budget_reports(max_pages=4):
     """索引页(含分页 index_1.htm…) -> [(url, title)]，新在前。
     常规增量默认 4 页足够(新报告永远在前几页,历史 2010+ 已入库、有完整性检查兜底);
     全量回填时显式传 max_pages=23。"""
-    links = []
-    for i in range(max_pages):
+    links_by_page = {}
+
+    def fetch_index(i):
         url = INDEX_URL if i == 0 else INDEX_URL.replace('index.htm', f'index_{i}.htm')
-        page_html = None
-        for attempt in range(2):
-            try:
-                page_html = fetch_url(url)
-                break
-            except Exception:
-                if attempt == 0:
-                    time.sleep(0.8)
-        if page_html is None:
+        try:
+            response = requests.get(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': INDEX_URL,
+            }, timeout=10)
+            response.raise_for_status()
+            response.encoding = response.apparent_encoding or 'utf-8'
+            page_html = response.text
+        except Exception:
             # A transient 502 on one historical index page must not hide every
             # older page. Individual report failures are still surfaced later.
-            continue
+            return i, []
         page_links = re.findall(r'href="(\./[^"]+|https?://gks\.mof\.gov\.cn[^"]+)"[^>]*>([^<]*财政收支情况[^<]*)<', page_html)
-        for href, title in page_links:
-            href = urljoin(url, href)
-            links.append((href, title.strip()))
-        if not page_links:
-            continue
-        time.sleep(0.4)
+        return i, [(urljoin(url, href), title.strip()) for href, title in page_links]
+
+    with ThreadPoolExecutor(max_workers=min(4, max(1, int(max_pages)))) as executor:
+        futures = [executor.submit(fetch_index, i) for i in range(max_pages)]
+        for future in as_completed(futures):
+            page, page_links = future.result()
+            links_by_page[page] = page_links
+    links = [item for page in sorted(links_by_page) for item in links_by_page[page]]
     seen, out = set(), []
     for href, title in links:
         if href not in seen:
@@ -216,7 +240,7 @@ def _required_codes_for_period(period):
     return set(INDICATORS)
 
 
-def update_fiscal_budget(db_path, max_reports=30, full_history=False):
+def update_fiscal_budget(db_path, max_reports=30, full_history=False, sleep_seconds=0.5):
     """full_history=True 时深翻 23 页索引(新库重建 2010+ 年度史用);常规增量走默认 4 页。"""
     started = datetime.now().isoformat()
     errors, upserted = [], 0
@@ -230,12 +254,17 @@ def update_fiscal_budget(db_path, max_reports=30, full_history=False):
         ]
         selected_reports = []
         seen_urls = set()
-        # Always retain the annual 2010+ history, then add the most recent YTD
-        # releases for within-year monitoring.
-        for item in annual_reports + reports[:max_reports]:
+        # Full history must include monthly reports, not only annual history and
+        # the latest max_reports slice; otherwise newly added official fields
+        # can never be backfilled into older complete fiscal rows.
+        candidates = ([item for item in reports
+                       if (parse_budget_period_from_title(item[1]) or '0000')[:4] >= '2010']
+                      if full_history else annual_reports + reports[:max_reports])
+        for item in candidates:
             if item[0] not in seen_urls:
                 seen_urls.add(item[0])
                 selected_reports.append(item)
+        pending = []
         for url, title in selected_reports:
             period = parse_budget_period_from_title(title)
             if not period:
@@ -244,27 +273,40 @@ def update_fiscal_budget(db_path, max_reports=30, full_history=False):
                 'SELECT indicator_code FROM fiscal_budget_observations WHERE period=?', (period,))}
             if _required_codes_for_period(period).issubset(existing_codes):
                 continue
-            try:
-                html = fetch_url(url)
-                vals = parse_budget_report_text(html)
-            except Exception as exc:
-                errors.append(f'{title}: {exc}')
-                continue
-            for code, value in vals.items():
-                derived = code not in OFFICIAL_INDICATORS
-                cur = conn.execute('''INSERT INTO fiscal_budget_observations (
-                    indicator_code,indicator_name,period,value,unit,data_status,
-                    source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(indicator_code,period) DO UPDATE SET
-                    value=excluded.value, source_url=excluded.source_url, updated_at=excluded.updated_at''',
-                    (code, INDICATORS[code], period, value, '亿元',
-                     'derived' if derived else 'official', SOURCE_NAME, SOURCE_TYPE, url, title,
-                     '解析自财政部国库司"财政收支情况"报告正文；官方口径为年初至今累计。旧报告名称已标准化但原文保留。',
-                     FORMULAS.get(code),
-                     now))
-                upserted += cur.rowcount
-            time.sleep(0.5)
+            pending.append((period, url, title))
+
+        def fetch_report(item):
+            return parse_budget_report_text(fetch_url(item[1], timeout=10))
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_map = {executor.submit(fetch_report, item): item for item in pending}
+            for future in as_completed(future_map):
+                period, url, title = future_map[future]
+                try:
+                    vals = future.result()
+                except Exception as exc:
+                    errors.append(f'{title}: {exc}')
+                    continue
+                for code, value in vals.items():
+                    derived = code not in OFFICIAL_INDICATORS
+                    unit = '%' if code.endswith('_yoy_official') else '亿元'
+                    parser_notes = (
+                        '解析自财政部国库司“财政收支情况”政府性基金段；官方同比为可比口径。'
+                        if code.startswith('govfund_land_transfer_') else
+                        '解析自财政部国库司"财政收支情况"报告正文；官方口径为年初至今累计。旧报告名称已标准化但原文保留。')
+                    cur = conn.execute('''INSERT INTO fiscal_budget_observations (
+                        indicator_code,indicator_name,period,value,unit,data_status,
+                        source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(indicator_code,period) DO UPDATE SET
+                        value=excluded.value, source_url=excluded.source_url, updated_at=excluded.updated_at''',
+                        (code, INDICATORS[code], period, value, unit,
+                         'derived' if derived else 'official', SOURCE_NAME, SOURCE_TYPE, url, title,
+                         parser_notes, FORMULAS.get(code), now))
+                    upserted += cur.rowcount
+                conn.commit()
+                if sleep_seconds:
+                    time.sleep(float(sleep_seconds))
         conn.commit()
     return {'success': not errors or upserted > 0, 'started_at': started,
             'finished_at': datetime.now().isoformat(), 'records_upserted': upserted,
@@ -281,8 +323,8 @@ def _annual_series(series):
         item['source_period'] = item['period']
         item['year'] = int(item['period'][:4])
         item['period'] = item['period'][:4]
-        official_count = sum(item.get(code) is not None for code in OFFICIAL_INDICATORS)
-        item['data_status'] = 'official' if official_count == len(OFFICIAL_INDICATORS) else 'partial'
+        official_count = sum(item.get(code) is not None for code in CORE_OFFICIAL_INDICATORS)
+        item['data_status'] = 'official' if official_count == len(CORE_OFFICIAL_INDICATORS) else 'partial'
         annual.append(item)
     return annual
 
@@ -316,7 +358,7 @@ def _forecast_row(year, raw_values, scenario_name, method):
 def build_budget_forecast(annual, series, horizon=3):
     """Build three transparent scenarios without writing them as official data."""
     complete = [row for row in annual if all(
-        isinstance(row.get(code), (int, float)) for code in OFFICIAL_INDICATORS)]
+        isinstance(row.get(code), (int, float)) for code in CORE_OFFICIAL_INDICATORS)]
     if not complete:
         return {'data_status': 'missing', 'scenarios': {},
                 'warnings': ['完整年度官方数据不足，未生成财政收支情景。']}
@@ -329,11 +371,11 @@ def build_budget_forecast(annual, series, horizon=3):
     if latest_ytd:
         prior_ytd = by_period.get(f"{int(latest_ytd['period'][:4]) - 1}{latest_ytd['period'][4:]}")
 
-    historical_rates = {code: _historical_growth(complete, code) for code in OFFICIAL_INDICATORS}
+    historical_rates = {code: _historical_growth(complete, code) for code in CORE_OFFICIAL_INDICATORS}
     first_year_rates = dict(historical_rates)
     ytd_rate_codes = []
     if latest_ytd and prior_ytd:
-        for code in OFFICIAL_INDICATORS:
+        for code in CORE_OFFICIAL_INDICATORS:
             current = latest_ytd.get(code)
             previous = prior_ytd.get(code)
             if isinstance(current, (int, float)) and isinstance(previous, (int, float)) and previous:
@@ -348,12 +390,12 @@ def build_budget_forecast(annual, series, horizon=3):
     scenarios = {}
     revenue_codes = {'general_budget_revenue_ytd', 'gov_fund_revenue_ytd'}
     for scenario_code, spec in scenario_specs.items():
-        previous_values = {code: anchor[code] for code in OFFICIAL_INDICATORS}
+        previous_values = {code: anchor[code] for code in CORE_OFFICIAL_INDICATORS}
         rows = []
         for offset in range(1, horizon + 1):
             year = anchor['year'] + offset
             values = {}
-            for code in OFFICIAL_INDICATORS:
+            for code in CORE_OFFICIAL_INDICATORS:
                 base_rate = first_year_rates[code] if offset == 1 else historical_rates[code]
                 adjustment = (spec['revenue_adjustment'] if code in revenue_codes
                               else spec['expenditure_adjustment'])
