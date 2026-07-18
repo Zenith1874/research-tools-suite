@@ -225,6 +225,24 @@ def _annual_budget(conn, code):
     return [row for row in rows if str(row['period'])[5:7] == '12']
 
 
+CITY_TIER1 = ('北京', '上海', '广州', '深圳')
+
+
+def _diffusion_from_rows(rows):
+    """MoM 指数(上月=100 口径)按期统计上涨城市占比，得扩散指数(0-100，50为荣枯线)。"""
+    buckets = {}
+    for row in rows:
+        buckets.setdefault(str(row['period'])[:7], []).append(row['value'])
+    series = []
+    for period in sorted(buckets):
+        vals = buckets[period]
+        up = sum(1 for v in vals if v > 100)
+        down = sum(1 for v in vals if v < 100)
+        series.append({'period': period, 'value': round(up / len(vals) * 100, 2),
+                       'up': up, 'flat': len(vals) - up - down, 'down': down, 'total': len(vals)})
+    return series
+
+
 def build_china_analytics(db_path):
     with closing(_connect(db_path)) as conn:
         m2y = [dict(r) for r in conn.execute('SELECT month period,M2y value FROM monthly_data WHERE M2y IS NOT NULL ORDER BY month')]
@@ -293,7 +311,20 @@ def build_china_analytics(db_path):
             vol.append({'period': returns[i]['period'], 'value': round(value, 4)})
         vol_item = _item('人民币已实现波动率', f'最新21日年化波动率 {vol[-1]["value"]:.2f}%。' if vol else '数据缺失。',
                          vol[-1]['value'] if vol else None, vol, 'USDCNY日对数收益率21日滚动样本标准差 × sqrt(252) × 100')
-    return {'positioning': positioning, 'analyses': [transmission, fiscal, debt_item, spread_item, vol_item]}
+
+        m1y = [dict(r) for r in conn.execute('SELECT month period,M1y value FROM monthly_data WHERE M1y IS NOT NULL ORDER BY month')]
+        keys, vals = _align(m1y, m2y)
+        scissors = [{'period': k, 'value': round(a - b, 4)} for k, a, b in zip(keys, *vals)]
+        sc_status = 'derived' if len(scissors) >= MONTHLY_MIN_N else 'insufficient_sample'
+        sc_val = scissors[-1]['value'] if scissors else None
+        scissors_item = _item('M1-M2剪刀差',
+            (f'最新M1-M2同比剪刀差 {sc_val:.2f} 个百分点，{"资金活化、需求偏强" if sc_val > 0 else "资金活期化走弱、需求偏弱"}。'
+             if scissors and sc_status == 'derived' else ('样本不足24月，拒绝判断。' if scissors else '数据缺失。')),
+            sc_val if sc_status == 'derived' else None, scissors,
+            'M1同比 − M2同比；负值示企业活期存款增速慢于广义货币，常与经济活力偏弱相关', sc_status,
+            caveats=['M1口径2024年含个人活期存款调整，历史可比性有断点。', '统计关联不代表因果。'])
+    return {'positioning': positioning,
+            'analyses': [scissors_item, transmission, fiscal, debt_item, spread_item, vol_item]}
 
 
 def _monthly_average(rows):
@@ -417,8 +448,54 @@ def build_cross_analytics(db_path):
     return {'analyses':[short_item,link,policy,housing]}
 
 
+def build_housing_analytics(db_path):
+    with closing(_connect(db_path)) as conn:
+        new_rows = [dict(r) for r in conn.execute(
+            "SELECT city,period,value FROM housing_city_observations "
+            "WHERE indicator_code='new_home_mom_idx' AND value IS NOT NULL ORDER BY period")]
+        sec_rows = [dict(r) for r in conn.execute(
+            "SELECT city,period,value FROM housing_city_observations "
+            "WHERE indicator_code='second_home_mom_idx' AND value IS NOT NULL ORDER BY period")]
+    new_diff, sec_diff = _diffusion_from_rows(new_rows), _diffusion_from_rows(sec_rows)
+
+    new_pos = _position_item('70城新房扩散指数', new_diff, transform='rate')
+    n = new_diff[-1] if new_diff else None
+    new_pos['conclusion'] = (f'最新70城中 {n["up"]}城新房环比上涨、{n["down"]}城下跌，扩散指数 {n["value"]:.1f}%（50%为荣枯线）。'
+                             if n else '数据缺失。')
+    new_pos['method'] = '每期统计新房环比指数>100(上涨)的城市占比；扩散指数=上涨城市数/总城市数×100，>50示涨多跌少'
+
+    sec_pos = _position_item('70城二手扩散指数', sec_diff, transform='rate')
+    s = sec_diff[-1] if sec_diff else None
+    sec_pos['conclusion'] = (f'最新70城中 {s["up"]}城二手环比上涨、{s["down"]}城下跌，扩散指数 {s["value"]:.1f}%。'
+                             if s else '数据缺失。')
+    sec_pos['method'] = '每期统计二手房环比指数>100的城市占比；口径同新房扩散指数'
+
+    keys, vals = _align(new_diff, sec_diff)
+    diverge = [{'period': k, 'value': round(b - a, 2)} for k, a, b in zip(keys, *vals)]
+    dv = diverge[-1]['value'] if diverge else None
+    diverge_item = _item('新房-二手扩散背离',
+        (f'二手扩散指数减新房 {dv:+.1f} 个百分点，二手市场{"更强" if dv > 0 else "更弱"}；二手更贴近真实供求。'
+         if diverge else '数据缺失。'), dv, diverge,
+        '二手扩散指数 − 新房扩散指数；二手房政策定价扰动小、更贴近市场供求，负值示真实需求弱于一手',
+        caveats=['扩散指数只计涨跌广度，不含涨跌幅度。', '统计关联不代表因果。'])
+
+    tier1 = _diffusion_from_rows([r for r in new_rows if r['city'] in CITY_TIER1])
+    rest = _diffusion_from_rows([r for r in new_rows if r['city'] not in CITY_TIER1])
+    keys, vals = _align(tier1, rest)
+    split = [{'period': k, 'value': round(a - b, 2)} for k, a, b in zip(keys, *vals)]
+    sp = split[-1]['value'] if split else None
+    split_item = _item('一线-非一线分化',
+        (f'一线扩散指数减其余城市 {sp:+.1f} 个百分点，一线{"领先" if sp > 0 else "落后"}于其他城市。'
+         if split else '数据缺失。'), sp, split,
+        '一线(北京/上海/广州/深圳)新房扩散指数 − 其余城市扩散指数；四个一线为公认口径',
+        caveats=['一线仅4城，扩散指数粒度较粗。', '统计关联不代表因果。'])
+
+    return {'positioning': [new_pos, sec_pos], 'analyses': [diverge_item, split_item]}
+
+
 def build_macro_analytics_payload(db_path):
     return {'china':build_china_analytics(db_path),'us':build_us_analytics(db_path),
-            'cross':build_cross_analytics(db_path),'generated_at':datetime.now().isoformat(),
+            'cross':build_cross_analytics(db_path),'housing':build_housing_analytics(db_path),
+            'generated_at':datetime.now().isoformat(),
             'notes':['所有结果均为derived；相关分析只使用同比或差分序列。',
                      '领先相关、滞后相关与同步不代表因果；v1不含预测、VAR、Granger或协整。']}

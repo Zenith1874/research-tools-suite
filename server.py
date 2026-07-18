@@ -1513,7 +1513,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/analytics': self.send_json(_analytics_payload())
-            elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross'):
+            elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing'):
                 self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
             elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
             elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
