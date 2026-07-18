@@ -10,6 +10,16 @@ from services.fiscal_budget_service import (
 
 
 class FiscalBudgetParserTests(unittest.TestCase):
+    def test_budget_interest_expenditure_growth_and_decline(self):
+        growth = parse_budget_report_text(
+            '其中，债务付息支出６，８０１亿元，同比增长２．７５％。')
+        self.assertEqual(growth['budget_interest_expenditure_ytd'], 6801.0)
+        self.assertEqual(growth['budget_interest_expenditure_ytd_yoy_official'], 2.75)
+        decline = parse_budget_report_text(
+            '债务付息支出12345亿元，比上年同期下降10.25%。')
+        self.assertEqual(decline['budget_interest_expenditure_ytd'], 12345.0)
+        self.assertEqual(decline['budget_interest_expenditure_ytd_yoy_official'], -10.25)
+
     def test_land_transfer_revenue_fullwidth_growth_and_decline(self):
         decline = parse_budget_report_text(
             '其中，国有土地使用权出让收入６，８０１亿元，同比下降２７．２０％。')

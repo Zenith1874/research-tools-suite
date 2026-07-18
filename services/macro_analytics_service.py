@@ -218,6 +218,40 @@ def interest_burden_series(interest_rows, receipt_rows):
             for period, interest, receipts in zip(keys, *values) if receipts]
 
 
+def ratio_series(numerator_rows, denominator_rows):
+    """Same-period percentage ratio; zero denominators and missing periods are skipped."""
+    keys, values = _align(numerator_rows, denominator_rows)
+    return [{'period': period[:7], 'value': round(numerator / denominator * 100, 4)}
+            for period, numerator, denominator in zip(keys, *values) if denominator]
+
+
+def rollover_dependency(new_rows, refinancing_rows):
+    """Refinancing share of local-government bond issuance, same-period YTD."""
+    keys, values = _align(new_rows, refinancing_rows)
+    return [{'period': period[:7], 'value': round(refi / (new + refi) * 100, 4)}
+            for period, new, refi in zip(keys, *values) if new + refi]
+
+
+def net_principal_pressure(principal_rows, refinancing_rows):
+    """Principal due less refinancing issuance; negative values are valid."""
+    keys, values = _align(principal_rows, refinancing_rows)
+    return [{'period': period[:7], 'value': round(principal - refi, 4)}
+            for period, principal, refi in zip(keys, *values)]
+
+
+def monotonic_ytd(rows):
+    """Drop within-year decreases that reveal a current-month/YTD parser mismatch."""
+    result, previous = [], {}
+    for row in sorted(rows, key=lambda item: item['period']):
+        year = str(row['period'])[:4]
+        value = row.get('value')
+        if value is None or (year in previous and value < previous[year]):
+            continue
+        result.append(row)
+        previous[year] = value
+    return result
+
+
 def preferred_official_yoy(official_rows, level_rows):
     """Use the published comparable-basis YoY whenever present; level-ratio YoY is audit-only."""
     official = sorted((row for row in official_rows if row.get('value') is not None),
@@ -345,6 +379,12 @@ def _quarter_end_monthly(rows):
 def _annual_budget(conn, code):
     rows = _rows(conn, 'fiscal_budget_observations', code)
     return [row for row in rows if str(row['period'])[5:7] == '12']
+
+
+def _annual_budget_like_debt(conn, code):
+    return [dict(row) for row in conn.execute('''SELECT period,value FROM fiscal_debt_observations
+        WHERE indicator_code=? AND value IS NOT NULL AND substr(period,6,2)='12'
+        ORDER BY period''', (code,))]
 
 
 CITY_TIER1 = ('北京', '上海', '广州', '深圳')
@@ -661,7 +701,140 @@ def build_cross_analytics(db_path):
             housing.update(sample_start=keys[0], sample_end=keys[-1])
         short_item=_item('中美短端利差',f'最新SHIBOR 3M－3M美债为 {short[-1]["value"]:.2f} 个百分点。' if short else '数据缺失。',
                          short[-1]['value'] if short else None,short,'SHIBOR_3M月末 − DGS3MO月均；资金利率与国债收益率口径不同')
-    return {'analyses':[short_item,link,policy,housing]}
+        china_interest = _annual_budget(conn, 'budget_interest_expenditure_ytd')
+        china_revenue = _annual_budget(conn, 'general_budget_revenue_ytd')
+        china_burden = ratio_series(china_interest, china_revenue)
+        us_interest = _rows(conn, 'us_macro_observations', 'A091RC1Q027SBEA')
+        us_receipts = _rows(conn, 'us_macro_observations', 'FGRECPT')
+        us_quarterly = interest_burden_series(us_interest, us_receipts)
+        us_annual = {}
+        for row in us_quarterly:
+            us_annual[str(row['period'])[:4]] = row['value']
+        china_map = {str(row['period'])[:4]: row['value'] for row in china_burden}
+        burden_years = sorted(set(china_map) & set(us_annual))
+        burden_compare = [{'period': year + '-12-01', 'value': china_map[year],
+                           'china': china_map[year], 'us': us_annual[year]}
+                          for year in burden_years]
+        burden_comparison = _item('中美付息负担对照',
+            (f'最新共同年中国 {burden_compare[-1]["china"]:.2f}%，'
+             f'美国 {burden_compare[-1]["us"]:.2f}%。' if burden_compare else '共同年度样本缺失。'),
+            burden_compare[-1] if burden_compare else None, burden_compare,
+            '中国=全国一般公共预算债务付息支出/收入（现金YTD的12月点）；'
+            '美国=BEA NIPA A091RC1Q027SBEA/FGRECPT（各年最后可用季度）',
+            'derived' if burden_compare else 'missing',
+            caveats=['中国口径不含专项债在政府性基金预算中的付息。',
+                     '中国是财政现金YTD口径，美国是NIPA应计口径，数值不完全同口径。'])
+    return {'analyses':[short_item,link,policy,housing,burden_comparison]}
+
+
+def build_debt_analytics(db_path):
+    with closing(_connect(db_path)) as conn:
+        def debt_rows(code):
+            return [dict(row) for row in conn.execute('''SELECT period,value FROM fiscal_debt_observations
+                WHERE indicator_code=? AND value IS NOT NULL AND source_type='mof_local_debt'
+                ORDER BY period''', (code,))]
+
+        interest = _rows(conn, 'fiscal_budget_observations', 'budget_interest_expenditure_ytd')
+        revenue = _rows(conn, 'fiscal_budget_observations', 'general_budget_revenue_ytd')
+        fund_revenue = _rows(conn, 'fiscal_budget_observations', 'gov_fund_revenue_ytd')
+        land_revenue = _rows(conn, 'fiscal_budget_observations', 'govfund_land_transfer_revenue_ytd')
+        since_2019 = lambda rows: [row for row in monotonic_ytd(rows)
+                                   if str(row['period'])[:4] >= '2019']
+        new_issuance = since_2019(debt_rows('local_new_bond_issuance_ytd'))
+        refinancing = since_2019(debt_rows('local_refinancing_bond_issuance_ytd'))
+        principal = since_2019(debt_rows('official_principal_repayment_ytd'))
+        local_interest = since_2019(debt_rows('official_interest_payment_ytd'))
+        issue_rate = debt_rows('local_bond_avg_issue_rate') or debt_rows('local_bond_avg_interest_rate')
+
+        burden = ratio_series(interest, revenue)
+        annual_burden = [row for row in burden if row['period'][5:7] == '12']
+        if annual_burden:
+            five_year = next((row for row in reversed(annual_burden)
+                              if int(annual_burden[-1]['period'][:4]) - int(row['period'][:4]) >= 5), None)
+            compare = (f'，较5年前 {annual_burden[-1]["value"]-five_year["value"]:+.2f} 个百分点'
+                       if five_year else '')
+            burden_conclusion = f'{annual_burden[-1]["period"][:4]}年付息负担率 {annual_burden[-1]["value"]:.2f}%{compare}。'
+        else:
+            burden_conclusion = '完整年度数据缺失。'
+        burden_item = _item('全国一般预算付息负担率', burden_conclusion,
+            annual_burden[-1]['value'] if annual_burden else None, burden,
+            '债务付息支出YTD/全国一般公共预算收入YTD×100；月度同月对齐，年度水平只取12月点',
+            'derived' if burden else 'missing', caveats=['不含专项债在政府性基金预算中的付息。'])
+
+        dependency = rollover_dependency(new_issuance, refinancing)
+        dependency_item = _position_item('地方债借新还旧依赖度', dependency, transform='rate')
+        dependency_item['method'] = '再融资债券YTD/(新增债券YTD+再融资债券YTD)×100；同期官方累计值'
+        dependency_item['caveats'] = ['再融资债券不等于全部到期本金，本指标表示发行结构中的滚续依赖。',
+                                       '2019年历史稿把置换债和再融资债合并披露，该段按官方合并口径保留。']
+        if len(dependency) < MONTHLY_MIN_N:
+            dependency_item.update(data_status='insufficient_sample',
+                                   conclusion='月频有效样本不足24期，仅展示已有值。')
+
+        net_pressure = net_principal_pressure(principal, refinancing)
+        net_item = _item('地方债净偿还压力',
+            (f'最新到期本金减再融资发行为 {net_pressure[-1]["value"]:.0f} 亿元。'
+             if net_pressure else '数据缺失。'),
+            net_pressure[-1]['value'] if net_pressure else None, net_pressure,
+            '地方债到期偿还本金YTD − 再融资债券发行YTD；负值表示再融资发行超过已披露到期本金')
+
+        interest_fund = ratio_series(local_interest, fund_revenue)
+        interest_land = ratio_series(local_interest, land_revenue)
+        service_rows = []
+        fund_map = {row['period']: row['value'] for row in interest_fund}
+        land_map = {row['period']: row['value'] for row in interest_land}
+        for period in sorted(set(fund_map) | set(land_map)):
+            service_rows.append({'period': period, 'value': fund_map.get(period),
+                                 'fund': fund_map.get(period), 'land': land_map.get(period)})
+        service_latest = service_rows[-1] if service_rows else None
+        service_item = _item('地方债付息与基金收入承受力',
+            (f'最新地方债付息占基金收入 {service_latest["fund"]:.2f}%'
+             + (f'，占土地出让收入 {service_latest["land"]:.2f}%。' if service_latest.get('land') is not None else '。')
+             if service_latest and service_latest.get('fund') is not None else '同期分子分母数据缺失。'),
+            service_latest, service_rows,
+            '地方政府债券付息YTD/全国政府性基金收入YTD；若有土地出让收入则同时计算其比率',
+            'derived' if service_rows else 'missing',
+            caveats=['分子含一般债与专项债付息，分母是全国政府性基金/土地收入，是口径妥协，不是专项债独立付息率。'])
+
+        rate_item = _position_item('地方债发行成本', issue_rate, transform='rate')
+        rate_item['method'] = ('优先使用月报年初至今平均发行利率；历史稿未解析发行口径时，'
+                               '仅以月末存量平均利率作展示，两者不混合解读')
+
+        central = _annual_budget_like_debt(conn, 'central_government_debt_balance')
+        local = _annual_budget_like_debt(conn, 'local_debt_balance_total')
+        general_annual = _annual_budget(conn, 'general_budget_revenue_ytd')
+        fund_annual = _annual_budget(conn, 'gov_fund_revenue_ytd')
+        keys, values = _align(central, local, general_annual, fund_annual)
+        debt_capacity = [{'period': key[:4], 'value': round((c + l) / (g + f), 4)}
+                         for key, c, l, g, f in zip(keys, *values) if g + f]
+        capacity_item = _item('政府债务余额/综合财力',
+            (f'{debt_capacity[-1]["period"]}年显性债务余额为两本账收入 {debt_capacity[-1]["value"]:.2f} 倍。'
+             if debt_capacity else '中央债务史短，暂无完整同期年度点。'),
+            debt_capacity[-1]['value'] if debt_capacity else None, debt_capacity,
+            '(中央政府债务余额+地方政府债务余额)/(一般公共预算收入+政府性基金收入)；只取12月同期点',
+            'derived' if debt_capacity else 'insufficient_sample',
+            caveats=['中央债务官方序列2024年起，样本极少，只报最新点，不作趋势判断。'])
+
+        latest_revenue = general_annual[-1]['value'] if general_annual else None
+        latest_revenue_year = general_annual[-1]['period'][:4] if general_annual else None
+        start_year = datetime.now().year
+        maturity = [dict(row) for row in conn.execute('''SELECT maturity_year period,
+            SUM(actual_issue_amount) value FROM mof_treasury_bond_issuances
+            WHERE maturity_year BETWEEN ? AND ? AND actual_issue_amount IS NOT NULL
+            GROUP BY maturity_year ORDER BY maturity_year''', (start_year, start_year + 4))]
+        due_total = sum(row['value'] for row in maturity)
+        due_ratio = due_total / latest_revenue if latest_revenue else None
+        treasury_item = _item('未来五年国债到期壁',
+            (f'已抓取国债未来五年到期 {due_total:.0f} 亿元，相当于'
+             f'{latest_revenue_year}年一般预算收入 {due_ratio:.2f} 倍。'
+             if maturity and due_ratio is not None else '国债到期表或年度收入缺失。'),
+            {'maturity_total': due_total, 'revenue_multiple': due_ratio}, maturity,
+            f'已抓取逐只国债{start_year}-{start_year+4}年actual_issue_amount按到期年汇总/最新年度一般预算收入',
+            'derived' if maturity and due_ratio is not None else 'missing',
+            caveats=['只覆盖已抓取的2024年起逐只国债，非全部存量到期表；票息付息仅可作下限估计。'])
+
+    return {'positioning': [dependency_item, rate_item],
+            'analyses': [burden_item, net_item, service_item, capacity_item, treasury_item],
+            'notes': ['城投等企业信用类政府关联债务无官方认定口径，本页仅覆盖政府债券，不提供城投债数字。']}
 
 
 def build_housing_analytics(db_path):
@@ -817,6 +990,7 @@ def build_housing_analytics(db_path):
 def build_macro_analytics_payload(db_path):
     return {'china':build_china_analytics(db_path),'us':build_us_analytics(db_path),
             'cross':build_cross_analytics(db_path),'housing':build_housing_analytics(db_path),
+            'debt':build_debt_analytics(db_path),
             'generated_at':datetime.now().isoformat(),
             'notes':['所有结果均为derived；相关分析只使用同比或差分序列。',
                      '领先相关、滞后相关与同步不代表因果；v1不含预测、VAR、Granger或协整。']}

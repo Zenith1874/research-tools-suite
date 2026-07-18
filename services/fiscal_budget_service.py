@@ -32,6 +32,8 @@ INDICATORS = {
     'gov_fund_expenditure_ytd': '全国政府性基金预算支出(YTD)',
     'govfund_land_transfer_revenue_ytd': '国有土地使用权出让收入(YTD)',
     'govfund_land_transfer_revenue_ytd_yoy_official': '国有土地使用权出让收入同比(官方可比口径)',
+    'budget_interest_expenditure_ytd': '全国债务付息支出(YTD)',
+    'budget_interest_expenditure_ytd_yoy_official': '全国债务付息支出同比(官方可比口径)',
     'gov_fund_balance_ytd': '全国政府性基金预算收支差额(YTD)',
     'combined_budget_revenue_ytd': '一般公共预算 + 政府性基金收入(YTD，简单相加)',
     'combined_budget_expenditure_ytd': '一般公共预算 + 政府性基金支出(YTD，简单相加)',
@@ -48,6 +50,8 @@ CORE_OFFICIAL_INDICATORS = (
 OFFICIAL_INDICATORS = CORE_OFFICIAL_INDICATORS + (
     'govfund_land_transfer_revenue_ytd',
     'govfund_land_transfer_revenue_ytd_yoy_official',
+    'budget_interest_expenditure_ytd',
+    'budget_interest_expenditure_ytd_yoy_official',
 )
 
 FORMULAS = {
@@ -183,6 +187,14 @@ def parse_budget_report_text(text):
         sign = -1 if land_match.group(2) == '下降' else 1
         out['govfund_land_transfer_revenue_ytd_yoy_official'] = round(
             sign * float(land_match.group(3)), 4)
+    interest_match = re.search(
+        r'债务付息支出(?:为)?([\d.]+)亿元'
+        r'[^。；;]{0,36}?(?:同比|比上年同期|比上年)(增长|上升|下降)([\d.]+)%', t)
+    if interest_match:
+        out['budget_interest_expenditure_ytd'] = float(interest_match.group(1))
+        sign = -1 if interest_match.group(2) == '下降' else 1
+        out['budget_interest_expenditure_ytd_yoy_official'] = round(
+            sign * float(interest_match.group(3)), 4)
     return derive_budget_values(out)
 
 
@@ -248,6 +260,15 @@ def update_fiscal_budget(db_path, max_reports=30, full_history=False, sleep_seco
     with connect(db_path) as conn:
         ensure_fiscal_budget_tables(conn)
         now = datetime.now().isoformat()
+        # Reuse every official report URL already attached to observations.
+        # This is essential when an archive index temporarily omits/502s an
+        # older page after a new field is added to the parser.
+        report_map = {url: title for url, title in reports}
+        for row in conn.execute('''SELECT source_url,MAX(source_title) FROM fiscal_budget_observations
+            WHERE source_url LIKE 'http%' GROUP BY source_url'''):
+            if row[0] and row[1]:
+                report_map.setdefault(row[0], row[1])
+        reports = [(url, title) for url, title in report_map.items()]
         annual_reports = [
             item for item in reports
             if _is_annual_report(item[1]) and int(item[1][:4]) >= 2010
@@ -293,6 +314,8 @@ def update_fiscal_budget(db_path, max_reports=30, full_history=False, sleep_seco
                     parser_notes = (
                         '解析自财政部国库司“财政收支情况”政府性基金段；官方同比为可比口径。'
                         if code.startswith('govfund_land_transfer_') else
+                        '解析自财政部国库司“财政收支情况”一般公共预算支出分项；为中央+地方合计、不含专项债付息，官方同比为可比口径。'
+                        if code.startswith('budget_interest_expenditure_') else
                         '解析自财政部国库司"财政收支情况"报告正文；官方口径为年初至今累计。旧报告名称已标准化但原文保留。')
                     cur = conn.execute('''INSERT INTO fiscal_budget_observations (
                         indicator_code,indicator_name,period,value,unit,data_status,

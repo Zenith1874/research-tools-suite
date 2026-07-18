@@ -10,6 +10,7 @@ from services.macro_analytics_service import (
     cross_correlation, _diffusion_from_rows, identify_inversion_episodes,
     interest_burden_series, loan_stock_structure, pct_rank, rolling_z,
     land_fiscal_dependency, preferred_official_yoy, ytd_to_monthly_increment, yoy,
+    monotonic_ytd, net_principal_pressure, ratio_series, rollover_dependency,
 )
 from services.whats_new_service import make_anomaly_event
 
@@ -105,6 +106,19 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         self.assertEqual(interest_burden_series(interest, receipts),
                          [{'period':'2025-01-01','value':10.0}])
 
+    def test_debt_service_ratios_and_rollover_formulas(self):
+        new = [{'period': '2025-01', 'value': 60}, {'period': '2025-02', 'value': 0}]
+        refi = [{'period': '2025-01', 'value': 40}, {'period': '2025-02', 'value': 0}]
+        principal = [{'period': '2025-01', 'value': 30}, {'period': '2025-02', 'value': 10}]
+        self.assertEqual(rollover_dependency(new, refi),
+                         [{'period': '2025-01', 'value': 40.0}])
+        self.assertEqual(net_principal_pressure(principal, refi)[0]['value'], -10)
+        self.assertEqual(ratio_series(principal, new)[0]['value'], 50.0)
+        self.assertEqual(monotonic_ytd([
+            {'period': '2019-03', 'value': 100}, {'period': '2019-04', 'value': 10},
+            {'period': '2019-05', 'value': 120}]),
+            [{'period': '2019-03', 'value': 100}, {'period': '2019-05', 'value': 120}])
+
     def test_official_yoy_is_preferred_over_level_ratio(self):
         official = [{'period': '2022-02', 'value': -9.6}]
         levels = [{'period': '2021-02', 'value': 100}, {'period': '2022-02', 'value': 80}]
@@ -157,10 +171,11 @@ class PayloadContractTests(unittest.TestCase):
           loan_corp_lt_bal REAL,loan_bill_bal REAL,loan_nbfi_bal REAL);
         CREATE TABLE china_rates_observations(indicator_code TEXT,period TEXT,value REAL);
         CREATE TABLE fiscal_budget_observations(indicator_code TEXT,period TEXT,value REAL);
-        CREATE TABLE fiscal_debt_observations(indicator_code TEXT,period TEXT,value REAL);
+        CREATE TABLE fiscal_debt_observations(indicator_code TEXT,period TEXT,value REAL,source_type TEXT);
         CREATE TABLE housing_national_observations(indicator_code TEXT,period TEXT,value REAL);
         CREATE TABLE housing_city_observations(city TEXT,period TEXT,indicator_code TEXT,value REAL);
         CREATE TABLE us_macro_observations(indicator_code TEXT,period TEXT,value REAL);
+        CREATE TABLE mof_treasury_bond_issuances(maturity_year INTEGER,actual_issue_amount REAL);
         ''')
         conn.commit(); conn.close()
 
@@ -168,7 +183,7 @@ class PayloadContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / 'x.db'); self._db(path)
             payload = build_macro_analytics_payload(path)
-        for section in ('china', 'us', 'cross', 'housing'):
+        for section in ('china', 'us', 'cross', 'housing', 'debt'):
             for item in payload[section].get('positioning', []) + payload[section].get('analyses', []):
                 for key in ('method','sample_start','sample_end','n_obs','data_status'):
                     self.assertIn(key, item)
@@ -218,6 +233,20 @@ class PayloadContractTests(unittest.TestCase):
             self.assertIn(title, by_title)
             for field in ('method','sample_start','sample_end','n_obs','data_status'):
                 self.assertIn(field, by_title[title])
+
+    def test_debt_payload_contract_and_route_when_data_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'debt-empty.db'); self._db(path)
+            block = build_macro_analytics_payload(path)['debt']
+        by_title = {item['title']: item for item in block['positioning'] + block['analyses']}
+        for title in ('全国一般预算付息负担率', '地方债借新还旧依赖度',
+                      '地方债净偿还压力', '地方债付息与基金收入承受力',
+                      '政府债务余额/综合财力', '未来五年国债到期壁'):
+            self.assertIn(title, by_title)
+            for field in ('method', 'sample_start', 'sample_end', 'n_obs', 'data_status'):
+                self.assertIn(field, by_title[title])
+        server = (Path(__file__).resolve().parents[1] / 'server.py').read_text(encoding='utf-8')
+        self.assertIn("'/api/analytics/debt'", server)
 
 
 if __name__ == '__main__':
