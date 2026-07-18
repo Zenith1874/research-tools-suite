@@ -158,6 +158,105 @@ def identify_inversion_episodes(rows, min_months=2):
     return episodes
 
 
+def ytd_to_monthly_increment(rows):
+    """Convert YTD values to monthly increments without bridging gaps or years."""
+    ordered = sorted((r for r in rows if r.get('value') is not None), key=lambda r: r['period'])
+    lookup = {str(r['period'])[:7]: r['value'] for r in ordered}
+    result = []
+    for period in sorted(lookup):
+        month = int(period[5:7])
+        if month == 1:
+            result.append({'period': period, 'value': lookup[period]})
+            continue
+        previous = _shift_month(period, -1)
+        if previous in lookup and previous[:4] == period[:4]:
+            result.append({'period': period, 'value': round(lookup[period] - lookup[previous], 6)})
+    return result
+
+
+def cumulative_share(household_rows, corporate_rows):
+    """Same-month YTD household share; missing sides and zero denominators are skipped."""
+    keys, values = _align(household_rows, corporate_rows)
+    result = []
+    for period, household, corporate in zip(keys, *values):
+        denominator = household + corporate
+        if denominator:
+            result.append({'period': period[:7],
+                           'value': round(household / denominator * 100, 4),
+                           'household': household, 'corporate': corporate})
+    return result
+
+
+def calendar_difference(rows, months):
+    """Calendar-aligned level/rate difference; never bridges missing months."""
+    lookup = {str(r['period'])[:7]: r['value'] for r in rows if r.get('value') is not None}
+    return [{'period': period, 'value': round(lookup[period] - lookup[_shift_month(period, -months)], 6)}
+            for period in sorted(lookup) if _shift_month(period, -months) in lookup]
+
+
+def curve_snapshots(series_by_tenor):
+    """Return five-tenor snapshots at latest common month, 3m ago and 12m ago."""
+    tenors = list(series_by_tenor)
+    if not tenors or any(not series_by_tenor[t] for t in tenors):
+        return None
+    maps = {t: {str(r['period'])[:7]: r['value'] for r in series_by_tenor[t]} for t in tenors}
+    common = sorted(set.intersection(*(set(m) for m in maps.values())))
+    for latest in reversed(common):
+        periods = {'latest': latest, 'm3_ago': _shift_month(latest, -3), 'y1_ago': _shift_month(latest, -12)}
+        if all(all(period in maps[t] for t in tenors) for period in periods.values()):
+            return {'tenors': tenors,
+                    'latest': [maps[t][periods['latest']] for t in tenors],
+                    'm3_ago': [maps[t][periods['m3_ago']] for t in tenors],
+                    'y1_ago': [maps[t][periods['y1_ago']] for t in tenors],
+                    'periods': periods}
+    return None
+
+
+def interest_burden_series(interest_rows, receipt_rows):
+    keys, values = _align(interest_rows, receipt_rows)
+    return [{'period': period, 'value': round(interest / receipts * 100, 4)}
+            for period, interest, receipts in zip(keys, *values) if receipts]
+
+
+LOAN_STOCK_COMPONENTS = (
+    ('居民短期', 'loan_hh_st_bal'), ('居民中长期', 'loan_hh_lt_bal'),
+    ('企业短期', 'loan_corp_st_bal'), ('企业中长期', 'loan_corp_lt_bal'),
+    ('票据', 'loan_bill_bal'), ('非银', 'loan_nbfi_bal'),
+)
+
+
+def loan_stock_structure(row):
+    """Latest descriptive loan-stock composition; requires total and all six components."""
+    if not row or row.get('loan') in (None, 0) or any(row.get(column) is None for _, column in LOAN_STOCK_COMPONENTS):
+        return None
+    total = row['loan']
+    return [{'label': label, 'value': round(row[column] / total * 100, 4), 'amount': row[column]}
+            for label, column in LOAN_STOCK_COMPONENTS]
+
+
+def build_inversion_analysis(spread_rows, recession_rows, title, series_code, sample_note=''):
+    """Shared empirical inversion table for any monthly Treasury spread."""
+    rec_map = {str(r['period'])[:7]: int(r['value']) for r in recession_rows}
+    episodes = identify_inversion_episodes(spread_rows)
+    horizons = (6, 12, 18, 24)
+    for episode in episodes:
+        episode['recession_after'] = {
+            str(h): bool(max(rec_map.get(_shift_month(episode['end'], m), 0) for m in range(1, h + 1)))
+            for h in horizons
+        }
+    frequency = {
+        str(h): {'hits': sum(ep['recession_after'][str(h)] for ep in episodes),
+                 'episodes': len(episodes),
+                 'frequency': round(sum(ep['recession_after'][str(h)] for ep in episodes) / len(episodes) * 100, 1)
+                              if episodes else None}
+        for h in horizons
+    }
+    return _item(title, f'识别到 {len(episodes)} 个持续至少2个月的倒挂区间。',
+                 {'episodes': episodes, 'frequency': frequency}, spread_rows,
+                 f'{series_code}日频按月均值；<0连续至少2月；检查结束后6/12/18/24月USREC；'
+                 f'仅报经验频率{sample_note}')
+
+
 def _connect(path):
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -253,8 +352,12 @@ def build_china_analytics(db_path):
         shibor1y = _monthly_last(_rows(conn, 'china_rates_observations', 'SHIBOR_1Y'))
         fx_daily = _rows(conn, 'china_rates_observations', 'USDCNY_CENTRAL_PARITY')
         fx_monthly = _monthly_last(fx_daily)
+        sf_position = _position_item('社融存量同比定位', sfy, transform='rate')
+        if len(sfy) < MONTHLY_MIN_N:
+            sf_position.update(conclusion='月频有效样本不足24期，拒绝定位判断。', value=None,
+                               data_status='insufficient_sample')
         positioning = [_position_item('M2 同比定位', m2y, transform='rate'),
-                       _position_item('社融存量同比定位', sfy, transform='rate'),
+                       sf_position,
                        _position_item('贷款余额同比定位', loany, transform='rate'),
                        _position_item('LPR 1Y 定位', lpr, transform='rate'),
                        _position_item('SHIBOR 3M 定位', shibor3, transform='rate'),
@@ -323,8 +426,65 @@ def build_china_analytics(db_path):
             sc_val if sc_status == 'derived' else None, scissors,
             'M1同比 − M2同比；负值示企业活期存款增速慢于广义货币，常与经济活力偏弱相关', sc_status,
             caveats=['M1口径2024年含个人活期存款调整，历史可比性有断点。', '统计关联不代表因果。'])
+
+        loan_acceleration = calendar_difference(loany, 12)
+        loany_map = {str(row['period'])[:7]: row['value'] for row in loany}
+        latest_loan_period = str(loany[-1]['period'])[:7] if loany else None
+        prior_3m = loany_map.get(_shift_month(latest_loan_period, -3)) if latest_loan_period else None
+        delta_3m = loany[-1]['value'] - prior_3m if loany and prior_3m is not None else None
+        momentum_status = 'derived' if len(loany) >= MONTHLY_MIN_N else 'insufficient_sample'
+        loan_momentum = _item('贷款增速动量',
+            (f'贷款余额同比 {loany[-1]["value"]:.2f}%，较3个月前 {delta_3m:+.2f} 个百分点，'
+             f'较12个月前 {loan_acceleration[-1]["value"]:+.2f} 个百分点。'
+             if loany and delta_3m is not None and loan_acceleration else '贷款增速样本不足，拒绝动量判断。'),
+            {'current': loany[-1]['value'] if loany else None,
+             'delta_3m': delta_3m,
+             'delta_12m': loan_acceleration[-1]['value'] if loan_acceleration else None},
+            loan_acceleration, '贷款余额同比当前值；Δ3月/Δ12月均为百分点差；图示整条12月差分序列', momentum_status)
+
+        hh_ytd = [dict(r) for r in conn.execute(
+            'SELECT month period,loan_hh_ytd value FROM monthly_data WHERE loan_hh_ytd IS NOT NULL ORDER BY month')]
+        corp_ytd = [dict(r) for r in conn.execute(
+            'SELECT month period,loan_corp_ytd value FROM monthly_data WHERE loan_corp_ytd IS NOT NULL ORDER BY month')]
+        hh_share = cumulative_share(hh_ytd, corp_ytd)
+        share_status = 'derived' if len(hh_share) >= MONTHLY_MIN_N else 'insufficient_sample'
+        share_value = hh_share[-1]['value'] if hh_share else None
+        share_item = _item('新增贷款居民占比',
+            (f'居民贷款占居民与企业累计新增贷款 {share_value:.2f}%，处历史第 {pct_rank(hh_share, share_value):.1f} 百分位。'
+             if hh_share and share_status == 'derived' else '同月双列共同样本不足24月，拒绝判断。'),
+            {'current': share_value, 'percentile': pct_rank(hh_share, share_value) if hh_share else None},
+            hh_share, 'loan_hh_ytd / (loan_hh_ytd + loan_corp_ytd) × 100；同月年初以来累计口径', share_status,
+            caveats=['分母未含票据与非银；居民早偿会压低净新增甚至为负。', '统计关联不代表因果。'])
+
+        hh_lt_ytd = [dict(r) for r in conn.execute(
+            'SELECT month period,loan_hh_lt_ytd value FROM monthly_data WHERE loan_hh_lt_ytd IS NOT NULL ORDER BY month')]
+        hh_lt_yoy = yoy(hh_lt_ytd, 12)
+        hh_lt_status = 'derived' if len(hh_lt_yoy) >= MONTHLY_MIN_N else 'insufficient_sample'
+        hh_lt_item = _item('居民中长期贷款（房贷代理）',
+            (f'居民中长期贷款年初累计同比 {hh_lt_yoy[-1]["value"]:.2f}%。'
+             if hh_lt_yoy and hh_lt_status == 'derived' else '同月YTD同比有效样本不足24月，拒绝判断。'),
+            hh_lt_yoy[-1]['value'] if hh_lt_yoy and hh_lt_status == 'derived' else None,
+            hh_lt_yoy, '居民中长期贷款年初累计值同月对同月同比；缺月不跨越', hh_lt_status,
+            caveats=['含消费与经营中长贷，非纯房贷；房贷主导。', '统计关联不代表因果。'])
+
+        stock_row = conn.execute('''SELECT month,loan,loan_hh_st_bal,loan_hh_lt_bal,
+            loan_corp_st_bal,loan_corp_lt_bal,loan_bill_bal,loan_nbfi_bal
+            FROM monthly_data ORDER BY month DESC LIMIT 1''').fetchone()
+        stock_row = dict(stock_row) if stock_row else None
+        stock = loan_stock_structure(stock_row)
+        stock_item = _item('最新贷款存量结构',
+            (f'{stock_row["month"]}贷款存量结构：居民中长期 {next(x["value"] for x in stock if x["label"] == "居民中长期"):.1f}%，'
+             f'企业中长期 {next(x["value"] for x in stock if x["label"] == "企业中长期"):.1f}%。'
+             if stock else '最新月六项存量结构不完整，拒绝计算。'),
+            {'period': stock_row['month'], 'components': stock, 'total': stock_row['loan']} if stock else None,
+            [], '六项贷款存量 / 贷款总余额 × 100；仅最新月描述性截面，不作趋势分析',
+            'derived' if stock else 'missing', n_obs=1 if stock else 0,
+            caveats=['仅最新月截面，禁止趋势、相关或因果解读。'])
+        if stock:
+            stock_item.update(sample_start=stock_row['month'], sample_end=stock_row['month'])
     return {'positioning': positioning,
-            'analyses': [scissors_item, transmission, fiscal, debt_item, spread_item, vol_item]}
+            'analyses': [loan_momentum, share_item, hh_lt_item, stock_item,
+                         scissors_item, transmission, fiscal, debt_item, spread_item, vol_item]}
 
 
 def _monthly_average(rows):
@@ -337,16 +497,25 @@ def _monthly_average(rows):
 def build_us_analytics(db_path):
     with closing(_connect(db_path)) as conn:
         raw = {code: _rows(conn, 'us_macro_observations', code) for code in
-               ('UNRATE','PCEPILFE','GDPC1','DGS10','T10Y2Y','MORTGAGE30US','USREC','T10YIE','JTSJOL','JTSQUR','JTSHIR')}
+               ('UNRATE','PCEPILFE','GDPC1','DGS3MO','DGS2','DGS5','DGS10','DGS30',
+                'T10Y2Y','T10Y3M','MORTGAGE30US','USREC','T10YIE','JTSJOL','JTSQUR','JTSHIR',
+                'A091RC1Q027SBEA','FGRECPT')}
         core_yoy = yoy(raw['PCEPILFE'], 12)
         gdp_qoq = []
         for i in range(1, len(raw['GDPC1'])):
             gdp_qoq.append({'period': raw['GDPC1'][i]['period'], 'value': round(((raw['GDPC1'][i]['value']/raw['GDPC1'][i-1]['value'])**4-1)*100, 4)})
+        spread3m = _monthly_average(raw['T10Y3M'])
+        spread3m_position = _position_item('10Y−3M 定位', spread3m, transform='rate')
+        if spread3m:
+            spread3m_position['conclusion'] = (
+                f'10Y−3M利差 {spread3m[-1]["value"]:.2f} 个百分点；3M端比10Y−2Y更贴近政策路径。')
+            spread3m_position['method'] = 'T10Y3M日频按月均值；历史分位、60月Z与3/12月百分点动量'
         positioning = [_position_item('失业率定位', raw['UNRATE'], transform='rate'),
                        _position_item('核心PCE同比定位', core_yoy, transform='rate'),
                        _position_item('实际GDP环比年化定位', gdp_qoq, 'quarterly', 'rate'),
                        _position_item('10年期美债定位', _monthly_average(raw['DGS10']), transform='rate'),
                        _position_item('10Y－2Y期限利差定位', _monthly_average(raw['T10Y2Y']), transform='rate'),
+                       spread3m_position,
                        _position_item('30年房贷利率定位', _monthly_average(raw['MORTGAGE30US']), transform='rate')]
 
         sahm = calculate_sahm(raw['UNRATE'])
@@ -366,15 +535,14 @@ def build_us_analytics(db_path):
                           'UNRATE最近3月均值 − 最近12个3月均值的最低值；≥0.50触发')
 
         spread_m = _monthly_average(raw['T10Y2Y'])
-        episodes = identify_inversion_episodes(spread_m)
-        horizons = (6,12,18,24)
-        for ep in episodes:
-            ep['recession_after'] = {str(h): bool(max(rec_map.get(_shift_month(ep['end'], m), 0) for m in range(1,h+1))) for h in horizons}
-        frequency = {str(h): {'hits': sum(ep['recession_after'][str(h)] for ep in episodes), 'episodes': len(episodes),
-                              'frequency': round(sum(ep['recession_after'][str(h)] for ep in episodes)/len(episodes)*100, 1) if episodes else None} for h in horizons}
-        inversion = _item('期限利差倒挂经验表', f'识别到 {len(episodes)} 个持续至少2个月的倒挂区间。',
-                          {'episodes': episodes, 'frequency': frequency}, spread_m,
-                          'T10Y2Y日频按月均值；<0连续至少2月；检查结束后6/12/18/24月USREC；仅报经验频率')
+        shared_start = max(spread_m[0]['period'], spread3m[0]['period']) if spread_m and spread3m else None
+        spread_2y_shared = [row for row in spread_m if not shared_start or row['period'] >= shared_start]
+        spread_3m_shared = [row for row in spread3m if not shared_start or row['period'] >= shared_start]
+        sample_note = f'；两表统一共同样本起点 {shared_start}' if shared_start else ''
+        inversion = build_inversion_analysis(spread_2y_shared, raw['USREC'],
+                                             '期限利差倒挂经验表', 'T10Y2Y', sample_note)
+        inversion_3m = build_inversion_analysis(spread_3m_shared, raw['USREC'],
+                                                '10Y−3M倒挂经验表', 'T10Y3M', sample_note)
 
         pce = raw['PCEPILFE']
         momentum = {f'{m}m': annualized_change(pce, m) for m in (3,6,12)}
@@ -403,7 +571,32 @@ def build_us_analytics(db_path):
         labor = _item('劳动市场综合指数', f'最新等权综合Z为 {composite[-1]["value"]:.2f}。' if composite else '数据不足。',
                       {'current':composite[-1]['value'] if composite else None,'components':components,'weights':'各1/3'}, composite,
                       'JTSJOL、JTSQUR、JTSHIR各自60月滚动Z分数的等权均值')
-    return {'positioning': positioning, 'analyses': [sahm_item, inversion, inflation, real_item, labor]}
+
+        curve_data = curve_snapshots({
+            '3M': _monthly_average(raw['DGS3MO']), '2Y': _monthly_average(raw['DGS2']),
+            '5Y': _monthly_average(raw['DGS5']), '10Y': _monthly_average(raw['DGS10']),
+            '30Y': _monthly_average(raw['DGS30']),
+        })
+        curve_item = _item('美债收益率曲线形态',
+            (f'对比 {curve_data["periods"]["latest"]}、3个月前和12个月前的五期限月均收益率。'
+             if curve_data else '五期限共同月份不足，无法构建曲线快照。'),
+            curve_data, [], '3M/2Y/5Y/10Y/30Y各取最新共同月、3个月前、12个月前月均值；仅作形态对照',
+            'derived' if curve_data else 'missing', n_obs=15 if curve_data else 0)
+        if curve_data:
+            curve_item.update(sample_start=curve_data['periods']['y1_ago'],
+                              sample_end=curve_data['periods']['latest'])
+
+        burden = interest_burden_series(raw['A091RC1Q027SBEA'], raw['FGRECPT'])
+        burden_item = _position_item('美国联邦利息负担率', burden, 'quarterly', 'rate')
+        if burden:
+            rank = burden_item['value']['percentile']
+            burden_item['conclusion'] = (f'联邦利息支出占经常性收入 {burden[-1]["value"]:.2f}%，'
+                                         f'处 {str(burden[0]["period"])[:4]} 年以来第 {rank:.1f} 百分位。')
+            burden_item['method'] = 'A091RC1Q027SBEA / FGRECPT × 100；同季度BEA NIPA季调年率对齐；20季Z'
+            burden_item['caveats'] = ['NIPA 应计口径，非财政部现金口径。', '统计关联不代表因果。']
+    return {'positioning': positioning,
+            'analyses': [sahm_item, inversion, inversion_3m, curve_item, burden_item,
+                         inflation, real_item, labor]}
 
 
 def _shift_month(period, offset):

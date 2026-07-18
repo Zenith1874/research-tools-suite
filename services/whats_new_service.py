@@ -13,6 +13,10 @@ import sqlite3
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
+from services.macro_analytics_service import (
+    _diffusion_from_rows, _monthly_average, interest_burden_series, rolling_z,
+)
+
 log = logging.getLogger(__name__)
 
 
@@ -59,6 +63,55 @@ _PROBES = [
 ]
 
 
+def make_anomaly_event(module, label, rows, window=60, threshold=2.0):
+    """Build the existing data_events shape only when the latest rolling z is extreme."""
+    if not rows:
+        return None
+    z_score = rolling_z(rows, window)
+    if z_score is None or abs(z_score) < threshold:
+        return None
+    period = str(rows[-1]['period'])
+    message = f'{label} 偏离5年常态 z={z_score:+.1f}'
+    return {'module': module, 'title': message, 'period': period,
+            'detail': message, 'z_score': z_score}
+
+
+def detect_statistical_anomalies(conn, threshold=2.0):
+    """Lightweight read-only anomaly probes; failures are isolated by caller."""
+    candidates = []
+    for code, label, column in (
+            ('analytics_anomaly_loany', '贷款余额同比', 'loany'),
+            ('analytics_anomaly_m2y', 'M2同比', 'M2y')):
+        rows = [dict(r) for r in conn.execute(
+            f'SELECT month period,{column} value FROM monthly_data WHERE {column} IS NOT NULL ORDER BY month')]
+        candidates.append(make_anomaly_event(code, label, rows, 60, threshold))
+
+    city_rows = [dict(r) for r in conn.execute(
+        "SELECT period,value FROM housing_city_observations "
+        "WHERE indicator_code='new_home_mom_idx' AND value IS NOT NULL ORDER BY period")]
+    diffusion = _diffusion_from_rows(city_rows)
+    candidates.append(make_anomaly_event('analytics_anomaly_new_home_diffusion',
+                                         '新房扩散指数', diffusion, 60, threshold))
+
+    spread = [dict(r) for r in conn.execute(
+        "SELECT period,value FROM us_macro_observations WHERE indicator_code='T10Y3M' "
+        'AND value IS NOT NULL ORDER BY period')]
+    candidates.append(make_anomaly_event('analytics_anomaly_t10y3m', '10Y−3M月均',
+                                         _monthly_average(spread), 60, threshold))
+
+    interest = [dict(r) for r in conn.execute(
+        "SELECT period,value FROM us_macro_observations WHERE indicator_code='A091RC1Q027SBEA' "
+        'AND value IS NOT NULL ORDER BY period')]
+    receipts = [dict(r) for r in conn.execute(
+        "SELECT period,value FROM us_macro_observations WHERE indicator_code='FGRECPT' "
+        'AND value IS NOT NULL ORDER BY period')]
+    burden = interest_burden_series(interest, receipts)
+    event = make_anomaly_event('analytics_anomaly_us_interest_burden', '美国利息负担率',
+                               burden, 20, threshold)
+    candidates.append(event)
+    return [event for event in candidates if event]
+
+
 def _maybe_send_email(subject, body):
     host, user, pw, to = (os.environ.get(k) for k in ('SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'NOTIFY_TO'))
     if not all([host, user, pw, to]):
@@ -102,6 +155,17 @@ def check_and_record_new_periods(db_path):
                 (module, title, str(period), f'{title} 更新到 {period}', now))
             if cur.rowcount:
                 new_events.append({'module': module, 'title': title, 'period': str(period)})
+        try:
+            anomalies = detect_statistical_anomalies(conn)
+        except (sqlite3.Error, ValueError, TypeError, KeyError):
+            anomalies = []
+        for event in anomalies:
+            cur = conn.execute(
+                'INSERT OR IGNORE INTO data_events (module,title,period,detail,created_at) VALUES (?,?,?,?,?)',
+                (event['module'], event['title'], event['period'], event['detail'], now))
+            if cur.rowcount:
+                new_events.append({'module': event['module'], 'title': event['title'],
+                                   'period': event['period']})
         conn.commit()
     # 只对"非首轮建档"的增量发邮件：首轮一次会插入全部模块，跳过通知避免刷屏
     if new_events and len(new_events) <= 4:

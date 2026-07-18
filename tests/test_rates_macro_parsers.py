@@ -63,7 +63,7 @@ class FredCsvParserTests(unittest.TestCase):
         codes = {row[0] for row in SERIES}
         for code in ('PAYEMS', 'CPIAUCSL', 'PCEPILFE', 'GDPC1', 'INDPRO',
                      'U6RATE', 'ICSA', 'FGRECPT', 'GFDEBTN', 'DFF', 'DGS3MO', 'DGS30',
-                     'T10Y2Y', 'T10YIE', 'MORTGAGE30US'):
+                     'T10Y2Y', 'T10Y3M', 'T10YIE', 'MORTGAGE30US'):
             self.assertIn(code, codes)
 
     def test_year_over_year_change_is_derived_not_official(self):

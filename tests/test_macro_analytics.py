@@ -6,9 +6,12 @@ from pathlib import Path
 
 from services.macro_analytics_service import (
     annualized_change, build_housing_analytics, build_macro_analytics_payload,
-    calculate_sahm, cross_correlation, _diffusion_from_rows,
-    identify_inversion_episodes, pct_rank, rolling_z, yoy,
+    build_inversion_analysis, calculate_sahm, cumulative_share, curve_snapshots,
+    cross_correlation, _diffusion_from_rows, identify_inversion_episodes,
+    interest_burden_series, loan_stock_structure, pct_rank, rolling_z,
+    ytd_to_monthly_increment, yoy,
 )
+from services.whats_new_service import make_anomaly_event
 
 
 class StatisticalPrimitiveTests(unittest.TestCase):
@@ -67,12 +70,69 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         series = _diffusion_from_rows(rows)
         self.assertEqual([p['value'] for p in series], [50.0, 100.0])
 
+    def test_ytd_increment_reset_gap_and_year_boundary(self):
+        rows = [{'period': '2024-12', 'value': 12}, {'period': '2025-01', 'value': 2},
+                {'period': '2025-02', 'value': 5}, {'period': '2025-04', 'value': 9},
+                {'period': '2025-05', 'value': 12}]
+        self.assertEqual(ytd_to_monthly_increment(rows), [
+            {'period': '2025-01', 'value': 2}, {'period': '2025-02', 'value': 3},
+            {'period': '2025-05', 'value': 3}])
+
+    def test_cumulative_share_requires_both_same_month(self):
+        hh = [{'period': '2026-01', 'value': 2}, {'period': '2026-02', 'value': 3}]
+        corp = [{'period': '2026-01', 'value': 6}, {'period': '2026-03', 'value': 7}]
+        self.assertEqual(cumulative_share(hh, corp), [
+            {'period': '2026-01', 'value': 25.0, 'household': 2, 'corporate': 6}])
+
+    def test_curve_snapshots_align_three_exact_months(self):
+        periods = [f'2025-{m:02d}' for m in range(1, 13)] + ['2026-01']
+        data = {tenor: [{'period': p, 'value': base + i / 100} for i, p in enumerate(periods)]
+                for tenor, base in zip(('3M','2Y','5Y','10Y','30Y'), (1,2,3,4,5))}
+        snap = curve_snapshots(data)
+        self.assertEqual(snap['periods'], {'latest':'2026-01','m3_ago':'2025-10','y1_ago':'2025-01'})
+        self.assertEqual(snap['latest'][0], 1.12)
+        self.assertEqual(snap['m3_ago'][4], 5.09)
+
+    def test_interest_burden_aligns_same_quarter(self):
+        interest = [{'period':'2025-01-01','value':100}, {'period':'2025-04-01','value':120}]
+        receipts = [{'period':'2025-01-01','value':1000}, {'period':'2025-07-01','value':1100}]
+        self.assertEqual(interest_burden_series(interest, receipts),
+                         [{'period':'2025-01-01','value':10.0}])
+
+    def test_shared_inversion_analysis_supports_both_spreads(self):
+        spread = [{'period':f'2025-{m:02d}','value':v} for m,v in enumerate((1,-.2,-.3,1),1)]
+        rec = [{'period':f'2025-{m:02d}','value':0} for m in range(1,13)]
+        a = build_inversion_analysis(spread, rec, 'T10Y2Y倒挂经验表', 'T10Y2Y')
+        b = build_inversion_analysis(spread, rec, 'T10Y3M倒挂经验表', 'T10Y3M')
+        self.assertEqual(a['value']['episodes'], b['value']['episodes'])
+        self.assertIn('T10Y2Y', a['method']); self.assertIn('T10Y3M', b['method'])
+
+    def test_loan_stock_structure_requires_all_six_components(self):
+        row = {'loan':100, 'loan_hh_st_bal':10, 'loan_hh_lt_bal':20,
+               'loan_corp_st_bal':15, 'loan_corp_lt_bal':40,
+               'loan_bill_bal':10, 'loan_nbfi_bal':5}
+        self.assertEqual(sum(x['value'] for x in loan_stock_structure(row)), 100.0)
+        row['loan_bill_bal'] = None
+        self.assertIsNone(loan_stock_structure(row))
+
+    def test_anomaly_probe_triggers_only_above_threshold(self):
+        normal = [{'period': f'2020-{i+1:02d}', 'value': float(i % 3)} for i in range(12)]
+        self.assertIsNone(make_anomaly_event('x', '指标', normal, 12, 2.0))
+        extreme = [{'period': f'{2020+i//12:04d}-{i%12+1:02d}', 'value': 0.0} for i in range(59)]
+        extreme.append({'period': '2024-12', 'value': 10.0})
+        event = make_anomaly_event('x', '指标', extreme, 60, 2.0)
+        self.assertIsNotNone(event)
+        self.assertGreater(event['z_score'], 2.0)
+
 
 class PayloadContractTests(unittest.TestCase):
     def _db(self, path):
         conn = sqlite3.connect(path)
         conn.executescript('''
-        CREATE TABLE monthly_data(month TEXT PRIMARY KEY,M1y REAL,M2y REAL,SFy REAL,loany REAL);
+        CREATE TABLE monthly_data(month TEXT PRIMARY KEY,M1y REAL,M2y REAL,SFy REAL,loany REAL,
+          loan REAL,loan_hh_ytd REAL,loan_corp_ytd REAL,loan_hh_lt_ytd REAL,
+          loan_hh_st_bal REAL,loan_hh_lt_bal REAL,loan_corp_st_bal REAL,
+          loan_corp_lt_bal REAL,loan_bill_bal REAL,loan_nbfi_bal REAL);
         CREATE TABLE china_rates_observations(indicator_code TEXT,period TEXT,value REAL);
         CREATE TABLE fiscal_budget_observations(indicator_code TEXT,period TEXT,value REAL);
         CREATE TABLE fiscal_debt_observations(indicator_code TEXT,period TEXT,value REAL);
@@ -90,6 +150,19 @@ class PayloadContractTests(unittest.TestCase):
             for item in payload[section].get('positioning', []) + payload[section].get('analyses', []):
                 for key in ('method','sample_start','sample_end','n_obs','data_status'):
                     self.assertIn(key, item)
+
+    def test_sparse_social_financing_position_is_guarded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'sf.db'); self._db(path)
+            conn = sqlite3.connect(path)
+            conn.executemany('INSERT INTO monthly_data(month,SFy) VALUES (?,?)',
+                             [(f'2025-{month:02d}', 8.0) for month in range(1, 13)])
+            conn.commit(); conn.close()
+            payload = build_macro_analytics_payload(path)
+        card = next(item for item in payload['china']['positioning']
+                    if item['title'] == '社融存量同比定位')
+        self.assertEqual(card['data_status'], 'insufficient_sample')
+        self.assertIsNone(card['value'])
 
     def test_housing_diffusion_analytics_from_city_data(self):
         with tempfile.TemporaryDirectory() as tmp:

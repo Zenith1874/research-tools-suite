@@ -57,6 +57,7 @@ SERIES = [
     ('DGS10', '10年期美债收益率', '%', 'daily', '美联储 H.15 市场日频', 'financial'),
     ('DGS30', '30年期美债收益率', '%', 'daily', '美联储 H.15 市场日频', 'financial'),
     ('T10Y2Y', '10Y－2Y 国债期限利差', '百分点', 'daily', 'FRED 由美联储 H.15 序列计算', 'financial'),
+    ('T10Y3M', '10Y－3M 国债期限利差', '百分点', 'daily', 'FRED 由美联储 H.15 序列计算', 'financial'),
     ('T10YIE', '10年期盈亏平衡通胀率', '%', 'daily', 'FRED 由名义与通胀保值国债计算', 'financial'),
     ('MORTGAGE30US', '30年期固定房贷利率', '%', 'weekly', 'Freddie Mac PMMS', 'financial'),
     ('QUSR628BIS', 'BIS 美国实际住宅价格指数（2010=100）', '指数', 'quarterly', 'BIS via FRED', 'financial'),
