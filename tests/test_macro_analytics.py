@@ -11,6 +11,7 @@ from services.macro_analytics_service import (
     interest_burden_series, loan_stock_structure, pct_rank, rolling_z,
     land_fiscal_dependency, preferred_official_yoy, ytd_to_monthly_increment, yoy,
     monotonic_ytd, net_principal_pressure, ratio_series, rollover_dependency,
+    beveridge_points, vu_ratio_series,
 )
 from services.whats_new_service import make_anomaly_event
 
@@ -151,6 +152,31 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         row['loan_bill_bal'] = None
         self.assertIsNone(loan_stock_structure(row))
 
+    def test_vu_ratio_aligns_same_month(self):
+        vac = [{'period': '2026-04', 'value': 4.8}, {'period': '2026-05', 'value': 4.6},
+               {'period': '2026-06', 'value': 4.5}]
+        unemp = [{'period': '2026-04', 'value': 4.0}, {'period': '2026-05', 'value': 4.3}]
+        result = vu_ratio_series(vac, unemp)
+        self.assertEqual([r['period'] for r in result], ['2026-04', '2026-05'])  # 2026-06 无失业率,不桥接
+        self.assertEqual(result[0]['value'], 1.2)
+        self.assertAlmostEqual(result[1]['value'], 4.6 / 4.3, places=4)
+
+    def test_vu_ratio_skips_zero_denominator(self):
+        vac = [{'period': '2026-05', 'value': 4.6}]
+        unemp = [{'period': '2026-05', 'value': 0.0}]
+        self.assertEqual(vu_ratio_series(vac, unemp), [])
+
+    def test_beveridge_pairs_and_recent_window(self):
+        unemp = [{'period': f'{2020+i//12:04d}-{i%12+1:02d}', 'value': 4.0 + i * 0.01} for i in range(30)]
+        vac = [{'period': f'{2020+i//12:04d}-{i%12+1:02d}', 'value': 5.0 - i * 0.01} for i in range(30)]
+        vac = vac[:-1]  # 最末月缺空缺率,不得配对
+        result = beveridge_points(unemp, vac, recent_n=24)
+        self.assertEqual(len(result['points']), 29)
+        self.assertEqual(len(result['recent']), 24)
+        self.assertEqual(result['latest'], result['points'][-1])
+        self.assertEqual(result['latest']['u'], 4.28)
+        self.assertIsNone(beveridge_points([], []))
+
     def test_anomaly_probe_triggers_only_above_threshold(self):
         normal = [{'period': f'2020-{i+1:02d}', 'value': float(i % 3)} for i in range(12)]
         self.assertIsNone(make_anomaly_event('x', '指标', normal, 12, 2.0))
@@ -187,6 +213,24 @@ class PayloadContractTests(unittest.TestCase):
             for item in payload[section].get('positioning', []) + payload[section].get('analyses', []):
                 for key in ('method','sample_start','sample_end','n_obs','data_status'):
                     self.assertIn(key, item)
+
+    def test_pboc_asset_mix_three_shares(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'p.db'); self._db(path)
+            conn = sqlite3.connect(path)
+            conn.execute('CREATE TABLE pboc_balance_sheet_observations(indicator_code TEXT,period TEXT,value REAL)')
+            conn.executemany('INSERT INTO pboc_balance_sheet_observations VALUES(?,?,?)', [
+                ('claims_on_other_depository_corporations_pct', '2026-05', 43.1),
+                ('claims_on_other_depository_corporations_pct', '2026-06', 42.9),
+                ('foreign_assets_pct', '2026-05', 46.5), ('foreign_assets_pct', '2026-06', 46.8),
+                ('claims_on_government_pct', '2026-05', 4.4), ('claims_on_government_pct', '2026-06', 4.3)])
+            conn.commit(); conn.close()
+            payload = build_macro_analytics_payload(path)
+        items = payload['china'].get('positioning', []) + payload['china'].get('analyses', [])
+        card = next(c for c in items if c['title'] == '央行资产投放结构')
+        self.assertEqual([k['key'] for k in card['compare_keys']], ['odc', 'fx', 'gov'])
+        self.assertEqual(card['series'][-1], {'period': '2026-06', 'odc': 42.9, 'fx': 46.8, 'gov': 4.3})
+        self.assertEqual(card['n_obs'], 2)
 
     def test_debt_issue_cost_dual_series(self):
         with tempfile.TemporaryDirectory() as tmp:

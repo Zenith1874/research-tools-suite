@@ -29,6 +29,7 @@ SERIES = [
     ('PAYEMS', '非农就业人数', '千人', 'monthly', 'BLS CES 经季调', 'labor'),
     ('ICSA', '首次申领失业救济人数', '人', 'weekly', '美国劳工部 ETA，经季调', 'labor'),
     ('JTSJOL', 'JOLTS 职位空缺数', '千人', 'monthly', 'BLS JOLTS 经季调', 'labor'),
+    ('JTSJOR', 'JOLTS 职位空缺率', '%', 'monthly', 'BLS JOLTS 经季调', 'labor'),
     ('JTSHIR', 'JOLTS 招聘率', '%', 'monthly', 'BLS JOLTS 经季调', 'labor'),
     ('JTSLDL', 'JOLTS 裁员及解雇数', '千人', 'monthly', 'BLS JOLTS 经季调', 'labor'),
     ('JTSQUR', 'JOLTS 主动离职率', '%', 'monthly', 'BLS JOLTS 经季调', 'labor'),

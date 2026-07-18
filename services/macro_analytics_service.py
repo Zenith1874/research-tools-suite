@@ -405,6 +405,22 @@ def _diffusion_from_rows(rows):
     return series
 
 
+def vu_ratio_series(vacancy_rows, unemployment_rows):
+    """劳动力市场紧张度 V/U = 空缺率/失业率，同月配对，缺月不桥接，分母为0跳过。"""
+    keys, values = _align(vacancy_rows, unemployment_rows)
+    return [{'period': str(k)[:7], 'value': round(v / u, 4)}
+            for k, v, u in zip(keys, *values) if u]
+
+
+def beveridge_points(unemployment_rows, vacancy_rows, recent_n=24):
+    """贝弗里奇曲线截面点集：同月配对的 {period,u,v}；recent 为末 recent_n 期。"""
+    keys, values = _align(unemployment_rows, vacancy_rows)
+    points = [{'period': str(k)[:7], 'u': u, 'v': v} for k, u, v in zip(keys, *values)]
+    if not points:
+        return None
+    return {'points': points, 'recent': points[-recent_n:], 'latest': points[-1]}
+
+
 def build_china_analytics(db_path):
     with closing(_connect(db_path)) as conn:
         m2y = [dict(r) for r in conn.execute('SELECT month period,M2y value FROM monthly_data WHERE M2y IS NOT NULL ORDER BY month')]
@@ -545,8 +561,37 @@ def build_china_analytics(db_path):
             caveats=['仅最新月截面，禁止趋势、相关或因果解读。'])
         if stock:
             stock_item.update(sample_start=stock_row['month'], sample_end=stock_row['month'])
+
+        try:
+            odc = _rows(conn, 'pboc_balance_sheet_observations', 'claims_on_other_depository_corporations_pct')
+            fx_a = _rows(conn, 'pboc_balance_sheet_observations', 'foreign_assets_pct')
+            gov = _rows(conn, 'pboc_balance_sheet_observations', 'claims_on_government_pct')
+        except sqlite3.OperationalError:
+            odc, fx_a, gov = [], [], []
+        mk, mv = _align(odc, fx_a, gov)
+        if mk:
+            mix_series = [{'period': str(k)[:7], 'odc': round(o, 2), 'fx': round(f, 2), 'gov': round(g, 2)}
+                          for k, o, f, g in zip(mk, *mv)]
+            last = mix_series[-1]
+            mix_item = _item('央行资产投放结构',
+                (f'最新央行总资产中，对存款性公司债权占 {last["odc"]:.1f}%、国外资产 {last["fx"]:.1f}%、'
+                 f'对政府债权 {last["gov"]:.1f}%；主动借贷(MLF/逆回购/PSL)与外汇占款是基础货币两大来源。'),
+                last, mix_series,
+                '三项占比取自央行资产负债表官方披露(各项/总资产×100)；同月对齐；仅结构描述',
+                n_obs=len(mix_series),
+                caveats=['仅2023年起月度，只反映近期结构非长期趋势；三项不穷尽总资产(另有黄金/其他资产等)。',
+                         '对政府债权为央行持有的政府债权占比，非"央行认购国债"或赤字货币化。',
+                         '统计关联不代表因果。'])
+            mix_item['compare_keys'] = [
+                {'key': 'odc', 'label': '对其他存款性公司债权(主动投放)', 'color': '#4f8fff'},
+                {'key': 'fx', 'label': '国外资产(外汇占款为主)', 'color': '#00d4aa'},
+                {'key': 'gov', 'label': '对政府债权', 'color': '#f5a623'}]
+            mix_item.update(sample_start=mix_series[0]['period'], sample_end=last['period'])
+        else:
+            mix_item = _item('央行资产投放结构', '央行资产负债表占比序列缺失，未计算。', None, [],
+                             '三项占比同月对齐', 'missing')
     return {'positioning': positioning,
-            'analyses': [loan_momentum, share_item, hh_lt_item, stock_item,
+            'analyses': [loan_momentum, share_item, hh_lt_item, stock_item, mix_item,
                          scissors_item, transmission, fiscal, debt_item, spread_item, vol_item]}
 
 
@@ -561,7 +606,7 @@ def build_us_analytics(db_path):
     with closing(_connect(db_path)) as conn:
         raw = {code: _rows(conn, 'us_macro_observations', code) for code in
                ('UNRATE','PCEPILFE','GDPC1','DGS3MO','DGS2','DGS5','DGS10','DGS30',
-                'T10Y2Y','T10Y3M','MORTGAGE30US','USREC','T10YIE','JTSJOL','JTSQUR','JTSHIR',
+                'T10Y2Y','T10Y3M','MORTGAGE30US','USREC','T10YIE','JTSJOL','JTSJOR','JTSQUR','JTSHIR',
                 'A091RC1Q027SBEA','FGRECPT')}
         core_yoy = yoy(raw['PCEPILFE'], 12)
         gdp_qoq = []
@@ -657,9 +702,42 @@ def build_us_analytics(db_path):
                                          f'处 {str(burden[0]["period"])[:4]} 年以来第 {rank:.1f} 百分位。')
             burden_item['method'] = 'A091RC1Q027SBEA / FGRECPT × 100；同季度BEA NIPA季调年率对齐；20季Z'
             burden_item['caveats'] = ['NIPA 应计口径，非财政部现金口径。', '统计关联不代表因果。']
+
+        vu = vu_ratio_series(raw['JTSJOR'], raw['UNRATE'])
+        vu_item = _position_item('劳动力市场紧张度 V/U', vu, transform='rate')
+        if vu:
+            peak = max(vu, key=lambda r: r['value'])
+            latest_vu = vu[-1]['value']
+            vu_item['conclusion'] = (
+                f'职位空缺率/失业率比 {latest_vu:.2f}，历史峰值 {peak["value"]:.2f}'
+                f'（{peak["period"]}）；' + ('高于1表示空缺多于失业，劳动力仍偏紧。'
+                                            if latest_vu > 1 else '低于1表示失业多于空缺，劳动力供过于求。'))
+        vu_item['method'] = 'JTSJOR / UNRATE 同月相除；历史分位、60月Z与3/12月动量'
+        vu_item['caveats'] = ['V/U 高=劳动力偏紧；JTSJOR为空缺率、UNRATE为失业率，量纲一致的紧张度近似。',
+                              '统计关联不代表因果。']
+
+        bev = beveridge_points(raw['UNRATE'], raw['JTSJOR'])
+        if bev:
+            lat, older = bev['latest'], bev['points'][:-24]
+            same_u = [p['v'] for p in older if abs(p['u'] - lat['u']) <= 0.3]
+            pos_note = ''
+            if same_u:
+                pos_note = (f'相同失业率(±0.3pp)的历史空缺率均值为 {float(np.mean(same_u)):.2f}%，'
+                            f'当前 {lat["v"]:.2f}% ' + ('偏高，曲线仍外移(错配/摩擦偏高)。'
+                                                        if lat['v'] > float(np.mean(same_u)) else '接近或低于历史，曲线基本回归。'))
+            bev_item = _item('贝弗里奇曲线',
+                f'最新点：失业率 {lat["u"]:.1f}%、空缺率 {lat["v"]:.1f}%（{lat["period"]}）。{pos_note}',
+                bev, [],
+                '横轴失业率UNRATE、纵轴空缺率JTSJOR；同月配对；曲线右移=给定失业率下空缺更高(错配/摩擦上升)，沿曲线左下移动=正常降温',
+                n_obs=len(bev['points']),
+                caveats=['截面散点非时序；位置描述不构成衰退预测。', '统计关联不代表因果。'])
+            bev_item.update(sample_start=bev['points'][0]['period'], sample_end=lat['period'])
+        else:
+            bev_item = _item('贝弗里奇曲线', 'JTSJOR 与 UNRATE 无共同月份，未计算。', None, [],
+                             'UNRATE×JTSJOR 同月配对', 'missing')
     return {'positioning': positioning,
             'analyses': [sahm_item, inversion, inversion_3m, curve_item, burden_item,
-                         inflation, real_item, labor]}
+                         inflation, vu_item, bev_item, real_item, labor]}
 
 
 def _shift_month(period, offset):

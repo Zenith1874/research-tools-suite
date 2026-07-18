@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 from services.macro_analytics_service import (
-    _diffusion_from_rows, _monthly_average, interest_burden_series, rolling_z,
+    _diffusion_from_rows, _monthly_average, interest_burden_series, rolling_z, vu_ratio_series,
 )
 
 log = logging.getLogger(__name__)
@@ -109,6 +109,15 @@ def detect_statistical_anomalies(conn, threshold=2.0):
     event = make_anomaly_event('analytics_anomaly_us_interest_burden', '美国利息负担率',
                                burden, 20, threshold)
     candidates.append(event)
+
+    vacancy = [dict(r) for r in conn.execute(
+        "SELECT period,value FROM us_macro_observations WHERE indicator_code='JTSJOR' "
+        'AND value IS NOT NULL ORDER BY period')]
+    unemployment = [dict(r) for r in conn.execute(
+        "SELECT period,value FROM us_macro_observations WHERE indicator_code='UNRATE' "
+        'AND value IS NOT NULL ORDER BY period')]
+    candidates.append(make_anomaly_event('analytics_anomaly_vu_ratio', '劳动力紧张度V/U',
+                                         vu_ratio_series(vacancy, unemployment), 60, threshold))
     return [event for event in candidates if event]
 
 
