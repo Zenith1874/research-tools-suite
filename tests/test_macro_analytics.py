@@ -188,6 +188,23 @@ class PayloadContractTests(unittest.TestCase):
                 for key in ('method','sample_start','sample_end','n_obs','data_status'):
                     self.assertIn(key, item)
 
+    def test_debt_issue_cost_dual_series(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'd.db'); self._db(path)
+            conn = sqlite3.connect(path)
+            conn.executemany('INSERT INTO fiscal_debt_observations(indicator_code,period,value,source_type) VALUES(?,?,?,?)', [
+                ('local_bond_avg_issue_rate', '2025-04', 2.2, 'mof_local_debt'),
+                ('local_bond_avg_issue_rate', '2025-05', 2.1, 'mof_local_debt'),
+                ('local_bond_avg_interest_rate', '2025-04', 2.8, 'mof_local_debt'),
+                ('local_bond_avg_interest_rate', '2025-05', 2.76, 'mof_local_debt')])
+            conn.commit(); conn.close()
+            payload = build_macro_analytics_payload(path)
+        items = payload['debt'].get('positioning', []) + payload['debt'].get('analyses', [])
+        card = next(c for c in items if c['title'] == '地方债发行成本')
+        self.assertEqual([k['key'] for k in card['compare_keys']], ['issue', 'stock'])
+        self.assertEqual(card['series'][-1], {'period': '2025-05', 'issue': 2.1, 'stock': 2.76})
+        self.assertIn('低于', card['conclusion'])  # 新发行 2.1 < 存量 2.76
+
     def test_sparse_social_financing_position_is_guarded(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / 'sf.db'); self._db(path)

@@ -744,7 +744,8 @@ def build_debt_analytics(db_path):
         refinancing = since_2019(debt_rows('local_refinancing_bond_issuance_ytd'))
         principal = since_2019(debt_rows('official_principal_repayment_ytd'))
         local_interest = since_2019(debt_rows('official_interest_payment_ytd'))
-        issue_rate = debt_rows('local_bond_avg_issue_rate') or debt_rows('local_bond_avg_interest_rate')
+        issue_rate = debt_rows('local_bond_avg_issue_rate')
+        stock_rate = debt_rows('local_bond_avg_interest_rate')
 
         burden = ratio_series(interest, revenue)
         annual_burden = [row for row in burden if row['period'][5:7] == '12']
@@ -795,9 +796,29 @@ def build_debt_analytics(db_path):
             'derived' if service_rows else 'missing',
             caveats=['分子含一般债与专项债付息，分母是全国政府性基金/土地收入，是口径妥协，不是专项债独立付息率。'])
 
-        rate_item = _position_item('地方债发行成本', issue_rate, transform='rate')
-        rate_item['method'] = ('优先使用月报年初至今平均发行利率；历史稿未解析发行口径时，'
-                               '仅以月末存量平均利率作展示，两者不混合解读')
+        rate_item = _position_item('地方债发行成本', issue_rate or stock_rate, transform='rate')
+        rate_item['method'] = ('主指标为月报年初至今平均发行利率的历史分位/Z；'
+                               '对照线为当年新发行加权利率 vs 全部存续债券存量加权平均利率，同工具口径一致可比')
+        rate_item['caveats'] = ['新发行利率为当年加权，存量为全部存续债券加权，二者口径一致可比；'
+                                '地方债定价基准实为同期限国债收益率（库内暂无），此处只做同工具新旧对照。',
+                                '统计关联不代表因果。']
+        rk, rv = _align(issue_rate, stock_rate)
+        if rk:
+            rate_item['series'] = [{'period': k[:7], 'issue': iss, 'stock': stk}
+                                   for k, iss, stk in zip(rk, rv[0], rv[1])]
+            rate_item['compare_keys'] = [
+                {'key': 'issue', 'label': '当年新发行加权利率', 'color': '#4f8fff'},
+                {'key': 'stock', 'label': '存量加权平均利率', 'color': '#f5a623'}]
+            latest_issue = rate_item['series'][-1]['issue']
+            latest_stock = rate_item['series'][-1]['stock']
+            gap = round(latest_stock - latest_issue, 4)
+            rate_item['conclusion'] = (
+                f'最新新发行利率 {latest_issue:.2f}%，'
+                f'{"低于" if gap > 0 else "高于"}存量加权 {latest_stock:.2f}% {abs(gap):.2f} 个百分点，'
+                + ('低成本再融资持续摊薄债务付息成本。' if gap > 0 else '新发行成本已高于存量存续债券。'))
+            rate_item['sample_start'] = rate_item['series'][0]['period']
+            rate_item['sample_end'] = rate_item['series'][-1]['period']
+            rate_item['n_obs'] = len(rate_item['series'])
 
         central = _annual_budget_like_debt(conn, 'central_government_debt_balance')
         local = _annual_budget_like_debt(conn, 'local_debt_balance_total')

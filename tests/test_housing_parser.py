@@ -8,7 +8,7 @@ from pathlib import Path
 from services.housing_price_service import (
     extract_70city_search_releases, parse_70city_article, parse_dual_column_table,
     parse_period_from_title, parse_sales_article, parse_sales_period_from_title,
-    ensure_housing_tables, _upsert_sales_release, _norm_city,
+    ensure_housing_tables, _upsert_sales_release, _norm_city, build_housing_payload,
 )
 from services.anjuke_city_map import ANJUKE_CITY_SLUGS
 from bs4 import BeautifulSoup
@@ -164,6 +164,35 @@ class HousingParserTests(unittest.TestCase):
         self.assertEqual(len(parsed['second']), 70)
         self.assertEqual(parsed['new']['北京'], (100.4, 104.2))
         self.assertEqual(parsed['second']['北京'], (99.8, 101.5))
+
+
+class HousingSalesPayloadTests(unittest.TestCase):
+    def test_housing_sales_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'h.db')
+            conn = sqlite3.connect(path); ensure_housing_tables(conn)
+            conn.executemany('INSERT INTO housing_national_observations(indicator_code,period,value) VALUES(?,?,?)', [
+                ('sales_area_ytd', '2026-05', 40000.0), ('sales_area_ytd_yoy_official', '2026-05', -11.9),
+                ('sales_value_ytd', '2026-05', 37000.0), ('sales_value_ytd_yoy_official', '2026-05', -13.9),
+                ('sales_area_ytd', '2026-06', 40140.0), ('sales_area_ytd_yoy_official', '2026-06', -11.6),
+                ('sales_value_ytd', '2026-06', 37945.0), ('sales_value_ytd_yoy_official', '2026-06', -13.6)])
+            conn.commit(); conn.close()
+            sales = build_housing_payload(path)['sales']
+        self.assertEqual(sales['data_status'], 'official')
+        self.assertEqual(sales['latest_period'], '2026-06')
+        area = next(c for c in sales['cards'] if c['label'] == '销售面积累计')
+        self.assertEqual((area['value'], area['yoy'], area['unit']), (40140.0, -11.6, '万平方米'))
+        self.assertEqual(sales['series'][-1], {'period': '2026-06', 'area_yoy': -11.6, 'value_yoy': -13.6})
+        self.assertEqual(len(sales['series']), 2)
+
+    def test_housing_sales_block_missing_when_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'e.db')
+            conn = sqlite3.connect(path); ensure_housing_tables(conn); conn.commit(); conn.close()
+            sales = build_housing_payload(path)['sales']
+        self.assertEqual(sales['data_status'], 'missing')
+        self.assertEqual(sales['series'], [])
+        self.assertEqual(sales['cards'], [])
 
 
 if __name__ == '__main__':

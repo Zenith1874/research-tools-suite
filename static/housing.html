@@ -224,6 +224,13 @@ function App(){
         <td className="num">{fmt(r.second_home_yoy_idx)} <Delta v={r.second_home_yoy_idx}/></td>
       </tr>)}</tbody></table></div>
     <div className="muted" style={{marginTop:10}}>{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
+    <section className="section"><div className="section-head"><div><h2>全国商品房销售 <span className="badge">official</span></h2><div className="sub">统计局《全国房地产开发投资和销售情况》· 累计口径 · {p.sales?.series?.[0]?.period||'—'} 至 {p.sales?.latest_period||'—'}（{(p.sales?.series||[]).length} 期）</div></div></div>
+      {p.sales?.data_status==='official'?<>
+        <div className="grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>{(p.sales.cards||[]).map(c=><div className="metric" key={c.label}><div className="metric-label">{c.label}</div><div className="metric-value">{c.value==null?'—':fmt(c.value,0)} <span style={{fontSize:12,fontWeight:400,color:'var(--muted)'}}>{c.unit}</span></div><div className="metric-meta">累计同比 <Pct v={c.yoy}/> · {c.period}</div></div>)}</div>
+        <Chart title={`全国商品房销售累计同比（月度累计口径，${p.sales.series[0]?.period} 起）`} data={p.sales.series} series={[{key:'area_yoy',label:'销售面积累计同比',color:'var(--blue)'},{key:'value_yoy',label:'销售额累计同比',color:'var(--yellow)'}]} unit="%" digits={1} height={240}/>
+        {(p.sales.notes||[]).map((n,i)=><div className="notice" key={i}>{n}</div>)}
+      </>:<div className="empty">暂无全国销售官方数据</div>}
+    </section>
     <section className="section"><div className="section-head"><div><h2>挂牌价参考（安居客） <span className="badge listing">挂牌价·参考</span></h2><div className="sub">安居客，非官方口径 · 月度最新期：{listing?.latest_period||'—'} · 月度历史 {listing?.coverage?.earliest||'—'} 至 {listing?.coverage?.latest||'—'} · 年度快照覆盖 {yearlyHistoryCities.length}/10 城</div></div><div className="actions"><label className="history-picker">图表起点<select value={historyStart} onChange={e=>setHistoryStart(e.target.value)}>{rangeYears.map(year=><option key={year} value={String(year)}>{year}年</option>)}</select></label><label className="history-picker">单城明细<select value={activeHistoryCity||''} onChange={e=>setHistoryCity(e.target.value)}>{orderedHistoryCities.map(city=><option key={city} value={city}>{city}</option>)}</select></label><a className="btn" style={{cursor:'pointer'}} onClick={()=>yearlyListingCsv(listing?.yearly_history_by_city)}>⬇ 年度快照 CSV</a><a className="btn" style={{cursor:'pointer'}} onClick={()=>listingCsv(allListingHistory)}>⬇ 月度历史 CSV</a></div></div>
       <div className="notice">这里分成两种频率：① 你截图中的全国历史排名页，历史年份按年末快照、当年按抓取月展示；② 深圳等城市年度页中的逐月走势。年度点绝不复制成 12 个月，也不进入“挂牌同比－官方二手同比”的月度计算。挂牌价是卖方要价，不等于成交价；数据只在本机独立库保存，不进入公开仓库。</div>
       {(listing?.warnings||[]).map((w,i)=><div className="banner" key={i}>{w}</div>)}

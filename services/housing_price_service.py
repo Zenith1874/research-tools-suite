@@ -13,6 +13,7 @@ import sqlite3
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import closing
 from datetime import datetime
 
 import requests
@@ -704,7 +705,7 @@ def update_housing_prices(db_path):
 
 # ── payload ───────────────────────────────────────────────────────────────────
 def build_housing_payload(db_path):
-    with connect(db_path) as conn:
+    with closing(connect(db_path)) as conn:
         ensure_housing_tables(conn)
         latest = conn.execute('SELECT MAX(period) FROM housing_city_observations').fetchone()[0]
         cards, breadth, table_rows, city_series = [], None, [], {}
@@ -746,10 +747,33 @@ def build_housing_payload(db_path):
         cov_city = dict(conn.execute("""SELECT COUNT(DISTINCT period) periods, MIN(period) earliest, MAX(period) latest,
                                         COUNT(*) records FROM housing_city_observations""").fetchone())
         cov_nat = dict(conn.execute('SELECT COUNT(*) records, MIN(period) earliest, MAX(period) latest FROM housing_national_observations').fetchone())
+        # 全国商品房销售(统计局官方累计,2015 起;只读,缺失置 missing 不补零)
+        sales_codes = {'area': 'sales_area_ytd', 'area_yoy': 'sales_area_ytd_yoy_official',
+                       'value': 'sales_value_ytd', 'value_yoy': 'sales_value_ytd_yoy_official'}
+        sales_raw = {key: {r['period']: r['value'] for r in conn.execute(
+            'SELECT period, value FROM housing_national_observations WHERE indicator_code=? ORDER BY period', (code,))}
+            for key, code in sales_codes.items()}
+        sales_periods = sorted(set(sales_raw['area_yoy']) | set(sales_raw['value_yoy']))
+        if sales_periods:
+            sp = sales_periods[-1]
+            sales = {
+                'data_status': 'official', 'latest_period': sp,
+                'cards': [
+                    {'label': '销售面积累计', 'value': sales_raw['area'].get(sp), 'unit': '万平方米',
+                     'yoy': sales_raw['area_yoy'].get(sp), 'period': sp},
+                    {'label': '销售额累计', 'value': sales_raw['value'].get(sp), 'unit': '亿元',
+                     'yoy': sales_raw['value_yoy'].get(sp), 'period': sp}],
+                'series': [{'period': p, 'area_yoy': sales_raw['area_yoy'].get(p),
+                            'value_yoy': sales_raw['value_yoy'].get(p)} for p in sales_periods],
+                'notes': ['累计同比为统计局官方可比口径;1-2月合并计入2月,不拆分。',
+                          '销售面积/销售额为年初至今累计值,非当月值。']}
+        else:
+            sales = {'data_status': 'missing', 'latest_period': None, 'cards': [], 'series': [],
+                     'notes': ['暂无全国销售官方数据。']}
     return {
         'data_status': 'official' if latest else 'missing',
         'latest_period': latest, 'cards': cards, 'breadth': breadth,
-        'city_table': table_rows, 'city_series': city_series, 'national': national,
+        'city_table': table_rows, 'city_series': city_series, 'national': national, 'sales': sales,
         'coverage': {'nbs_70city': cov_city, 'bis_national': cov_nat},
         'source_pages': {'nbs': NBS_LIST_URL, 'fred': 'https://fred.stlouisfed.org/series/QCNR628BIS'},
         'warnings': [] if latest else ['尚未抓取;未生成 mock。'],
