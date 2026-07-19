@@ -466,6 +466,21 @@ def cross_city_dispersion(rows):
             for period in sorted(buckets) if len(buckets[period]) >= 2]
 
 
+def rolling_four_quarter_sum(rows):
+    """季度序列的滚动4季求和;只在连续4个日历季度上计算,缺季不桥接。
+    输入 rows period 为 'YYYY-MM'(3/6/9/12);输出 period=窗口末季。"""
+    ordered = sorted((r for r in rows if r.get('value') is not None),
+                     key=lambda r: str(r['period']))
+    keyed = [(_period_key(r['period'], 'quarterly'), r) for r in ordered]
+    out = []
+    for i in range(3, len(keyed)):
+        window = keyed[i - 3:i + 1]
+        if window[-1][0] - window[0][0] == 3:
+            out.append({'period': str(window[-1][1]['period'])[:7],
+                        'value': round(sum(w[1]['value'] for w in window), 4)})
+    return out
+
+
 def vu_ratio_series(vacancy_rows, unemployment_rows):
     """劳动力市场紧张度 V/U = 空缺率/失业率，同月配对，缺月不桥接，分母为0跳过。"""
     keys, values = _align(vacancy_rows, unemployment_rows)
@@ -656,8 +671,18 @@ def build_china_analytics(db_path):
             cpi = _rows(conn, 'china_macro_observations', 'CN_CPI_YOY')
             ppi = _rows(conn, 'china_macro_observations', 'CN_PPI_YOY')
             pmi = _rows(conn, 'china_macro_observations', 'CN_PMI_MFG')
+            ip_yoy = _rows(conn, 'china_macro_observations', 'CN_IP_YOY')
+            retail_yoy = _rows(conn, 'china_macro_observations', 'CN_RETAIL_YOY')
+            fai_yoy = _rows(conn, 'china_macro_observations', 'CN_FAI_YTD_YOY')
+            gdp_nominal = _rows(conn, 'china_macro_observations', 'CN_GDP_Q_NOMINAL')
+            gdp_real = _rows(conn, 'china_macro_observations', 'CN_GDP_Q_REAL_YOY')
         except sqlite3.OperationalError:
-            cpi, ppi, pmi = [], [], []
+            cpi = ppi = pmi = ip_yoy = retail_yoy = fai_yoy = gdp_nominal = gdp_real = []
+        try:
+            sf_stock = [dict(r) for r in conn.execute(
+                'SELECT month period, SF value FROM monthly_data WHERE SF IS NOT NULL ORDER BY month')]
+        except sqlite3.OperationalError:
+            sf_stock = []
         cpi_pos = _position_item('CPI 同比定位', cpi, transform='rate')
         ppi_pos = _position_item('PPI 同比定位', ppi, transform='rate')
         pmi_pos = _position_item('制造业PMI定位', pmi, transform='rate')
@@ -676,9 +701,33 @@ def build_china_analytics(db_path):
             'CN_CPI_YOY − CN_PPI_YOY 同月相减；正值利中下游、负值利上游',
             'derived' if len(cp_gap) >= MONTHLY_MIN_N else 'insufficient_sample',
             caveats=['价差是利润分配的粗代理，不等于利润率。', '统计关联不代表因果。'])
-    return {'positioning': positioning + [cpi_pos, ppi_pos, pmi_pos],
+
+        ip_pos = _position_item('工业增加值当月同比定位', ip_yoy, transform='rate')
+        retail_pos = _position_item('社零当月同比定位', retail_yoy, transform='rate')
+        fai_pos = _position_item('固投累计同比定位', fai_yoy, transform='rate')
+        gdp_pos = _position_item('GDP单季实际同比定位', gdp_real, 'quarterly', 'rate')
+
+        rolling_gdp = rolling_four_quarter_sum(gdp_nominal)
+        sf_q = {str(r['period'])[:7]: r['value'] for r in sf_stock
+                if str(r['period'])[5:7] in ('03', '06', '09', '12')}
+        leverage = [{'period': row['period'],
+                     'value': round(sf_q[row['period']] * 10000 / row['value'] * 100, 2)}
+                    for row in rolling_gdp if row['period'] in sf_q and row['value']]
+        lev_item = _position_item('宏观杠杆率(社融口径)', leverage, 'quarterly', 'rate')
+        if leverage:
+            lev_item['conclusion'] = (f'社融存量/滚动4季名义GDP = {leverage[-1]["value"]:.1f}%'
+                                      f'（{leverage[-1]["period"]}），历史分位 '
+                                      f'{lev_item["value"]["percentile"]:.0f}%。')
+        lev_item['method'] = ('社融存量(季末月,万亿→亿) / 最近4个连续季度现价GDP之和 ×100；'
+                              '缺季不桥接')
+        lev_item['caveats'] = ['社融口径杠杆率近似，非国家资产负债表研究中心(CNBS)官方口径；'
+                               '社融存量含政府债券等，分子口径宽于私人部门债务。',
+                               '统计关联不代表因果。']
+    return {'positioning': positioning + [cpi_pos, ppi_pos, pmi_pos, ip_pos, retail_pos,
+                                          fai_pos, gdp_pos],
             'analyses': [loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
-                         scissors_item, transmission, fiscal, debt_item, spread_item, vol_item]}
+                         lev_item, scissors_item, transmission, fiscal, debt_item,
+                         spread_item, vol_item]}
 
 
 def _monthly_average(rows):
@@ -1044,6 +1093,27 @@ def build_debt_analytics(db_path):
             'derived' if debt_capacity else 'insufficient_sample',
             caveats=['中央债务官方序列2024年起，样本极少，只报最新点，不作趋势判断。'])
 
+        try:
+            gdp_nominal = _rows(conn, 'china_macro_observations', 'CN_GDP_Q_NOMINAL')
+        except sqlite3.OperationalError:
+            gdp_nominal = []
+        rolling_gdp = {row['period']: row['value'] for row in rolling_four_quarter_sum(gdp_nominal)}
+        keys, values = _align(central, local)
+        debt_gdp = []
+        for k, c_val, l_val in zip(keys, *values):
+            quarter = str(k)[:7]
+            if quarter in rolling_gdp and rolling_gdp[quarter]:
+                debt_gdp.append({'period': quarter,
+                                 'value': round((c_val + l_val) / rolling_gdp[quarter] * 100, 2)})
+        gdp_ratio_item = _item('政府债务/GDP',
+            (f'最新显性政府债务(国债+地方债)占滚动4季名义GDP {debt_gdp[-1]["value"]:.1f}%'
+             f'（{debt_gdp[-1]["period"]}）。' if debt_gdp else '中央债务与GDP共同季度不足。'),
+            debt_gdp[-1]['value'] if debt_gdp else None, debt_gdp,
+            '(中央政府债务余额+地方政府债务余额)/最近4个连续季度现价GDP之和 ×100；同季对齐',
+            'derived' if debt_gdp else 'insufficient_sample',
+            caveats=['显性政府债券口径，不含城投等或有债务(无官方口径)。',
+                     '中央债务季度序列2024年起，样本短，只作水平参考。'])
+
         latest_revenue = general_annual[-1]['value'] if general_annual else None
         latest_revenue_year = general_annual[-1]['period'][:4] if general_annual else None
         start_year = datetime.now().year
@@ -1063,7 +1133,8 @@ def build_debt_analytics(db_path):
             caveats=['只覆盖已抓取的2024年起逐只国债，非全部存量到期表；票息付息仅可作下限估计。'])
 
     return {'positioning': [dependency_item, rate_item],
-            'analyses': [burden_item, net_item, service_item, capacity_item, treasury_item],
+            'analyses': [burden_item, net_item, service_item, capacity_item, gdp_ratio_item,
+                         treasury_item],
             'notes': ['城投等企业信用类政府关联债务无官方认定口径，本页仅覆盖政府债券，不提供城投债数字。']}
 
 

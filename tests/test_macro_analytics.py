@@ -13,6 +13,7 @@ from services.macro_analytics_service import (
     monotonic_ytd, net_principal_pressure, ratio_series, rollover_dependency,
     beveridge_points, vu_ratio_series,
     chain_mom_index, cross_city_dispersion, current_decline_streak, drawdown_from_index,
+    rolling_four_quarter_sum,
 )
 from services.whats_new_service import make_anomaly_event
 
@@ -211,6 +212,13 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         result = cross_city_dispersion(rows)
         self.assertEqual(len(result), 1)
         self.assertAlmostEqual(result[0]['value'], 2.8284, places=3)  # std([98,102], ddof=1)
+
+    def test_rolling_four_quarter_sum_requires_consecutive(self):
+        rows = [{'period': '2025-03', 'value': 100}, {'period': '2025-06', 'value': 110},
+                {'period': '2025-09', 'value': 120}, {'period': '2025-12', 'value': 130},
+                {'period': '2026-06', 'value': 150}]  # 缺2026-03,窗口断裂
+        result = rolling_four_quarter_sum(rows)
+        self.assertEqual(result, [{'period': '2025-12', 'value': 460}])
 
     def test_anomaly_probe_triggers_only_above_threshold(self):
         normal = [{'period': f'2020-{i+1:02d}', 'value': float(i % 3)} for i in range(12)]

@@ -35,15 +35,57 @@ INDICATORS = {
     'CN_PMI_MFG': ('制造业PMI', '%', 'monthly'),
     'CN_PMI_NONMFG': ('非制造业商务活动指数', '%', 'monthly'),
     'CN_PMI_COMP': ('综合PMI产出指数', '%', 'monthly'),
+    'CN_IP_YOY': ('规模以上工业增加值当月同比(实际)', '%', 'monthly'),
+    'CN_IP_YTD_YOY': ('规模以上工业增加值累计同比', '%', 'monthly'),
+    'CN_RETAIL_YOY': ('社会消费品零售总额当月同比', '%', 'monthly'),
+    'CN_RETAIL_YTD_YOY': ('社会消费品零售总额累计同比', '%', 'monthly'),
+    'CN_FAI_YTD_YOY': ('固定资产投资(不含农户)累计同比', '%', 'monthly'),
+    'CN_GDP_Q_NOMINAL': ('GDP单季现价总量', '亿元', 'quarterly'),
+    'CN_GDP_Q_REAL_YOY': ('GDP单季不变价同比', '%', 'quarterly'),
 }
+
+# 标题→period:月度类兼容"X月份"与累计"1—X月份"(全角—)与"上半年";
+# GDP 季度:一季度→03、二季度和上半年→06、三季度和前三季度→09、四季度和全年→12
+_GDP_QUARTER = {'一季度': '03', '二季度和上半年': '06', '二季度': '06',
+                '三季度和前三季度': '09', '三季度': '09',
+                '四季度和全年': '12', '四季度': '12'}
+
+
+def _month_period(title, keyword):
+    m = re.match(r'^(20\d{2})年(?:1[—-](\d{1,2})月份?|(\d{1,2})月份?|上半年)' + keyword, title)
+    if not m:
+        return None
+    if m.group(2):
+        month = int(m.group(2))
+    elif m.group(3):
+        month = int(m.group(3))
+    else:
+        month = 6  # 上半年
+    return f'{m.group(1)}-{month:02d}'
+
+
+def _gdp_period(title):
+    m = re.match(r'^(20\d{2})年(一季度|二季度和上半年|二季度|三季度和前三季度|三季度|四季度和全年|四季度)'
+                 r'国内生产总值(?:[（(]GDP[）)])?初步核算结果', title)
+    if not m:
+        return None
+    return f'{m.group(1)}-{_GDP_QUARTER[m.group(2)]}'
+
 
 RELEASES = {
     'cpi': {'query': '居民消费价格',
-            'title_re': re.compile(r'^(20\d{2})年(\d{1,2})月份?居民消费价格')},
+            'period_fn': lambda t: _month_period(t, '居民消费价格')},
     'ppi': {'query': '工业生产者出厂价格',
-            'title_re': re.compile(r'^(20\d{2})年(\d{1,2})月份?工业生产者出厂价格')},
+            'period_fn': lambda t: _month_period(t, '工业生产者出厂价格')},
     'pmi': {'query': '中国采购经理指数运行情况',
-            'title_re': re.compile(r'^(20\d{2})年(\d{1,2})月中国采购经理指数运行情况')},
+            'period_fn': lambda t: _month_period(t, '中国采购经理指数运行情况')},
+    'ip': {'query': '规模以上工业增加值',
+           'period_fn': lambda t: _month_period(t, '规模以上工业增加值')},
+    'retail': {'query': '社会消费品零售总额',
+               'period_fn': lambda t: _month_period(t, '社会消费品零售总额')},
+    'fai': {'query': '全国固定资产投资',
+            'period_fn': lambda t: _month_period(t, '全国固定资产投资')},
+    'gdp': {'query': '国内生产总值初步核算结果', 'period_fn': _gdp_period},
 }
 
 
@@ -144,7 +186,67 @@ def parse_pmi_article(html):
     return out
 
 
-PARSERS = {'cpi': parse_cpi_article, 'ppi': parse_ppi_article, 'pmi': parse_pmi_article}
+def parse_ip_article(html):
+    """工业增加值:当月为'同比实际增长X%'(实际=扣价格),累计为'1—X月份…同比增长X%'。"""
+    text = _clean_text(html)
+    out = {}
+    m = re.search(r'规模以上工业增加值同比实际(增长|下降)([\d.]+)%', text)
+    if m:
+        out['CN_IP_YOY'] = _signed(m.group(1), m.group(2))
+    m = re.search(r'1[—-]\d{1,2}月份，?规模以上工业增加值同比(增长|下降)([\d.]+)%', text)
+    if m:
+        out['CN_IP_YTD_YOY'] = _signed(m.group(1), m.group(2))
+    return out
+
+
+def parse_retail_article(html):
+    """社零:当月'X月份，社会消费品零售总额…同比…';累计'1—X月份，…'。"""
+    text = _clean_text(html)
+    out = {}
+    m = re.search(r'(?<![—-])\d{1,2}月份，社会消费品零售总额[\d.]+亿元，同比(增长|下降)([\d.]+)%', text)
+    if m:
+        out['CN_RETAIL_YOY'] = _signed(m.group(1), m.group(2))
+    m = re.search(r'1[—-]\d{1,2}月份，社会消费品零售总额[\d.]+亿元，同比(增长|下降)([\d.]+)%', text)
+    if m:
+        out['CN_RETAIL_YTD_YOY'] = _signed(m.group(1), m.group(2))
+    return out
+
+
+def parse_fai_article(html):
+    text = _clean_text(html)
+    out = {}
+    m = re.search(r'1[—-]\d{1,2}月份，全国固定资产投资（不含农户）[\d.]+亿元，'
+                  r'同比(增长|下降)([\d.]+)%', text)
+    if m:
+        out['CN_FAI_YTD_YOY'] = _signed(m.group(1), m.group(2))
+    return out
+
+
+def parse_gdp_article(html):
+    """初步核算结果表1:行首 GDP,列为 绝对额(单季[,累计]) + 同比(单季[,累计])。
+    Q1 两个数,其余季度四个数;取单季现价绝对额与单季不变价同比。"""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, 'html.parser')
+    for table in soup.find_all('table'):
+        for tr in table.find_all('tr'):
+            cells = [re.sub(r'\s+', '', td.get_text()) for td in tr.find_all(['td', 'th'])]
+            if not cells or cells[0] != 'GDP':
+                continue
+            numbers = []
+            for cell in cells[1:]:
+                m = re.fullmatch(r'-?[\d.]+', cell)
+                if m:
+                    numbers.append(float(cell))
+            if len(numbers) == 2:      # Q1:绝对额、同比
+                return {'CN_GDP_Q_NOMINAL': numbers[0], 'CN_GDP_Q_REAL_YOY': numbers[1]}
+            if len(numbers) >= 4:     # 单季+累计两列:取单季
+                return {'CN_GDP_Q_NOMINAL': numbers[0], 'CN_GDP_Q_REAL_YOY': numbers[2]}
+    return {}
+
+
+PARSERS = {'cpi': parse_cpi_article, 'ppi': parse_ppi_article, 'pmi': parse_pmi_article,
+           'ip': parse_ip_article, 'retail': parse_retail_article,
+           'fai': parse_fai_article, 'gdp': parse_gdp_article}
 
 
 def discover_releases(kind, start_year, end_year=None, max_pages=6, sleep_seconds=0.15):
@@ -168,10 +270,9 @@ def discover_releases(kind, start_year, end_year=None, max_pages=6, sleep_second
                 data = doc.get('data', doc)
                 title = re.sub(r'<[^>]+>', '', str(data.get('title') or '')).strip()
                 url = data.get('url') or ''
-                m = spec['title_re'].match(title)
-                if not m or not url:
+                period = spec['period_fn'](title) if url else None
+                if not period:
                     continue
-                period = f'{m.group(1)}-{int(m.group(2)):02d}'
                 current = found.get(period)
                 if current is None or _release_path_rank(url) < _release_path_rank(current[0]):
                     found[period] = (url, title)
