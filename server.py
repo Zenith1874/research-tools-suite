@@ -63,6 +63,7 @@ from services.us_macro_service import (
     build_us_macro_payload,
     update_us_macro,
 )
+from services.china_macro_service import update_china_macro
 from services.macro_analytics_service import build_macro_analytics_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
 from services.housing_price_service import (
@@ -1912,7 +1913,9 @@ def rates_scheduler_thread(interval_hours=24):
             r1 = _run_update_job('china_rates', lambda: update_china_rates(DB_PATH), blocking=True)
             r2 = _run_update_job('us_macro', lambda: update_us_macro(DB_PATH), blocking=True)
             r3 = _run_update_job('housing', lambda: update_housing_prices(DB_PATH), blocking=True)
-            log.info(f"利率/宏观/房价更新：cn={r1.get('records_upserted')} us={r2.get('records_upserted')} housing={r3.get('records_upserted')}")
+            r4 = _run_update_job('china_macro', lambda: update_china_macro(DB_PATH), blocking=True)
+            log.info(f"利率/宏观/房价更新：cn={r1.get('records_upserted')} us={r2.get('records_upserted')} "
+                     f"housing={r3.get('records_upserted')} cn_macro={r4.get('records_upserted')}")
         except Exception as e:
             log.warning(f'利率/宏观更新失败（旧数据保留）: {e}')
         time.sleep(interval_hours * 3600)

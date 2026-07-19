@@ -651,8 +651,33 @@ def build_china_analytics(db_path):
         else:
             mix_item = _item('央行资产投放结构', '央行资产负债表占比序列缺失，未计算。', None, [],
                              '三项占比同月对齐', 'missing')
-    return {'positioning': positioning,
-            'analyses': [loan_momentum, share_item, hh_lt_item, stock_item, mix_item,
+
+        try:
+            cpi = _rows(conn, 'china_macro_observations', 'CN_CPI_YOY')
+            ppi = _rows(conn, 'china_macro_observations', 'CN_PPI_YOY')
+            pmi = _rows(conn, 'china_macro_observations', 'CN_PMI_MFG')
+        except sqlite3.OperationalError:
+            cpi, ppi, pmi = [], [], []
+        cpi_pos = _position_item('CPI 同比定位', cpi, transform='rate')
+        ppi_pos = _position_item('PPI 同比定位', ppi, transform='rate')
+        pmi_pos = _position_item('制造业PMI定位', pmi, transform='rate')
+        if pmi:
+            pmi_pos['conclusion'] = (f'制造业PMI {pmi[-1]["value"]:.1f}%，'
+                                     f'{"高于" if pmi[-1]["value"] >= 50 else "低于"}50%荣枯线，'
+                                     f'历史分位 {pmi_pos["value"]["percentile"]:.1f}%。')
+        keys, values = _align(cpi, ppi)
+        cp_gap = [{'period': str(k)[:7], 'value': round(a - b, 2)} for k, a, b in zip(keys, *values)]
+        gap_val = cp_gap[-1]['value'] if cp_gap else None
+        cp_item = _item('CPI-PPI 剪刀差',
+            (f'CPI同比减PPI同比 {gap_val:+.1f} 个百分点，'
+             + ('下游价格强于上游，中下游利润空间改善。' if gap_val > 0
+                else '上游价格强于下游，中下游利润承压。') if cp_gap else '数据缺失。'),
+            gap_val, cp_gap,
+            'CN_CPI_YOY − CN_PPI_YOY 同月相减；正值利中下游、负值利上游',
+            'derived' if len(cp_gap) >= MONTHLY_MIN_N else 'insufficient_sample',
+            caveats=['价差是利润分配的粗代理，不等于利润率。', '统计关联不代表因果。'])
+    return {'positioning': positioning + [cpi_pos, ppi_pos, pmi_pos],
+            'analyses': [loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
                          scissors_item, transmission, fiscal, debt_item, spread_item, vol_item]}
 
 
@@ -668,7 +693,7 @@ def build_us_analytics(db_path):
         raw = {code: _rows(conn, 'us_macro_observations', code) for code in
                ('UNRATE','PCEPILFE','GDPC1','DGS3MO','DGS2','DGS5','DGS10','DGS30',
                 'T10Y2Y','T10Y3M','MORTGAGE30US','USREC','T10YIE','JTSJOL','JTSJOR','JTSQUR','JTSHIR',
-                'A091RC1Q027SBEA','FGRECPT')}
+                'A091RC1Q027SBEA','FGRECPT','VIXCLS')}
         core_yoy = yoy(raw['PCEPILFE'], 12)
         gdp_qoq = []
         for i in range(1, len(raw['GDPC1'])):
@@ -685,7 +710,8 @@ def build_us_analytics(db_path):
                        _position_item('10年期美债定位', _monthly_average(raw['DGS10']), transform='rate'),
                        _position_item('10Y－2Y期限利差定位', _monthly_average(raw['T10Y2Y']), transform='rate'),
                        spread3m_position,
-                       _position_item('30年房贷利率定位', _monthly_average(raw['MORTGAGE30US']), transform='rate')]
+                       _position_item('30年房贷利率定位', _monthly_average(raw['MORTGAGE30US']), transform='rate'),
+                       _position_item('VIX 波动率定位', _monthly_average(raw['VIXCLS']), transform='rate')]
 
         sahm = calculate_sahm(raw['UNRATE'])
         rec_map = {str(r['period'])[:7]: int(r['value']) for r in raw['USREC']}
@@ -863,7 +889,51 @@ def build_cross_analytics(db_path):
             'derived' if burden_compare else 'missing',
             caveats=['中国口径不含专项债在政府性基金预算中的付息。',
                      '中国是财政现金YTD口径，美国是NIPA应计口径，数值不完全同口径。'])
-    return {'analyses':[short_item,link,policy,housing,burden_comparison]}
+
+        try:
+            cn_cpi = _rows(conn, 'china_macro_observations', 'CN_CPI_YOY')
+        except sqlite3.OperationalError:
+            cn_cpi = []
+        us_cpi_yoy = yoy(_rows(conn, 'us_macro_observations', 'CPIAUCSL'), 12)
+        keys, values = _align(cn_cpi, [{'period': str(r['period'])[:7], 'value': r['value']}
+                                       for r in us_cpi_yoy])
+        infl_series = [{'period': str(k)[:7], 'cn': a, 'us': b, 'value': a} for k, a, b in zip(keys, *values)]
+        infl_item = _item('中美通胀对照',
+            (f'最新同月中国CPI同比 {infl_series[-1]["cn"]:.1f}%、美国 {infl_series[-1]["us"]:.1f}%，'
+             f'差 {infl_series[-1]["cn"]-infl_series[-1]["us"]:+.1f} 个百分点。'
+             if infl_series else '共同月份缺失。'),
+            infl_series[-1] if infl_series else None, infl_series,
+            '中国=统计局CPI官方同比；美国=CPIAUCSL指数12月同比(derived)；同月对齐',
+            'derived' if infl_series else 'missing',
+            caveats=['两国CPI篮子与统计方法不同，水平差含结构因素。', '统计关联不代表因果。'])
+        if infl_item['data_status'] == 'derived':
+            infl_item['compare_keys'] = [
+                {'key': 'cn', 'label': '中国CPI同比', 'color': '#ff5b78'},
+                {'key': 'us', 'label': '美国CPI同比', 'color': '#4f8fff'}]
+
+        walcl_yoy = yoy(_monthly_average(_rows(conn, 'us_macro_observations', 'WALCL')), 12)
+        try:
+            pboc_assets = _rows(conn, 'pboc_balance_sheet_observations', 'total_assets')
+        except sqlite3.OperationalError:
+            pboc_assets = []
+        pboc_yoy = yoy(pboc_assets, 12)
+        keys, values = _align([{'period': str(r['period'])[:7], 'value': r['value']} for r in pboc_yoy],
+                              [{'period': str(r['period'])[:7], 'value': r['value']} for r in walcl_yoy])
+        bs_series = [{'period': str(k)[:7], 'cn': round(a, 2), 'us': round(b, 2), 'value': round(a, 2)}
+                     for k, a, b in zip(keys, *values)]
+        bs_item = _item('中美央行扩表对照',
+            (f'最新同月央行总资产同比：中国 {bs_series[-1]["cn"]:+.1f}%、美联储 {bs_series[-1]["us"]:+.1f}%。'
+             if bs_series else '共同月份不足(央行月度序列2023年起,同比自2024年起)。'),
+            bs_series[-1] if bs_series else None, bs_series,
+            '中国人民银行资产负债表总资产同比 vs 美联储WALCL周频月均同比；同月对齐',
+            'derived' if bs_series else 'missing',
+            caveats=['中方序列2023年起，同比样本短，只作方向对照不作统计推断。',
+                     '扩表机制不同：美联储以证券购买为主，中国央行以对银行债权与外汇占款为主。'])
+        if bs_item['data_status'] == 'derived':
+            bs_item['compare_keys'] = [
+                {'key': 'cn', 'label': '中国央行总资产同比', 'color': '#ff5b78'},
+                {'key': 'us', 'label': '美联储总资产同比', 'color': '#4f8fff'}]
+    return {'analyses':[short_item,link,policy,housing,burden_comparison,infl_item,bs_item]}
 
 
 def build_debt_analytics(db_path):

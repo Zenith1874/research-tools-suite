@@ -61,6 +61,11 @@ SERIES = [
     ('T10Y3M', '10Y－3M 国债期限利差', '百分点', 'daily', 'FRED 由美联储 H.15 序列计算', 'financial'),
     ('T10YIE', '10年期盈亏平衡通胀率', '%', 'daily', 'FRED 由名义与通胀保值国债计算', 'financial'),
     ('MORTGAGE30US', '30年期固定房贷利率', '%', 'weekly', 'Freddie Mac PMMS', 'financial'),
+    ('WALCL', '美联储总资产', '百万美元', 'weekly', '美联储 H.4.1', 'financial'),
+    ('M2SL', '美国 M2 货币供应', '十亿美元', 'monthly', '美联储 H.6 经季调', 'financial'),
+    ('VIXCLS', 'VIX 波动率指数', '指数', 'daily', 'CBOE', 'financial'),
+    ('DTWEXBGS', '广义美元指数', '指数(2006-01=100)', 'daily', '美联储 H.10 贸易加权', 'financial'),
+    ('UMCSENT', '密歇根大学消费者信心指数', '指数', 'monthly', '密歇根大学消费者调查', 'growth'),
     ('QUSR628BIS', 'BIS 美国实际住宅价格指数（2010=100）', '指数', 'quarterly', 'BIS via FRED', 'financial'),
 ]
 

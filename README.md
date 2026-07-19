@@ -13,7 +13,7 @@
 | `/abdc` | ABDC 期刊质量列表查询（2010–2025 六个版本，按名称/ISSN/FoR 搜索） |
 | `/abdc-astar-research` | **A\* 研究动态（Research Radar）**：追踪 ABDC A\* 期刊最新文章，规则分类 + 个人研究相关性评分 + FT50/UTD24 标签。详见 [docs/abdc_astar_research_PROGRESS.md](docs/abdc_astar_research_PROGRESS.md) |
 | `/china-rates` | 中国利率与汇率（LPR、SHIBOR、人民币对美元中间价；中国货币网官方接口，每日自动更新） |
-| `/us-macro` | 美国宏观（就业、通胀、增长、财政债务、利率金融五组；BLS/劳工部/BEA/财政部/美联储等经 FRED 免 key CSV） |
+| `/us-macro` | 美国宏观（就业、通胀、增长、财政债务、利率金融五组约 46 序列，含美联储总资产/美国 M2/VIX/美元指数/密歇根信心；BLS/劳工部/BEA/财政部/美联储/CBOE 等经 FRED 免 key CSV）。中国实体经济月度指标（CPI/PPI/PMI，统计局新闻稿正文解析，2016 起）由 `services/china_macro_service.py` 供给 `/macro-analytics` |
 | `/housing` | 中国房价（统计局 70 城新房/二手官方指数 + BIS 全国指数 + 安居客二手挂牌价参考及历史双口径走势；挂牌数据仅存本机独立库，不入仓库） |
 
 ## 全站信息架构
