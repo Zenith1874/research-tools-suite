@@ -13,7 +13,7 @@ from services.macro_analytics_service import (
     monotonic_ytd, net_principal_pressure, ratio_series, rollover_dependency,
     beveridge_points, vu_ratio_series,
     chain_mom_index, cross_city_dispersion, current_decline_streak, drawdown_from_index,
-    rolling_four_quarter_sum,
+    rolling_four_quarter_sum, build_panorama_summary,
 )
 from services.whats_new_service import make_anomaly_event
 
@@ -212,6 +212,27 @@ class StatisticalPrimitiveTests(unittest.TestCase):
         result = cross_city_dispersion(rows)
         self.assertEqual(len(result), 1)
         self.assertAlmostEqual(result[0]['value'], 2.8284, places=3)  # std([98,102], ddof=1)
+
+    def test_panorama_summary_extracts_and_skips(self):
+        payload = {
+            'china': {'positioning': [
+                {'title': 'CPI 同比定位', 'data_status': 'derived', 'sample_end': '2026-06',
+                 'value': {'current': 1.0, 'percentile': 30.5}},
+                {'title': '社融存量同比定位', 'data_status': 'insufficient_sample',
+                 'value': None}], 'analyses': []},
+            'us': {'positioning': [], 'analyses': []},
+            'housing': {'positioning': [], 'analyses': []},
+            'debt': {'positioning': [], 'analyses': [
+                {'title': '全国一般预算付息负担率', 'data_status': 'derived',
+                 'sample_end': '2025-12', 'value': 6.24}]},
+        }
+        summary = build_panorama_summary(payload)
+        labels = [s['label'] for s in summary]
+        self.assertIn('中国CPI', labels)          # dict value 提取
+        self.assertIn('付息/收入', labels)         # 标量 value 提取
+        self.assertNotIn('社融同比', labels)       # insufficient 被跳过
+        cpi = next(s for s in summary if s['label'] == '中国CPI')
+        self.assertEqual((cpi['current'], cpi['percentile'], cpi['tab']), (1.0, 30.5, 'china'))
 
     def test_rolling_four_quarter_sum_requires_consecutive(self):
         rows = [{'period': '2025-03', 'value': 100}, {'period': '2025-06', 'value': 110},

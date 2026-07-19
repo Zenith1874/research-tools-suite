@@ -1371,10 +1371,54 @@ def build_housing_analytics(db_path):
                          sales_price_lag, sales_land_lag, rolling_item, dependency_item]}
 
 
+# 全景摘要选卡:(tab, 卡标题, 摘要标签, 数值后缀)
+SUMMARY_PICKS = [
+    ('china', 'GDP单季实际同比定位', '中国GDP同比', '%'),
+    ('china', 'CPI 同比定位', '中国CPI', '%'),
+    ('china', '制造业PMI定位', '制造业PMI', '%'),
+    ('china', '社融存量同比定位', '社融同比', '%'),
+    ('china', '宏观杠杆率(社融口径)', '宏观杠杆率', '%'),
+    ('housing', '70城二手扩散指数', '二手房扩散', '%'),
+    ('us', '失业率定位', '美国失业率', '%'),
+    ('us', '核心PCE同比定位', '美核心PCE', '%'),
+    ('us', '10Y−3M 定位', '美10Y−3M', 'pp'),
+    ('us', '劳动力市场紧张度 V/U', '美V/U比', ''),
+    ('debt', '全国一般预算付息负担率', '付息/收入', '%'),
+    ('debt', '地方债借新还旧依赖度', '借新还旧', '%'),
+]
+
+
+def build_panorama_summary(payload):
+    """从各块既有定位卡提取当前值与历史分位,组成一屏摘要。
+    只转述已计算结果,不新增判断;分位仅作色温展示,不代表好坏。"""
+    summary = []
+    for tab, title, label, suffix in SUMMARY_PICKS:
+        block = payload.get(tab) or {}
+        item = next((a for a in (block.get('positioning', []) + block.get('analyses', []))
+                     if a.get('title') == title), None)
+        if not item or item.get('data_status') not in ('derived',):
+            continue
+        value = item.get('value')
+        if isinstance(value, dict):
+            current, percentile = value.get('current'), value.get('percentile')
+        elif isinstance(value, (int, float)):
+            current, percentile = value, None
+        else:
+            continue
+        if current is None:
+            continue
+        summary.append({'tab': tab, 'label': label, 'suffix': suffix,
+                        'current': current, 'percentile': percentile,
+                        'sample_end': item.get('sample_end')})
+    return summary
+
+
 def build_macro_analytics_payload(db_path):
-    return {'china':build_china_analytics(db_path),'us':build_us_analytics(db_path),
-            'cross':build_cross_analytics(db_path),'housing':build_housing_analytics(db_path),
-            'debt':build_debt_analytics(db_path),
-            'generated_at':datetime.now().isoformat(),
-            'notes':['所有结果均为derived；相关分析只使用同比或差分序列。',
-                     '领先相关、滞后相关与同步不代表因果；v1不含预测、VAR、Granger或协整。']}
+    payload = {'china':build_china_analytics(db_path),'us':build_us_analytics(db_path),
+               'cross':build_cross_analytics(db_path),'housing':build_housing_analytics(db_path),
+               'debt':build_debt_analytics(db_path),
+               'generated_at':datetime.now().isoformat(),
+               'notes':['所有结果均为derived；相关分析只使用同比或差分序列。',
+                        '领先相关、滞后相关与同步不代表因果；v1不含预测、VAR、Granger或协整。']}
+    payload['summary'] = build_panorama_summary(payload)
+    return payload

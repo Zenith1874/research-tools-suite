@@ -118,6 +118,23 @@ def detect_statistical_anomalies(conn, threshold=2.0):
         'AND value IS NOT NULL ORDER BY period')]
     candidates.append(make_anomaly_event('analytics_anomaly_vu_ratio', '劳动力紧张度V/U',
                                          vu_ratio_series(vacancy, unemployment), 60, threshold))
+
+    try:
+        for code, label, indicator in (
+                ('analytics_anomaly_cn_cpi', '中国CPI同比', 'CN_CPI_YOY'),
+                ('analytics_anomaly_cn_ppi', '中国PPI同比', 'CN_PPI_YOY'),
+                ('analytics_anomaly_cn_pmi', '制造业PMI', 'CN_PMI_MFG')):
+            rows = [dict(r) for r in conn.execute(
+                'SELECT period,value FROM china_macro_observations WHERE indicator_code=? '
+                'AND value IS NOT NULL ORDER BY period', (indicator,))]
+            candidates.append(make_anomaly_event(code, label, rows, 60, threshold))
+        sales = [dict(r) for r in conn.execute(
+            "SELECT period,value FROM housing_national_observations "
+            "WHERE indicator_code='sales_area_ytd_yoy_official' AND value IS NOT NULL ORDER BY period")]
+        candidates.append(make_anomaly_event('analytics_anomaly_sales_area', '商品房销售面积累计同比',
+                                             sales, 60, threshold))
+    except sqlite3.OperationalError:
+        pass   # 表未建(如测试空库):静默跳过,不阻塞首页
     return [event for event in candidates if event]
 
 
