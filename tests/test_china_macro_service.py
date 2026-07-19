@@ -4,7 +4,7 @@ import unittest
 from services.china_macro_service import (
     parse_cpi_article, parse_ppi_article, parse_pmi_article,
     parse_ip_article, parse_retail_article, parse_fai_article, parse_gdp_article,
-    _month_period, _gdp_period,
+    parse_econ_article, _month_period, _gdp_period, _econ_period,
 )
 
 
@@ -75,6 +75,26 @@ class ChinaMacroParserTests(unittest.TestCase):
         html = '<table><tr><td>GDP</td><td>327789</td><td>5.4</td></tr></table>'
         self.assertEqual(parse_gdp_article(html),
                          {'CN_GDP_Q_NOMINAL': 327789.0, 'CN_GDP_Q_REAL_YOY': 5.4})
+
+    def test_econ_parses_unemployment_and_trade(self):
+        html = ('5月份，全国城镇调查失业率为5.1%，比上月下降0.1个百分点。'
+                '货物进出口总额44516亿元，同比增长16.9%。其中，出口25878亿元，增长13.8%；'
+                '进口18638亿元，增长21.5%。1—5月份，出口119137亿元，增长11.8%。')
+        self.assertEqual(parse_econ_article(html),
+                         {'CN_UNEMP_SURVEY': 5.1, 'CN_TRADE_YOY': 16.9,
+                          'CN_EXPORT_YOY': 13.8, 'CN_IMPORT_YOY': 21.5})
+
+    def test_econ_period_year_from_url_with_rollover(self):
+        self.assertEqual(_econ_period('5月份国民经济运行总体平稳',
+                                      'https://www.stats.gov.cn/sj/zxfb/202606/t20260616_1.html'),
+                         '2026-05')
+        # 12月稿发在次年:标题月>URL月 → 年减一
+        self.assertEqual(_econ_period('11月份国民经济运行稳中有进',
+                                      'https://www.stats.gov.cn/sj/zxfb/202302/t20230203_1.html'),
+                         '2022-11')
+        self.assertEqual(_econ_period('2026年上半年国民经济运行情况', 'https://x/202607/t2026_1.html'),
+                         '2026-06')
+        self.assertIsNone(_econ_period('能源生产情况', 'https://x/202607/t2026_1.html'))
 
     def test_period_mapping_titles(self):
         self.assertEqual(_month_period('2026年1—2月份社会消费品零售总额增长2%', '社会消费品零售总额'),

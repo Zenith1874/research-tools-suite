@@ -42,6 +42,10 @@ INDICATORS = {
     'CN_FAI_YTD_YOY': ('固定资产投资(不含农户)累计同比', '%', 'monthly'),
     'CN_GDP_Q_NOMINAL': ('GDP单季现价总量', '亿元', 'quarterly'),
     'CN_GDP_Q_REAL_YOY': ('GDP单季不变价同比', '%', 'quarterly'),
+    'CN_UNEMP_SURVEY': ('全国城镇调查失业率(当月)', '%', 'monthly'),
+    'CN_TRADE_YOY': ('货物进出口总额当月同比', '%', 'monthly'),
+    'CN_EXPORT_YOY': ('出口当月同比', '%', 'monthly'),
+    'CN_IMPORT_YOY': ('进口当月同比', '%', 'monthly'),
 }
 
 # 标题→period:月度类兼容"X月份"与累计"1—X月份"(全角—)与"上半年";
@@ -72,21 +76,51 @@ def _gdp_period(title):
     return f'{m.group(1)}-{_GDP_QUARTER[m.group(2)]}'
 
 
+def _econ_period(title, url):
+    """月度《X月份国民经济运行…》标题无年份:月取标题,年取URL路径(/202606/),
+    跨年规则:标题月>URL月(如12月稿发在次年1月)则年减一。季度稿含年份直接解析。"""
+    m = re.match(r'^(20\d{2})年(?:1[—-](\d{1,2})月份?|(\d{1,2})月份?|上半年|一季度|前三季度|全年)国民经济', title)
+    if m:
+        month = int(m.group(2) or m.group(3) or 0)
+        if not month:
+            month = {'上半年': 6, '一季度': 3, '前三季度': 9, '全年': 12}[
+                re.search(r'(上半年|一季度|前三季度|全年)', title).group(1)]
+        return f'{m.group(1)}-{month:02d}'
+    m = re.match(r'^(?:1[—-](\d{1,2})|(\d{1,2}))月份国民经济', title)
+    u = re.search(r'/(20\d{2})(\d{2})/t20', url or '')
+    if not m or not u:
+        return None
+    month = int(m.group(1) or m.group(2))
+    year = int(u.group(1))
+    if month > int(u.group(2)):
+        year -= 1
+    return f'{year}-{month:02d}'
+
+
 RELEASES = {
     'cpi': {'query': '居民消费价格',
-            'period_fn': lambda t: _month_period(t, '居民消费价格')},
+            'period_fn': lambda t, u: _month_period(t, '居民消费价格')},
     'ppi': {'query': '工业生产者出厂价格',
-            'period_fn': lambda t: _month_period(t, '工业生产者出厂价格')},
+            'period_fn': lambda t, u: _month_period(t, '工业生产者出厂价格')},
     'pmi': {'query': '中国采购经理指数运行情况',
-            'period_fn': lambda t: _month_period(t, '中国采购经理指数运行情况')},
+            'period_fn': lambda t, u: _month_period(t, '中国采购经理指数运行情况')},
     'ip': {'query': '规模以上工业增加值',
-           'period_fn': lambda t: _month_period(t, '规模以上工业增加值')},
+           'period_fn': lambda t, u: _month_period(t, '规模以上工业增加值')},
     'retail': {'query': '社会消费品零售总额',
-               'period_fn': lambda t: _month_period(t, '社会消费品零售总额')},
+               'period_fn': lambda t, u: _month_period(t, '社会消费品零售总额')},
     'fai': {'query': '全国固定资产投资',
-            'period_fn': lambda t: _month_period(t, '全国固定资产投资')},
-    'gdp': {'query': '国内生产总值初步核算结果', 'period_fn': _gdp_period},
+            'period_fn': lambda t, u: _month_period(t, '全国固定资产投资')},
+    'gdp': {'query': '国内生产总值初步核算结果', 'period_fn': lambda t, u: _gdp_period(t)},
+    'econ': {'query': '月份国民经济运行', 'period_fn': _econ_period, 'flat_pages': 25,
+             'codes': ('CN_UNEMP_SURVEY', 'CN_TRADE_YOY', 'CN_EXPORT_YOY', 'CN_IMPORT_YOY')},
 }
+
+
+def _kind_codes(kind):
+    spec = RELEASES[kind]
+    if 'codes' in spec:
+        return spec['codes']
+    return tuple(c for c in INDICATORS if c.startswith(f'CN_{kind.upper()}'))
 
 
 def connect(db_path):
@@ -244,42 +278,73 @@ def parse_gdp_article(html):
     return {}
 
 
+def parse_econ_article(html):
+    """月度国民经济运行稿:当月城镇调查失业率 + 货物贸易(总额同比、出口/进口各自同比)。
+    贸易段先当月后累计:出口/进口取货物进出口总额句之后 120 字符窗内的第一对,防串到累计。
+    海关总署站点对境外访问不可达,此处为统计局官方转述的海关数据。"""
+    text = _clean_text(html)
+    out = {}
+    m = re.search(r'(?<![—-])\d{1,2}月份，?全国城镇调查失业率为([\d.]+)%', text)
+    if m:
+        out['CN_UNEMP_SURVEY'] = float(m.group(1))
+    m = re.search(r'货物进出口总额[\d.]+亿元，同比(增长|下降)([\d.]+)%', text)
+    if m:
+        out['CN_TRADE_YOY'] = _signed(m.group(1), m.group(2))
+        window = text[m.end():m.end() + 120]
+        me = re.search(r'出口[\d.]+亿元，(增长|下降)([\d.]+)%', window)
+        if me:
+            out['CN_EXPORT_YOY'] = _signed(me.group(1), me.group(2))
+        mi = re.search(r'进口[\d.]+亿元，(增长|下降)([\d.]+)%', window)
+        if mi:
+            out['CN_IMPORT_YOY'] = _signed(mi.group(1), mi.group(2))
+    return out
+
+
 PARSERS = {'cpi': parse_cpi_article, 'ppi': parse_ppi_article, 'pmi': parse_pmi_article,
            'ip': parse_ip_article, 'retail': parse_retail_article,
-           'fai': parse_fai_article, 'gdp': parse_gdp_article}
+           'fai': parse_fai_article, 'gdp': parse_gdp_article, 'econ': parse_econ_article}
 
 
-def discover_releases(kind, start_year, end_year=None, max_pages=6, sleep_seconds=0.15):
+def discover_releases(kind, start_year, end_year=None, max_pages=6, sleep_seconds=0.35):
     """站内搜索按年发现某类新闻稿;返回 {period: (url, title)},优先 /sj/zxfb/ 路径。"""
     spec = RELEASES[kind]
     end_year = int(end_year or datetime.now().year)
     headers = {**UA, 'Referer': 'https://www.stats.gov.cn/search/s'}
     found = {}
-    for year in range(end_year, int(start_year) - 1, -1):
-        for page in range(1, max_pages + 1):
-            response = requests.post(NBS_SEARCH_API, data={
-                'siteCode': NBS_SEARCH_SITE_CODE, 'qt': f'{year}年{spec["query"]}',
-                'page': page, 'pageSize': 20, 'keyPlace': '1', 'sort': 'relevance',
-            }, headers=headers, timeout=HTTP_TIMEOUT)
-            response.raise_for_status()
-            payload = response.json()
-            if not payload.get('ok'):
-                raise ValueError(f'统计局搜索失败: {payload.get("msg") or payload.get("code")}')
-            docs = payload.get('resultDocs') or []
-            for doc in docs:
-                data = doc.get('data', doc)
-                title = re.sub(r'<[^>]+>', '', str(data.get('title') or '')).strip()
-                url = data.get('url') or ''
-                period = spec['period_fn'](title) if url else None
-                if not period:
-                    continue
-                current = found.get(period)
-                if current is None or _release_path_rank(url) < _release_path_rank(current[0]):
-                    found[period] = (url, title)
-            if (not int(payload.get('currentHits') or 0)
-                    or page * 20 >= int(payload.get('totalHits') or 0)):
-                break
-            time.sleep(sleep_seconds)
+    # flat 模式:标题无年份的稿件(如"5月份国民经济运行…"),单查询按时间降序深翻
+    if spec.get('flat_pages'):
+        year_pages = [(None, page) for page in range(1, spec['flat_pages'] + 1)]
+    else:
+        year_pages = [(year, page) for year in range(end_year, int(start_year) - 1, -1)
+                      for page in range(1, max_pages + 1)]
+    exhausted_years = set()
+    for year, page in year_pages:
+        if year in exhausted_years:
+            continue
+        response = requests.post(NBS_SEARCH_API, data={
+            'siteCode': NBS_SEARCH_SITE_CODE,
+            'qt': spec['query'] if year is None else f'{year}年{spec["query"]}',
+            'page': page, 'pageSize': 20, 'keyPlace': '1',
+            'sort': 'dateDesc' if year is None else 'relevance',
+        }, headers=headers, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get('ok'):
+            raise ValueError(f'统计局搜索失败: {payload.get("msg") or payload.get("code")}')
+        docs = payload.get('resultDocs') or []
+        for doc in docs:
+            data = doc.get('data', doc)
+            title = re.sub(r'<[^>]+>', '', str(data.get('title') or '')).strip()
+            url = data.get('url') or ''
+            period = spec['period_fn'](title, url) if url else None
+            if not period:
+                continue
+            current = found.get(period)
+            if current is None or _release_path_rank(url) < _release_path_rank(current[0]):
+                found[period] = (url, title)
+        if (not int(payload.get('currentHits') or 0)
+                or page * 20 >= int(payload.get('totalHits') or 0)):
+            exhausted_years.add(year)   # 该查询翻尽:年模式跳过该年剩余页,flat 模式即全部结束
         time.sleep(sleep_seconds)
     return found
 
@@ -301,12 +366,12 @@ def update_china_macro(db_path, start_year=None, sleep_seconds=0.3):
                 continue
             for period in sorted(releases):
                 url, title = releases[period]
+                codes = _kind_codes(kind)
                 have = conn.execute(
-                    'SELECT COUNT(*) FROM china_macro_observations '
-                    'WHERE period=? AND indicator_code LIKE ?',
-                    (period, f'CN_{kind.upper()}%')).fetchone()[0]
-                expected = sum(1 for c in INDICATORS if c.startswith(f'CN_{kind.upper()}'))
-                if have >= expected:
+                    'SELECT COUNT(*) FROM china_macro_observations WHERE period=? '
+                    f'AND indicator_code IN ({",".join("?"*len(codes))})',
+                    (period, *codes)).fetchone()[0]
+                if have >= len(codes):
                     continue
                 try:
                     response = requests.get(url, headers=UA, timeout=HTTP_TIMEOUT)

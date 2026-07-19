@@ -676,8 +676,14 @@ def build_china_analytics(db_path):
             fai_yoy = _rows(conn, 'china_macro_observations', 'CN_FAI_YTD_YOY')
             gdp_nominal = _rows(conn, 'china_macro_observations', 'CN_GDP_Q_NOMINAL')
             gdp_real = _rows(conn, 'china_macro_observations', 'CN_GDP_Q_REAL_YOY')
+            unemp = _rows(conn, 'china_macro_observations', 'CN_UNEMP_SURVEY')
+            export_yoy = _rows(conn, 'china_macro_observations', 'CN_EXPORT_YOY')
+            import_yoy = _rows(conn, 'china_macro_observations', 'CN_IMPORT_YOY')
+            trade_yoy = _rows(conn, 'china_macro_observations', 'CN_TRADE_YOY')
         except sqlite3.OperationalError:
             cpi = ppi = pmi = ip_yoy = retail_yoy = fai_yoy = gdp_nominal = gdp_real = []
+            unemp = export_yoy = import_yoy = trade_yoy = []
+        reer = _rows(conn, 'china_rates_observations', 'REER_CNY_BIS')
         try:
             sf_stock = [dict(r) for r in conn.execute(
                 'SELECT month period, SF value FROM monthly_data WHERE SF IS NOT NULL ORDER BY month')]
@@ -706,6 +712,27 @@ def build_china_analytics(db_path):
         retail_pos = _position_item('社零当月同比定位', retail_yoy, transform='rate')
         fai_pos = _position_item('固投累计同比定位', fai_yoy, transform='rate')
         gdp_pos = _position_item('GDP单季实际同比定位', gdp_real, 'quarterly', 'rate')
+        unemp_pos = _position_item('城镇调查失业率定位', unemp, transform='rate')
+        reer_pos = _position_item('人民币实际有效汇率定位', [
+            {'period': str(r['period'])[:7], 'value': r['value']} for r in reer])
+        if reer:
+            reer_pos['method'] = 'BIS实际广义有效汇率(2020=100,升值=指数升);历史分位、60月Z与差分动量'
+
+        keys, values = _align(export_yoy, import_yoy)
+        trade_series = [{'period': str(k)[:7], 'exp': a, 'imp': b, 'value': a}
+                        for k, a, b in zip(keys, *values)]
+        trade_item = _item('出口与进口当月同比',
+            (f'最新出口同比 {trade_series[-1]["exp"]:+.1f}%、进口 {trade_series[-1]["imp"]:+.1f}%，'
+             f'总额同比 {trade_yoy[-1]["value"]:+.1f}%。' if trade_series and trade_yoy else '数据缺失。'),
+            trade_series[-1] if trade_series else None, trade_series,
+            '统计局月度国民经济运行稿转述的海关当月数据；出口/进口各自同比',
+            'derived' if trade_series else 'missing',
+            caveats=['海关总署站点对境外访问不可达，取统计局官方转述口径；人民币计价。',
+                     '统计关联不代表因果。'])
+        if trade_item['data_status'] == 'derived':
+            trade_item['compare_keys'] = [
+                {'key': 'exp', 'label': '出口当月同比', 'color': '#00d4aa'},
+                {'key': 'imp', 'label': '进口当月同比', 'color': '#f5a623'}]
 
         rolling_gdp = rolling_four_quarter_sum(gdp_nominal)
         sf_q = {str(r['period'])[:7]: r['value'] for r in sf_stock
@@ -724,9 +751,9 @@ def build_china_analytics(db_path):
                                '社融存量含政府债券等，分子口径宽于私人部门债务。',
                                '统计关联不代表因果。']
     return {'positioning': positioning + [cpi_pos, ppi_pos, pmi_pos, ip_pos, retail_pos,
-                                          fai_pos, gdp_pos],
+                                          fai_pos, gdp_pos, unemp_pos, reer_pos],
             'analyses': [loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
-                         lev_item, scissors_item, transmission, fiscal, debt_item,
+                         lev_item, trade_item, scissors_item, transmission, fiscal, debt_item,
                          spread_item, vol_item]}
 
 
