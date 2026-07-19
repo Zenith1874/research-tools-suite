@@ -713,6 +713,10 @@ def build_china_analytics(db_path):
         fai_pos = _position_item('固投累计同比定位', fai_yoy, transform='rate')
         gdp_pos = _position_item('GDP单季实际同比定位', gdp_real, 'quarterly', 'rate')
         unemp_pos = _position_item('城镇调查失业率定位', unemp, transform='rate')
+        if unemp and len(unemp) < MONTHLY_MIN_N:
+            unemp_pos.update(
+                conclusion=f'当前 {unemp[-1]["value"]:.1f}%；月频有效样本不足24期，拒绝分位/Z判断。',
+                value=None, data_status='insufficient_sample')
         reer_pos = _position_item('人民币实际有效汇率定位', [
             {'period': str(r['period'])[:7], 'value': r['value']} for r in reer])
         if reer:
