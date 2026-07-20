@@ -1549,6 +1549,15 @@ def build_astar_debug_payload():
     total_art = conn.execute('SELECT COUNT(*) FROM astar_articles WHERE is_duplicate=0').fetchone()[0]
     no_doi = conn.execute("SELECT COUNT(*) FROM astar_articles WHERE (doi IS NULL OR doi='') AND is_duplicate=0").fetchone()[0]
     no_abs = conn.execute("SELECT COUNT(*) FROM astar_articles WHERE abstract_status='missing' AND is_duplicate=0").fetchone()[0]
+    # 缺摘要拆分:已查过 Semantic Scholar 仍无摘要 = 免费元数据确实没有(多为 Elsevier 等
+    # 不向 OpenAlex/Crossref/S2 提供摘要的出版商,政策性缺失,非抓取遗漏);其余为可重试。
+    no_abs_confirmed = conn.execute(
+        "SELECT COUNT(*) FROM astar_articles WHERE abstract_status='missing' AND is_duplicate=0 "
+        "AND semantic_scholar_id IS NOT NULL").fetchone()[0]
+    no_abs_top_journals = [dict(r) for r in conn.execute("""
+        SELECT journal_title, COUNT(*) n FROM astar_articles
+        WHERE abstract_status='missing' AND is_duplicate=0
+        GROUP BY journal_title ORDER BY n DESC LIMIT 8""")]
     dups = conn.execute('SELECT COUNT(*) FROM astar_articles WHERE is_duplicate=1').fetchone()[0]
 
     cls_dist = {r['classification_status']: r['n'] for r in conn.execute(
@@ -1570,7 +1579,10 @@ def build_astar_debug_payload():
             'astar_journal_count': jcount, 'with_issn_count': with_issn,
             'missing_issn_count': jcount - with_issn,
             'articles_total': total_art, 'articles_without_doi': no_doi,
-            'articles_without_abstract': no_abs, 'duplicates': dups,
+            'articles_without_abstract': no_abs,
+            'articles_without_abstract_confirmed_unavailable': no_abs_confirmed,
+            'articles_without_abstract_top_journals': no_abs_top_journals,
+            'duplicates': dups,
             'classification_status_distribution': cls_dist,
             'source_coverage': src_cov, 'articles_per_journal_top40': per_journal,
             'failed_journals_last_run': failed, 'last_update_logs': logs}

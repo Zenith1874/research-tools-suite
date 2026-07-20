@@ -136,6 +136,7 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
 </div>
 
 <div class="kpis" id="kpis"></div>
+<div id="naNote" style="margin:6px 0 2px;padding:8px 11px;border-left:3px solid #9b6b20;background:rgba(245,166,35,.06);color:#c9b58a;font-size:11px;line-height:1.7;border-radius:4px"></div>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="runUpdate('recent',30)">更新最近 30 天</button>
@@ -232,6 +233,16 @@ async function loadStatus(){
     ];
     document.getElementById('kpis').innerHTML = kpis.map(k=>
       `<div class="kpi${k[2]?' hl':''}"><div class="kpi-v">${k[1]==null?'—':k[1]}</div><div class="kpi-l">${k[0]}</div></div>`).join('');
+    // 缺摘要说明:多为出版商不向开放元数据(OpenAlex/Crossref/S2)提供摘要,非抓取遗漏
+    const naEl = document.getElementById('naNote');
+    if(naEl && dbg.articles_without_abstract){
+      const conf = dbg.articles_without_abstract_confirmed_unavailable||0;
+      const tops = (dbg.articles_without_abstract_top_journals||[]).slice(0,5).map(j=>j.journal_title).join('、');
+      const pct = Math.round(conf/dbg.articles_without_abstract*100);
+      naEl.innerHTML = `缺摘要 ${dbg.articles_without_abstract} 篇中,约 ${conf}（${pct}%）已查证 OpenAlex / Crossref / Semantic Scholar / Europe PMC 均无公开摘要——`
+        + `这些出版商(如 ${tops} 等，多为 Elsevier)不向开放元数据提供摘要,摘要仅存于付费墙后,非抓取遗漏。`
+        + `本工具遵守"不抓付费全文"原则,对这些文章仅用标题与元数据(题录仍可检索、可分类)。`;
+    }
   }catch(e){
     document.getElementById('modePill').className='pill pill-err';
     document.getElementById('modePill').textContent='后端未连接';
