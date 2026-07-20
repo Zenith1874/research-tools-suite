@@ -543,16 +543,33 @@ def build_china_analytics(db_path):
 
         central = _rows(conn, 'fiscal_debt_observations', 'central_government_debt_balance')
         local = _rows(conn, 'fiscal_debt_observations', 'local_debt_balance_total')
+        # 主序列:地方债务口径(2017年末起有官方月度余额,年度YoY可用);
+        # 中央债务官方序列2024年起,全口径YoY仅1点,只作最新点补充,不做序列。
+        local_annual = [r for r in local if str(r['period'])[5:7] == '12']
+        local_y = yoy(local_annual, 1, 'annual')
+        keys, vals = _align(local_y, rev_y)
+        debt_gap = [{'period': str(k)[:4], 'value': round(a - b, 4)} for k, a, b in zip(keys, *vals)]
         keys, vals = _align(central, local)
-        debt_total = [{'period': k, 'value': a+b} for k, a, b in zip(keys, *vals)]
-        debt_annual = [r for r in debt_total if str(r['period'])[5:7] == '12']
-        debt_y = yoy(debt_annual, 1, 'annual')
-        keys, vals = _align(debt_y, rev_y)
-        debt_gap = [{'period': k[:4], 'value': round(a-b, 4)} for k, a, b in zip(keys, *vals)]
-        gap_status = 'derived' if len(debt_gap) >= QUARTERLY_MIN_N else 'insufficient_sample'
-        debt_item = _item('债务可持续性差', '年度同口径样本不足16期，拒绝方向判断。' if gap_status != 'derived' else ('债务增速高于收入增速。' if debt_gap[-1]['value'] > 0 else '收入增速高于债务增速。'),
-                          debt_gap[-1]['value'] if debt_gap and gap_status == 'derived' else None, debt_gap,
-                          '中央+地方政府债务余额YoY − 一般公共预算收入YoY；完整年度', gap_status)
+        full_total = [{'period': k, 'value': a + b} for k, a, b in zip(keys, *vals)
+                      if str(k)[5:7] == '12']
+        full_y = yoy(full_total, 1, 'annual')
+        full_note = ''
+        if full_y and rev_y:
+            rev_map = {str(r['period'])[:4]: r['value'] for r in rev_y}
+            last = full_y[-1]
+            year = str(last['period'])[:4]
+            if year in rev_map:
+                full_note = (f'全口径(含国债)最新 {year} 年为 '
+                             f'{last["value"] - rev_map[year]:+.1f} 个百分点。')
+        debt_item = _item('债务-收入增速差(地方口径)',
+            (f'地方债务余额增速持续快于全国财政收入增速 {debt_gap[-1]["value"]:+.1f} 个百分点'
+             f'({debt_gap[-1]["period"]}年)。{full_note}' if debt_gap else '年度同口径样本缺失。'),
+            debt_gap[-1]['value'] if debt_gap else None, debt_gap,
+            '地方政府债务余额年度YoY − 全国一般公共预算收入YoY；'
+            '中央债务官方序列2024年起,全口径仅报最新点',
+            'derived' if debt_gap else 'insufficient_sample',
+            caveats=['分母为全国收入(地方分列收入无官方月度序列),是口径妥协。',
+                     '年度样本少(2018年起),只报数值不作趋势外推。'])
 
         keys, vals = _align(lpr, shibor1y)
         spread = [{'period': k[:7], 'value': round(a-b, 4)} for k, a, b in zip(keys, *vals)]
