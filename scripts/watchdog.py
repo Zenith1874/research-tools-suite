@@ -47,7 +47,8 @@ def kill_server():
           "Where-Object { $_.CommandLine -like '*server.py*' } | "
           "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
     try:
-        subprocess.run(['powershell', '-NoProfile', '-Command', ps], cwd=ROOT, timeout=30)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], cwd=ROOT, timeout=30,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except Exception as e:
         log(f'kill_server 出错: {e}')
 
