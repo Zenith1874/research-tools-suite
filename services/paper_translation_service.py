@@ -1096,6 +1096,17 @@ class PaperTranslationManager:
             raise TranslationError('输出文件不存在')
         return output_path, name
 
+    def read_text_output(self, job_id: str, kind: str = 'summary') -> tuple[str, str]:
+        """Return the text content of a viewable output (summary .md, or .txt/.md
+        translation) for in-page preview without downloading. Binary outputs
+        (PDF/DOCX) raise so the caller falls back to inline-open or download."""
+        path, name = self.output_path(job_id, kind)
+        if path.suffix.casefold() not in {'.md', '.txt'}:
+            raise TranslationError('该文件为 PDF/DOCX，无法在页面内以文本预览')
+        if path.stat().st_size > 4 * 1024 * 1024:
+            raise TranslationError('文件过大，请下载后查看')
+        return path.read_text(encoding='utf-8'), name
+
     def delete_job(self, job_id: str) -> None:
         job_dir = self._job_dir(job_id)
         with self._lock:

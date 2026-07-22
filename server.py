@@ -1493,7 +1493,7 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass   # 客户端提前断开，正常现象
 
-    def send_download(self, file_path, download_name, content_type=None):
+    def send_download(self, file_path, download_name, content_type=None, inline=False):
         """Stream a private translation output without caching it in the browser."""
         try:
             size = os.path.getsize(file_path)
@@ -1502,8 +1502,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', content_type or mime or 'application/octet-stream')
             self.send_header('Content-Length', size)
+            disposition = 'inline' if inline else 'attachment'
             self.send_header('Content-Disposition',
-                             f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(download_name)}")
+                             f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(download_name)}")
             self.send_header('Cache-Control', 'no-store, private')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Referrer-Policy', 'same-origin')
@@ -1574,9 +1575,18 @@ class Handler(BaseHTTPRequestHandler):
             elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/download$', path):
                 if self._require_translation_access():
                     job_id = path.split('/')[4]
-                    kind = 'summary' if (self._query_params().get('type') or '').strip() == 'summary' else 'translation'
+                    params = self._query_params()
+                    kind = 'summary' if (params.get('type') or '').strip() == 'summary' else 'translation'
+                    inline = (params.get('inline') or '').strip() == '1'
                     output_path, output_name = PAPER_TRANSLATION.output_path(job_id, kind)
-                    self.send_download(output_path, output_name)
+                    self.send_download(output_path, output_name, inline=inline)
+            elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/view$', path):
+                if self._require_translation_access():
+                    job_id = path.split('/')[4]
+                    kind = 'summary' if (self._query_params().get('type') or '').strip() == 'summary' else 'translation'
+                    content, name = PAPER_TRANSLATION.read_text_output(job_id, kind)
+                    self.send_json({'content': content, 'filename': name, 'kind': kind},
+                                   cache_control='no-store, private')
             elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}$', path):
                 if self._require_translation_access():
                     self.send_json(PAPER_TRANSLATION.get_job(path.rsplit('/', 1)[1]))
