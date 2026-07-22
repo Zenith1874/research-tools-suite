@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学术语言工作台 · Research Tools Suite</title>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
+<style>
+:root{--bg:#07111f;--panel:#0c192b;--panel2:#102039;--bd:#223651;--text:#e8eef8;--muted:#91a2bb;--blue:#6da5ff;--green:#4dd6aa;--yellow:#f5bd61;--red:#ff7b91}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:24px 20px 64px}h1{font-size:24px;margin:0 0 8px}h2{font-size:16px;margin:0 0 14px}.sub{color:var(--muted);font-size:13px;line-height:1.7}.hero{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;margin-bottom:18px}.model-state{border:1px solid var(--bd);border-radius:8px;padding:9px 12px;font-size:12px;white-space:nowrap}.model-state.ok{border-color:#2f896f;color:#a9f0d9}.model-state.bad{border-color:#8d4f5d;color:#ffc0cb}.notice{border-left:3px solid var(--blue);background:#0a1728;padding:12px 14px;margin:16px 0;color:#b9c8db;font-size:12px;line-height:1.75}.notice strong{color:var(--text)}.grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(330px,.75fr);gap:16px}.card{background:var(--panel);border:1px solid var(--bd);border-radius:9px;padding:18px}.drop{border:1px dashed #44658c;border-radius:8px;padding:28px 18px;text-align:center;background:#081525;cursor:pointer;transition:.15s}.drop:hover,.drop.drag{border-color:var(--blue);background:#0b1b30}.drop-title{font-weight:700;margin-bottom:6px}.drop-detail{font-size:12px;color:var(--muted);line-height:1.6}.selected{margin:10px 0 0;color:#b9d3ff;font-size:12px;word-break:break-all}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.field.full{grid-column:1/-1}.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px}.field input,.field select,.field textarea{width:100%;border:1px solid var(--bd);border-radius:6px;background:#081426;color:var(--text);padding:9px;font:inherit;font-size:12px}.field textarea{min-height:116px;resize:vertical;line-height:1.55}.check{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#bdcadc;line-height:1.55;margin:13px 0}.check input{margin-top:3px}.actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:15px}.actions .help{flex:1;min-width:220px}.btn{border:1px solid var(--bd);border-radius:6px;background:var(--panel2);color:var(--text);padding:9px 13px;font:inherit;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.primary{border-color:#477fcf;background:#17447e}.btn.danger{border-color:#77414c;color:#ffc0cb}.btn:disabled{opacity:.45;cursor:not-allowed}.help{font-size:11px;color:var(--muted);line-height:1.8}.help ol{margin:8px 0 0;padding-left:19px}.privacy-list{margin:12px 0 0;padding-left:18px;color:#c6d2e2;font-size:12px;line-height:1.8}.privacy-list b{color:#9fdcff}.jobs{margin-top:18px}.job-list{display:grid;gap:10px}.job{background:#091627;border:1px solid var(--bd);border-radius:8px;padding:13px}.job-top{display:flex;justify-content:space-between;gap:10px}.job-name{font-size:13px;font-weight:650;word-break:break-all}.badge{font-size:10px;border:1px solid var(--bd);border-radius:999px;padding:3px 7px;height:max-content}.badge.completed{color:#a9f0d9;border-color:#2f896f}.badge.running,.badge.queued{color:#bdd6ff;border-color:#3f6da8}.badge.failed{color:#ffc0cb;border-color:#8d4f5d}.progress{height:6px;border-radius:6px;background:#15263b;overflow:hidden;margin:10px 0}.progress>span{display:block;height:100%;background:linear-gradient(90deg,#4d8fff,#4dd6aa)}.job-meta,.job-error,.job-audit{font-size:11px;color:var(--muted);line-height:1.65}.job-error{color:#ffc0cb}.job-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.empty{padding:18px;border:1px dashed var(--bd);border-radius:7px;text-align:center;color:var(--muted);font-size:12px}@media(max-width:820px){.grid{grid-template-columns:1fr}.hero{flex-direction:column}.model-state{white-space:normal}.form-grid{grid-template-columns:1fr}.field.full{grid-column:auto}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="hero">
+    <div><h1>学术语言工作台</h1><div class="sub">面向研究资料的隐私优先 PDF / DOCX / TXT / MD 文档翻译；访谈与会议录音请使用独立的“研究语音工作台”。</div></div>
+    <div id="model-state" class="model-state">正在检查本地模型隧道…</div>
+  </div>
+
+  <div class="notice"><strong>PDF 边界：</strong>文本型 PDF 会保持原页数、页面尺寸、双栏位置、图片和表格线，在原文本区域回写译文；它是高保真阅读副本，不是无损替换。表格内容、页眉页脚、竖排版权文字和参考文献条目默认保留原文。扫描型 PDF 在本地 OCR 模型尚未配置时会明确失败。</div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>文档翻译 / 总结</h2>
+      <input id="file" type="file" accept=".pdf,.docx,.txt,.md" multiple hidden>
+      <div id="drop" class="drop" tabindex="0" role="button">
+        <div class="drop-title">选择或拖入论文文件（可多选批量）</div>
+        <div class="drop-detail">PDF / DOCX / TXT / MD，默认单个最大 50 MB。可一次选多篇批量处理，逐篇显示进度。不会上传到第三方云 API。</div>
+      </div>
+      <div id="selected" class="selected">尚未选择文件</div>
+
+      <div class="form-grid">
+        <div class="field full"><label for="mode">任务模式</label><select id="mode"><option value="translate">仅翻译</option><option value="summarize">仅总结（逐节小结 + 全文摘要）</option><option value="translate_summarize">翻译 + 总结（一次两个都出）</option></select></div>
+        <div class="field"><label for="source-language">源语言</label><select id="source-language"><option>English</option><option>Simplified Chinese</option><option>Traditional Chinese</option><option>Auto detect</option></select></div>
+        <div class="field"><label for="target-language">目标语言</label><select id="target-language"><option>Simplified Chinese</option><option>English</option><option>Traditional Chinese</option></select></div>
+        <div class="field full"><label for="domain">论文领域提示</label><input id="domain" value="Information Systems, Management, OB/HR, and computational social science"></div>
+        <div class="field full"><label for="glossary">术语表（每行：原词 = 译词）</label><textarea id="glossary" placeholder="sensemaking = 意义建构&#10;algorithmic management = 算法管理&#10;turnover intention = 离职意向"></textarea></div>
+      </div>
+      <label class="check"><input id="preserve-references" type="checkbox" checked><span>保留参考文献条目原文（翻译 “References” 标题，但默认不改动其后的书目信息；若后续出现同级标题则恢复翻译）。</span></label>
+      <div class="actions"><button id="start" class="btn primary" disabled>开始文档翻译</button><button id="refresh-model" class="btn" type="button">重新检查模型</button><span id="submit-message" class="help">请先选择论文文件。</span></div>
+    </section>
+
+    <aside class="card">
+      <h2>隐私与一致性护栏</h2>
+      <ul class="privacy-list">
+        <li><b>文件不出本机：</b>原 PDF/DOCX/TXT/MD 和输出只保存在 gitignored 私有任务目录。</li>
+        <li><b>SSH 加密：</b>模型仅监听自动选中的校内主机 127.0.0.1，经本地 SSH 隧道调用。</li>
+        <li><b>保护片段：</b>引用、DOI、URL、邮箱、数字和指定术语由占位符锁定并逐项校验。</li>
+        <li><b>失败即停：</b>单元数、片段数或保护标记不一致时不生成伪完成结果。</li>
+        <li><b>审计记录：</b>保存模型名、参数、输入/输出 SHA-256、进度及 OOXML 完整性检查。</li>
+      </ul>
+      <div class="help"><ol><li>Qwen 固定使用 Iverson；若机器重启后右上角显示未连接，需要重新启动 Iverson 模型与本机 SSH 隧道，不会回退到 simurgh 或 kaiju。</li><li>页面每 15 秒自动重查模型，也可点击“重新检查模型”。</li><li>可以先选择文件；模型状态显示“可用”后，“开始文档翻译”会自动解锁。</li><li>完成后下载并目视检查 PDF 小字号区域、表格和特殊公式。</li></ol></div>
+    </aside>
+  </div>
+
+  <section class="card jobs">
+    <h2>本机最近任务</h2>
+    <div id="jobs" class="job-list"><div class="empty">正在读取任务…</div></div>
+  </section>
+</main>
+
+<script>
+(function(){
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const fileInput = $('file'), drop = $('drop'), selected = $('selected'), start = $('start');
+  const refreshModel = $('refresh-model'), modelState = $('model-state'), jobsNode = $('jobs'), message = $('submit-message');
+  let chosenFiles = [], modelAvailable = false, maxBytes = 50 * 1024 * 1024, pollTimer = null;
+
+  function esc(value){return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function bytes(value){if(value == null)return '-';const units=['B','KB','MB','GB'];let n=Number(value),i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+units[i];}
+  function label(status){return ({queued:'排队中',running:'处理中',completed:'已完成',failed:'失败',interrupted:'已中断'})[status]||status;}
+  function modeLabel(m){return ({translate:'翻译',summarize:'总结',translate_summarize:'翻译+总结'})[m]||m;}
+  function phaseLabel(p){return ({translate:'翻译中',summarize:'总结中',done:''})[p]||'';}
+  function localTime(iso){if(!iso)return '';const d=new Date(iso);return isNaN(d)?'':d.toLocaleString('zh-CN',{hour12:false});}
+  function encodeOptions(value){const raw=new TextEncoder().encode(JSON.stringify(value));let binary='';raw.forEach(b=>binary+=String.fromCharCode(b));return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+  function glossary(){return $('glossary').value.split(/\r?\n/).map(line=>{const i=line.indexOf('=');return i>0?{source:line.slice(0,i).trim(),target:line.slice(i+1).trim()}:null;}).filter(x=>x&&x.source&&x.target);}
+  async function jsonFetch(url, options){const response=await fetch(url, options);let body={};try{body=await response.json();}catch(e){}if(!response.ok)throw new Error(body.error||('HTTP '+response.status));return body;}
+
+  function syncStartState(){
+    start.disabled=!chosenFiles.length||!modelAvailable;
+    start.textContent=chosenFiles.length>1?('开始处理 '+chosenFiles.length+' 篇'):'开始处理';
+    start.title=!chosenFiles.length?'请先选择论文文件':(modelAvailable?'':'文件已选择；等待本地模型连接后即可开始');
+  }
+  function choose(fileList){
+    const incoming=Array.from(fileList||[]);
+    if(!incoming.length){chosenFiles=[];selected.textContent='尚未选择文件';message.textContent='请先选择论文文件。';syncStartState();return;}
+    const ok=[],bad=[];
+    for(const file of incoming){
+      const ext=(file.name.split('.').pop()||'').toLowerCase();
+      if(!['pdf','docx','txt','md'].includes(ext)){bad.push(file.name+'（类型不支持）');continue;}
+      if(file.size>maxBytes){bad.push(file.name+'（超过 '+bytes(maxBytes)+'）');continue;}
+      ok.push(file);
+    }
+    chosenFiles=ok;
+    selected.innerHTML=(ok.length?'已选 '+ok.length+' 篇：'+ok.map(f=>esc(f.name)+' · '+bytes(f.size)).join('；'):'')+(bad.length?'<div style="color:#ffc0cb;margin-top:4px">跳过：'+esc(bad.join('；'))+'</div>':(ok.length?'':'没有可用文件'));
+    message.textContent=modelAvailable?'文件已选择，可以开始。':'文件已选择；模型尚未连接，连接后按钮会自动解锁。';
+    syncStartState();
+  }
+  drop.addEventListener('click',()=>fileInput.click());drop.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileInput.click();}});
+  fileInput.addEventListener('change',()=>choose(fileInput.files));
+  ['dragenter','dragover'].forEach(name=>drop.addEventListener(name,e=>{e.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(name=>drop.addEventListener(name,e=>{e.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',e=>choose(e.dataTransfer.files));
+
+  async function loadConfig(){
+    refreshModel.disabled=true;refreshModel.textContent='正在检查…';
+    try{
+      const config=await jsonFetch('/api/translation/config',{cache:'no-store'});maxBytes=config.max_upload_bytes||maxBytes;
+      const health=config.model_service||{};
+      modelAvailable=Boolean(health.available);
+      modelState.textContent=modelAvailable?'本地模型可用 · '+config.model:'模型尚未连接 · 文件仍可先选择';
+      modelState.className='model-state '+(modelAvailable?'ok':'bad');
+      if(chosenFiles.length)message.textContent=modelAvailable?'模型已连接，可以开始。':'文件已选择；模型尚未连接，连接后按钮会自动解锁。';
+      syncStartState();
+    }catch(error){modelAvailable=false;modelState.textContent='模型状态检查失败 · '+error.message;modelState.className='model-state bad';if(chosenFiles.length)message.textContent='文件已选择；模型状态恢复后按钮会自动解锁。';syncStartState();}
+    finally{refreshModel.disabled=false;refreshModel.textContent='重新检查模型';}
+  }
+
+  async function submit(){
+    if(!chosenFiles.length)return;start.disabled=true;
+    const options={mode:$('mode').value,source_language:$('source-language').value,target_language:$('target-language').value,domain:$('domain').value,preserve_references:$('preserve-references').checked,glossary:glossary()};
+    const files=chosenFiles.slice();let created=0,failed=0;
+    for(const file of files){
+      message.textContent='正在创建任务 '+(created+failed+1)+' / '+files.length+'…';
+      try{
+        await jsonFetch('/api/translation/jobs',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-Translation-Options':encodeOptions(options)},body:file});
+        created++;
+      }catch(error){failed++;message.textContent='「'+file.name+'」创建失败：'+error.message;}
+    }
+    message.textContent='已创建 '+created+' 个任务'+(failed?('，'+failed+' 个失败'):'')+'（'+modeLabel(options.mode)+'）。';
+    choose([]);fileInput.value='';await loadJobs();beginPolling();
+  }
+  start.addEventListener('click',submit);
+  refreshModel.addEventListener('click',loadConfig);
+
+  function jobHtml(job){
+    const p=(job.progress&&job.progress.percent)||0;
+    const phase=(job.status==='running'&&job.phase)?('（'+phaseLabel(job.phase)+'）'):'';
+    let downloads='';
+    if(job.status==='completed'){
+      if(job.output_filename)downloads+='<a class="btn" href="/api/translation/jobs/'+job.job_id+'/download">下载译文</a>';
+      if(job.summary_filename)downloads+='<a class="btn" href="/api/translation/jobs/'+job.job_id+'/download?type=summary">下载总结</a>';
+    }else if(job.status==='failed'||job.status==='interrupted'){
+      downloads='<button class="btn" data-action="retry" data-id="'+job.job_id+'">重试</button>';
+    }
+    const audit=job.audit&&Object.keys(job.audit).length?'审计：'+(job.audit.ooxml_structure_unchanged?'OOXML 未变 · ':'')+(job.audit.page_sizes_unchanged?'PDF 页尺寸未变 · ':'')+(job.audit.image_counts_unchanged?'PDF 图片未变 · ':'')+(job.audit.minimum_text_scale?'最小缩放 '+Math.round(job.audit.minimum_text_scale*100)+'% · ':'')+(job.audit.translated_units!=null?'翻译单元 '+job.audit.translated_units+' · ':'')+(job.audit.summary?'总结 '+job.audit.summary.section_count+' 节':''):'';
+    const done=job.completed_at?' · 完成 '+esc(localTime(job.completed_at)):'';
+    const preview=(job.status==='completed'&&job.summary_preview)?'<div class="job-audit" style="color:#b9d3ff;margin-top:6px;white-space:pre-wrap">摘要预览：'+esc(job.summary_preview.slice(0,220))+(job.summary_preview.length>220?'…':'')+'</div>':'';
+    return '<article class="job"><div class="job-top"><div class="job-name">'+esc(job.original_filename)+' <span class="badge">'+esc(modeLabel(job.mode||'translate'))+'</span></div><span class="badge '+esc(job.status)+'">'+esc(label(job.status))+esc(phase)+'</span></div><div class="progress"><span style="width:'+Number(p)+'%"></span></div><div class="job-meta">'+esc(job.model)+' · '+esc(job.progress&&job.progress.translated_units||0)+' / '+esc(job.progress&&job.progress.total_units||0)+' 单元'+done+'</div>'+(job.error?'<div class="job-error">'+esc(job.error)+'</div>':'')+(audit?'<div class="job-audit">'+esc(audit)+'</div>':'')+preview+'<div class="job-actions">'+downloads+'<button class="btn danger" data-action="delete" data-id="'+job.job_id+'">删除本机文件</button></div></article>';
+  }
+  async function loadJobs(){
+    try{const data=await jsonFetch('/api/translation/jobs',{cache:'no-store'});jobsNode.innerHTML=data.jobs.length?data.jobs.map(jobHtml).join(''):'<div class="empty">暂无本机翻译任务</div>';return data.jobs;}
+    catch(error){jobsNode.innerHTML='<div class="empty">'+esc(error.message)+'</div>';return [];}
+  }
+  function beginPolling(){if(pollTimer)return;pollTimer=setInterval(async()=>{const jobs=await loadJobs();if(!jobs.some(job=>job.status==='queued'||job.status==='running')){clearInterval(pollTimer);pollTimer=null;}},1800);}
+  jobsNode.addEventListener('click',async event=>{
+    const button=event.target.closest('button[data-action]');if(!button)return;
+    const id=button.dataset.id, action=button.dataset.action;
+    if(action==='delete'&&!confirm('删除该任务的本机原文件、检查点和译文？此操作不可撤销。'))return;
+    button.disabled=true;
+    try{await jsonFetch('/api/translation/jobs/'+id+'/'+action,{method:'POST'});await loadJobs();if(action==='retry')beginPolling();}catch(error){alert(error.message);button.disabled=false;}
+  });
+
+  loadConfig();loadJobs().then(jobs=>{if(jobs.some(job=>job.status==='queued'||job.status==='running'))beginPolling();});
+  setInterval(loadConfig,15000);
+})();
+</script>
+</body>
+</html>
