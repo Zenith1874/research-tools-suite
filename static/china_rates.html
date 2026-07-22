@@ -30,6 +30,8 @@ a.source-link{color:#9ec2ff;text-decoration:none}
 .empty{padding:16px;border:1px dashed var(--bd);border-radius:6px;color:var(--muted);font-size:12px}
 @media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.grid{grid-template-columns:1fr}}
 </style>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
 </head>
 <body><div id="root"></div>
 <script type="text/babel">
@@ -74,14 +76,14 @@ function App(){
     setBusy(true);
     try{
       const r=await fetch('/api/china-rates/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({backfill})});
-      const j=await r.json();setMsg(j.message||j.status);
+      const j=await r.json();if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);setMsg(j.message||j.status);
       // 后台任务：轮询 /api/jobs 直到完成再刷新
       const t=setInterval(async()=>{
         const js=await (await fetch('/api/jobs')).json();
         const job=js.jobs&&js.jobs.china_rates;
         if(job&&job.status!=='running'){clearInterval(t);setBusy(false);setMsg(job.status==='done'?'更新完成':'更新失败:'+(job.error||''));load()}
       },3000);
-    }catch(e){setBusy(false);setMsg('请求失败:'+e)}
+    }catch(e){setBusy(false);setMsg('请求失败:'+(e.message||e))}
   }
   useEffect(()=>{load()},[]);
   if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;

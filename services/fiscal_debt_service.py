@@ -4,12 +4,15 @@ import json
 import re
 import sqlite3
 import time
+import unicodedata
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from urllib.parse import urljoin
 
 
 MOF_LOCAL_DEBT_INDEX = 'https://zwgls.mof.gov.cn/tjsj/'
+MOF_LOCAL_DEBT_BACKUP_INDEX = 'https://yss.mof.gov.cn/zhuantilanmu/dfzgl/sjtj/'
 KNOWN_LOCAL_DEBT_URLS = [
     {'url': 'https://zwgls.mof.gov.cn/tjsj/202606/t20260611_3991502.htm', 'title': '2026年4月地方政府债券发行和债务余额情况'},
     {'url': 'https://zwgls.mof.gov.cn/tjsj/202605/t20260508_3989284.htm', 'title': '2026年3月地方政府债券发行和债务余额情况'},
@@ -53,6 +56,8 @@ LOCAL_DEBT_FIELDS = {
     'local_general_bond_avg_remaining_maturity': ('一般债券剩余平均年限', '年', 'official'),
     'local_special_bond_avg_remaining_maturity': ('专项债券剩余平均年限', '年', 'official'),
     'local_bond_avg_interest_rate': ('地方政府债券平均利率', '%', 'official'),
+    'local_bond_avg_issue_rate': ('地方政府债券年初至今平均发行利率', '%', 'official'),
+    'local_bond_avg_issue_term': ('地方政府债券年初至今平均发行期限', '年', 'official'),
     'local_general_bond_avg_interest_rate': ('一般债券平均利率', '%', 'official'),
     'local_special_bond_avg_interest_rate': ('专项债券平均利率', '%', 'official'),
 }
@@ -414,7 +419,7 @@ def fetch_url(url, timeout=25):
 def normalize_text(html):
     text = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html or '', flags=re.I | re.S)
     text = re.sub(r'<[^>]+>', ' ', text)
-    text = html_lib.unescape(text).replace('\xa0', ' ')
+    text = unicodedata.normalize('NFKC', html_lib.unescape(text)).replace('\xa0', ' ').replace(',', '')
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'(?<=\d)\s+(?=\d)', '', text)
     text = re.sub(r'(?<=\d)\.\s+(?=\d)', '.', text)
@@ -436,13 +441,28 @@ def first(pattern, text, flags=0):
     return n(m.group(1)) if m else None
 
 
-def discover_local_debt_links(limit=48):
-    links = []
-    for page_url in [MOF_LOCAL_DEBT_INDEX, urljoin(MOF_LOCAL_DEBT_INDEX, 'index_1.htm')]:
+def discover_local_debt_links(limit=120, max_pages=20):
+    """深扫财政部地方债月报存档；单页失败不遮蔽其他年份。"""
+    page_urls = []
+    for index_url in (MOF_LOCAL_DEBT_INDEX, MOF_LOCAL_DEBT_BACKUP_INDEX):
+        page_urls.append(index_url)
+        page_urls.extend(urljoin(index_url, f'index_{i}.htm') for i in range(1, max_pages))
+
+    def fetch_page(page_url):
         try:
-            html = fetch_url(page_url)
+            return page_url, fetch_url(page_url, timeout=10)
         except Exception:
-            continue
+            return page_url, ''
+
+    pages = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(fetch_page, page_url) for page_url in page_urls]
+        for future in as_completed(futures):
+            page_url, page_html = future.result()
+            pages[page_url] = page_html
+    links = []
+    for page_url in page_urls:
+        html = pages.get(page_url, '')
         for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.I | re.S):
             href, title_html = m.group(1), m.group(2)
             title = normalize_text(title_html)
@@ -630,8 +650,8 @@ def update_central_government_debt(db_path):
             'source_urls': source_urls}
 
 
-def parse_local_debt_page(url):
-    html = fetch_url(url)
+def parse_local_debt_text(html, url=''):
+    """解析财政部地方债月报正文；仅取年初至今口径和月末余额。"""
     text = normalize_text(html)
     title_match = re.search(r'((?:20\d{2})年(?:\d{1,2})月地方政府债券发行和债务余额情况)', text)
     title = title_match.group(1) if title_match else '地方政府债券发行和债务余额情况'
@@ -644,27 +664,47 @@ def parse_local_debt_page(url):
     if m:
         published = m.group(1).replace('年', '-').replace('月', '-').replace('日', '')
 
-    month_section = re.search(r'（一）当月发行情况。(.*?)(?:（二）|1-\s*\d+月\s*发行情况)', text)
-    ytd_section = re.search(r'（二）.*?发行情况。(.*?)(?:（\s*三\s*）|还本付息情况)', text)
+    month_section = re.search(r'[（(]一[）)]当月发行情况[。.](.*?)(?:[（(]二[）)]|1-\s*\d+月\s*发行情况)', text)
+    ytd_section = re.search(r'[（(]二[）)].*?发行情况[。.](.*?)(?:[（(]\s*三\s*[）)]|还本付息情况)', text)
     repay_section = re.search(r'还本付息情况。(.*?)(?:二、全国地方政府债务余额情况|全国地方政府债务余额情况)', text)
     balance_section = re.search(r'全国地方政府债务余额情况(.*?)(?:注\s*:|附件下载|相关文章|$)', text)
     month = month_section.group(1) if month_section else text
     ytd = ytd_section.group(1) if ytd_section else text
     repay = repay_section.group(1) if repay_section else text
     balance = balance_section.group(1) if balance_section else text
+    # 2019-era pages may omit the (一)/(二) sub-headings. Anchor the cumulative
+    # section on the explicit calendar phrase so the first monthly issuance is
+    # never mistaken for YTD.
+    year, month_number = period.split('-')
+    ytd_marker = re.search(rf'{year}年1-{int(month_number)}月全国发行地方政府债券', text)
+    if ytd_marker:
+        ytd_end = re.search(r'(?:[（(]三[）)]|二、全国地方政府债务余额情况)',
+                            text[ytd_marker.start():])
+        end = ytd_marker.start() + ytd_end.start() if ytd_end else len(text)
+        ytd = text[ytd_marker.start():end]
+    elif not ytd_section and int(month_number) != 1:
+        # Without either a cumulative heading or an explicit 1-N month anchor,
+        # the page only supports current-month issuance. Do not label it YTD.
+        ytd = ''
 
     data = {
         'period': period,
         'source_url': url,
+        'source_name': '财政部预算司' if 'yss.mof.gov.cn' in url else '财政部债务管理司',
         'source_title': title,
         'published_date': published,
         'parser_notes': '解析自财政部债务管理司“地方政府债券发行和债务余额情况”月度原文：发行情况、还本付息情况、债务余额情况。',
         'data_status': 'official',
         'derived_from_ytd_diff': False,
         'local_bond_issuance_current_month': first(r'全国发行地方政府债券合计\s*(\d+\.?\d*)\s*亿元', month),
-        'local_new_bond_issuance_ytd': first(r'全国发行新增地方政府债券\s*(\d+\.?\d*)\s*亿元', ytd),
-        'local_refinancing_bond_issuance_ytd': first(r'全国发行再融资债券\s*(\d+\.?\d*)\s*亿元', ytd),
-        'local_bond_issuance_ytd': first(r'全国发行地方政府债券合计\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_new_bond_issuance_ytd': first(
+            r'(?:全国)?发行(?:新增地方政府债券|新增债券)\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_refinancing_bond_issuance_ytd': first(
+            r'(?:全国)?发行(?:置换债券和)?再融资债券\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_bond_issuance_ytd': first(
+            r'全国发行地方政府债券(?:合计)?\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_bond_avg_issue_term': first(r'地方政府债券平均发行期限\s*(\d+\.?\d*)\s*年', ytd),
+        'local_bond_avg_issue_rate': first(r'地方政府债券平均发行利率\s*(\d+\.?\d*)\s*%', ytd),
         'official_principal_repayment_ytd': first(r'地方政府债券到期偿还本金\s*(\d+\.?\d*)\s*亿元', repay),
         'official_refinancing_repayment_ytd': first(r'发行再融资债券偿还本金\s*(\d+\.?\d*)\s*亿元', repay),
         'official_fiscal_funds_repayment_ytd': first(r'安排财政资金等偿还本金\s*(\d+\.?\d*)\s*亿元', repay),
@@ -691,6 +731,10 @@ def parse_local_debt_page(url):
         data['local_special_bond_issuance_ytd'] = n(m.group(2))
 
     return data
+
+
+def parse_local_debt_page(url):
+    return parse_local_debt_text(fetch_url(url), url)
 
 
 def _latest_ytd(conn, field, period):
@@ -752,7 +796,7 @@ def upsert_local_debt_record(conn, rec):
         ''', (
             'debt_rollover_pressure', 'local_government_debt', field, name, value, unit, unit, 1,
             rec['period'], rec['period'] + '-01', 'monthly',
-            '财政部债务管理司', 'mof_local_debt', rec['source_url'], rec['source_title'], rec['published_date'],
+            rec.get('source_name') or '财政部债务管理司', 'mof_local_debt', rec['source_url'], rec['source_title'], rec['published_date'],
             rec['parser_notes'], status, derived, 0, 0, 0, '',
             f"{name}: {value} {unit}",
             ('official_principal_repayment_ytd - previous_month_official_principal_repayment_ytd' if derived else None),
@@ -765,16 +809,26 @@ def upsert_local_debt_record(conn, rec):
     return new_records, updated_records
 
 
-def update_fiscal_debt(db_path, limit=48):
+def update_fiscal_debt(db_path, limit=120):
     warnings = []
     new_records = updated_records = 0
     try:
         links = discover_local_debt_links(limit=limit)
         with connect(db_path) as conn:
             ensure_fiscal_tables(conn)
-            for item in reversed(links):
+            def fetch_record(item):
+                return parse_local_debt_page(item['url'])
+
+            ordered_links = list(reversed(links))
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_by_url = {item['url']: executor.submit(fetch_record, item)
+                                 for item in ordered_links}
+                # Fetch concurrently, but write oldest-to-newest so a missing
+                # current-month principal can safely use the prior YTD value.
+                completed = [(item, future_by_url[item['url']]) for item in ordered_links]
+            for item, future in completed:
                 try:
-                    rec = parse_local_debt_page(item['url'])
+                    rec = future.result()
                     if not rec:
                         continue
                     n_new, n_upd = upsert_local_debt_record(conn, rec)

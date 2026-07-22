@@ -9,6 +9,7 @@
     python scripts/watchdog.py --interval 20 --fails 2 --port 5001
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -47,7 +48,8 @@ def kill_server():
           "Where-Object { $_.CommandLine -like '*server.py*' } | "
           "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
     try:
-        subprocess.run(['powershell', '-NoProfile', '-Command', ps], cwd=ROOT, timeout=30)
+        subprocess.run(['powershell', '-NoProfile', '-Command', ps], cwd=ROOT, timeout=30,
+                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except Exception as e:
         log(f'kill_server 出错: {e}')
 
@@ -93,6 +95,53 @@ def restart(port):
     log('✅ 重启后健康' if healthy(port) else '❌ 重启后仍不健康(下一轮继续监控)')
 
 
+# ── 论文翻译 SSH 隧道维护:模型状态文件在(远端模型应在跑)而本地隧道不通时自动重建 ──
+TUNNEL_STATE = os.path.join(ROOT, 'data', 'translation_runtime.json')
+TUNNEL_LOCAL_PORT = int(os.environ.get('TRANSLATION_LOCAL_PORT', '18001'))
+TUNNEL_REMOTE_PORT = int(os.environ.get('TRANSLATION_REMOTE_PORT', '8000'))
+_last_tunnel_attempt = 0.0
+
+
+def tunnel_healthy(timeout=4):
+    try:
+        with urllib.request.urlopen(
+                f'http://127.0.0.1:{TUNNEL_LOCAL_PORT}/v1/models', timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def ensure_tunnel():
+    """manage_translation_vllm start 会写状态文件、stop 会删;
+    文件在 → 期望模型在线 → 隧道断了(如重启电脑后)就静默重建。60s 限频。"""
+    global _last_tunnel_attempt
+    if not os.path.exists(TUNNEL_STATE) or tunnel_healthy():
+        return
+    now = time.time()
+    if now - _last_tunnel_attempt < 60:
+        return
+    _last_tunnel_attempt = now
+    try:
+        with open(TUNNEL_STATE, encoding='utf-8') as f:
+            host = (json.load(f).get('host') or '').strip()
+    except Exception:
+        return
+    if not host:
+        return
+    log(f'翻译隧道不通 → 重建 ssh -L {TUNNEL_LOCAL_PORT}→{host}:{TUNNEL_REMOTE_PORT}')
+    try:
+        subprocess.Popen(
+            ['ssh', '-N', '-L', f'{TUNNEL_LOCAL_PORT}:127.0.0.1:{TUNNEL_REMOTE_PORT}',
+             '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=30',
+             '-o', 'ServerAliveCountMax=3', '-o', 'ExitOnForwardFailure=yes', host],
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            | getattr(subprocess, 'DETACHED_PROCESS', 0),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        log(f'ensure_tunnel 出错: {e}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--interval', type=int, default=30, help='探测间隔秒数(默认 30)')
@@ -107,6 +156,7 @@ def main():
         log('启动时检测到服务未运行 → 先拉起')
         start_server()
         time.sleep(8)
+    ensure_tunnel()   # 重启电脑后模型还在远端跑,但本地隧道会掉,登录即恢复
 
     consecutive = 0
     ticks = 0
@@ -121,6 +171,7 @@ def main():
             if consecutive >= args.fails:
                 restart(args.port)
                 consecutive = 0
+        ensure_tunnel()
         ticks += 1
         if ticks % 120 == 0:          # 约每 40 分钟检查一次自身日志大小
             rotate_log(LOGFILE)       # server 日志被运行中进程占用，只在重启时轮转

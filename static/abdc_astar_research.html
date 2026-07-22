@@ -40,12 +40,12 @@ a:hover{text-decoration:underline}
 .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
 .btn-primary:hover{opacity:.9}
 
-.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto;position:sticky;top:0;z-index:60;background:var(--bg)}
+.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto;position:sticky;top:var(--research-nav-height,0px);z-index:60;background:var(--bg)}
 .tab{padding:11px 16px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
 
-#filterBar{position:sticky;top:var(--tabs-height);z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
+#filterBar{position:sticky;top:calc(var(--research-nav-height,0px) + var(--tabs-height));z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
 .pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 14px;color:var(--dim);font-size:12.5px}
 .pbtn{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12.5px}
 .pbtn:hover:not(:disabled){border-color:var(--blue);background:var(--ld)}
@@ -92,7 +92,7 @@ a:hover{text-decoration:underline}
 .card-foot .why{color:var(--muted);flex:1}
 
 table{width:100%;border-collapse:collapse;font-size:12.5px}
-th{text-align:left;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--bd);position:sticky;top:56px;background:var(--bg)}
+th{text-align:left;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--bd);position:sticky;top:calc(var(--research-nav-height,0px) + var(--tabs-height));background:var(--bg)}
 td{padding:9px 10px;border-bottom:1px solid rgba(30,45,69,.5);vertical-align:top}
 tr:hover td{background:var(--s1)}
 
@@ -116,6 +116,8 @@ tr:hover td{background:var(--s1)}
 .footer{padding:18px 22px;font-size:11px;color:var(--muted);border-top:1px solid var(--bd);line-height:1.7}
 pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:14px;font-size:11.5px;color:var(--dim);overflow:auto;max-height:600px}
 </style>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
 </head>
 <body>
 
@@ -134,6 +136,7 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
 </div>
 
 <div class="kpis" id="kpis"></div>
+<div id="naNote" style="margin:6px 0 2px;padding:8px 11px;border-left:3px solid #9b6b20;background:rgba(245,166,35,.06);color:#c9b58a;font-size:11px;line-height:1.7;border-radius:4px"></div>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="runUpdate('recent',30)">更新最近 30 天</button>
@@ -179,14 +182,30 @@ const RELATED_CHIPS = [
   ['ft50','★ FT50'],['utd24','★ UTD24'],
   ['AI_in_organizations','AI / Organizations'],['remote_work','WFH / RTO'],
   ['NLP','Digital trace / NLP'],['OB / HR','OB / HR'],
-  ['Information Systems','IS'],['Operations / Supply Chain','OM / Supply chain'],
+  ['Information Systems','IS'],['Management / Strategy','Management'],
+  ['Operations / Supply Chain','OM / Supply chain'],
   ['Marketing','Marketing / reviews'],['labor_market','Job postings / labor'],
+  ['Computational Social Science','计算社会科学'],
 ];
+
+const NAV_FIELD_MAP = {
+  'information-systems':'Information Systems',
+  'management':'Management / Strategy',
+  'marketing':'Marketing',
+  'ob-hr':'OB / HR',
+  'computational-social-science':'Computational Social Science',
+};
+const NAV_FIELD_SLUGS = Object.fromEntries(Object.entries(NAV_FIELD_MAP).map(([slug,field])=>[field,slug]));
 
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),5000)}
 async function getJSON(u){const r=await fetch(API+u);return r.json()}
-async function postJSON(u,b){const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+async function postJSON(u,b){
+  const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+  const data=await r.json();
+  if(!r.ok){toast(data.error||`请求失败 (HTTP ${r.status})`);return Object.assign({success:false,blocked:true},data)}
+  return data;
+}
 
 function relClass(s){s=s||0;return s>=60?'rel-hi':(s>=35?'rel-mid':'rel-lo')}
 
@@ -214,6 +233,16 @@ async function loadStatus(){
     ];
     document.getElementById('kpis').innerHTML = kpis.map(k=>
       `<div class="kpi${k[2]?' hl':''}"><div class="kpi-v">${k[1]==null?'—':k[1]}</div><div class="kpi-l">${k[0]}</div></div>`).join('');
+    // 缺摘要说明:多为出版商不向开放元数据(OpenAlex/Crossref/S2)提供摘要,非抓取遗漏
+    const naEl = document.getElementById('naNote');
+    if(naEl && dbg.articles_without_abstract){
+      const conf = dbg.articles_without_abstract_confirmed_unavailable||0;
+      const tops = (dbg.articles_without_abstract_top_journals||[]).slice(0,5).map(j=>j.journal_title).join('、');
+      const pct = Math.round(conf/dbg.articles_without_abstract*100);
+      naEl.innerHTML = `缺摘要 ${dbg.articles_without_abstract} 篇中,约 ${conf}（${pct}%）已查证 OpenAlex / Crossref / Semantic Scholar / Europe PMC 均无公开摘要——`
+        + `这些出版商(如 ${tops} 等，多为 Elsevier)不向开放元数据提供摘要,摘要仅存于付费墙后,非抓取遗漏。`
+        + `本工具遵守"不抓付费全文"原则,对这些文章仅用标题与元数据(题录仍可检索、可分类)。`;
+    }
   }catch(e){
     document.getElementById('modePill').className='pill pill-err';
     document.getElementById('modePill').textContent='后端未连接';
@@ -293,7 +322,7 @@ function buildArticleParams(){
   const chip=STATE.relatedChip;
   if(chip && chip!=='all' && chip!=='related'){
     if(['AI_in_organizations','remote_work','labor_market'].includes(chip)) p.set('topic',chip);
-    else if(chip==='NLP') p.set('method','NLP');
+    else if(chip==='NLP' || chip==='Computational Social Science') p.set('method','NLP');
     else if(chip==='ft50') p.set('list','ft50');
     else if(chip==='utd24') p.set('list','utd24');
     else p.set('broad_area',chip);
@@ -403,7 +432,13 @@ function articleCard(a){
   </div>`;
 }
 
-function setChip(k){STATE.relatedChip=k; STATE.journalFilter=null; render();}
+function setChip(k){
+  STATE.relatedChip=k; STATE.journalFilter=null;
+  const url=new URL(window.location.href), slug=NAV_FIELD_SLUGS[k];
+  if(slug) url.searchParams.set('field',slug); else url.searchParams.delete('field');
+  history.replaceState(null,'',url.pathname+url.search+url.hash);
+  render();
+}
 function applyFilters(){
   STATE.filters.q=document.getElementById('q').value.trim();
   STATE.filters.min_relevance=document.getElementById('minrel').value.trim();
@@ -536,8 +571,8 @@ async function renderDebug(){
 // ── 操作 ──
 async function runUpdate(mode,days){
   const body={mode:mode,days:days,abdc_version:'latest'};
-  toast('已启动：'+mode+'（219 个 A* 期刊，预计数分钟，可在 Debug 看进度）');
   const r=await postJSON('/api/abdc/astar/update',body);
+  if(r.blocked)return;
   toast(r.message||'已启动');
   setTimeout(loadStatus,8000);
 }
@@ -660,6 +695,8 @@ window.addEventListener('scroll', ()=>{
   });
 }, {passive:true});
 
+const initialField = new URLSearchParams(window.location.search).get('field');
+if(initialField && NAV_FIELD_MAP[initialField]) STATE.relatedChip=NAV_FIELD_MAP[initialField];
 loadStatus();
 render();
 </script>

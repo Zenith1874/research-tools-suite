@@ -37,6 +37,7 @@ tasks/
 # ── 机器本地 / 工具产物（含本地路径、用户名，勿入公开仓库）──
 .claude/
 .playwright-cli/
+output/playwright/
 pbc_found_links.json
 pbc_search_found.json
 pbc_*.json
@@ -44,8 +45,14 @@ backups/
 data/astar_emb*.npy
 data/astar_emb_meta.json
 data/astar_texts.jsonl.gz
+# 安居客商业挂牌数据仅限本机：不得进入公开仓库或 pboc_data.db 快照
+data/housing_listing.db*
+data/anjuke_raw/
 .secrets
 .env
 .env.local
 outputs/*.db
 outputs/*.log
+outputs/*.jsonl
+# 本地界面 QA 截图，仅用于实现核验，不进入公开仓库
+outputs/research-navigation-qa/

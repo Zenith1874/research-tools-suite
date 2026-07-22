@@ -5,11 +5,11 @@
   - ABDC 期刊质量列表查询
 """
 
-import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys, shutil
+import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys, shutil, hmac, ipaddress
 import html as html_lib
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, urljoin, quote
+from urllib.parse import urlparse, urljoin, quote, unquote
 import urllib.request
 from services.financial_data_service import (
     ensure_financial_tables,
@@ -63,11 +63,15 @@ from services.us_macro_service import (
     build_us_macro_payload,
     update_us_macro,
 )
+from services.china_macro_service import update_china_macro
+from services.macro_analytics_service import build_macro_analytics_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
 from services.housing_price_service import (
     build_housing_payload,
     update_housing_prices,
 )
+from services.anjuke_listing_service import build_anjuke_payload, update_anjuke_listings
+from services.housing_compare_service import build_housing_compare_payload
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -94,12 +98,23 @@ from services.abdc_astar_research_service import (
     build_journal_health_payload,
     llm_classify_articles,
 )
+from services.paper_translation_service import (
+    PaperTranslationManager,
+    TranslationError,
+    TRANSLATION_MAX_UPLOAD_BYTES,
+    decode_options_header,
+)
+from services.audio_transcription_service import (
+    AUDIO_DEFAULT_MAX_UPLOAD_BYTES,
+    AudioTranscriptionError,
+    AudioTranscriptionManager,
+    decode_audio_options_header,
+)
 
 logging.basicConfig(level=logging.INFO,
     format='%(asctime)s  %(levelname)-7s  %(message)s', datefmt='%H:%M:%S')
 log = logging.getLogger(__name__)
 
-PORT       = 5001
 _ROOT      = os.path.dirname(os.path.abspath(__file__))
 
 def _load_secrets():
@@ -119,9 +134,24 @@ def _load_secrets():
         pass
 _load_secrets()
 
+HOST       = os.environ.get('SERVER_HOST', '0.0.0.0').strip() or '0.0.0.0'
+PORT       = int(os.environ.get('SERVER_PORT', '5001'))
+ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '')
+CORS_ORIGIN = os.environ.get('CORS_ORIGIN', '').strip()
+ALLOW_REMOTE_WRITES = os.environ.get('ALLOW_REMOTE_WRITES', '0').strip().lower() in ('1', 'true', 'yes')
+TRANSLATION_ALLOW_REMOTE = os.environ.get('TRANSLATION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
+AUDIO_TRANSCRIPTION_ALLOW_REMOTE = os.environ.get(
+    'AUDIO_TRANSCRIPTION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
+AUDIO_MAX_UPLOAD_BYTES = int(os.environ.get(
+    'AUDIO_MAX_UPLOAD_BYTES', AUDIO_DEFAULT_MAX_UPLOAD_BYTES))
+MAX_POST_BYTES = 1024 * 1024
+
 DB_PATH    = os.path.join(_ROOT, 'pboc_data.db')
 STATIC_DIR = os.path.join(_ROOT, 'static')
 ABDC_PATH  = os.path.join(_ROOT, 'data', 'abdc_data.json')
+PAPER_TRANSLATION = PaperTranslationManager(os.path.join(_ROOT, 'data', 'translation_jobs'))
+AUDIO_TRANSCRIPTION = AudioTranscriptionManager(
+    os.path.join(_ROOT, 'data', 'audio_jobs'), max_upload_bytes=AUDIO_MAX_UPLOAD_BYTES)
 BASE    = 'https://www.pbc.gov.cn'
 INDEX_URL = BASE + '/goutongjiaoliu/113456/113469/index.html'
 HEADERS = {
@@ -276,6 +306,8 @@ _UPDATE_LOCK = threading.Lock()     # 全局写任务串行锁(同一时刻只�
 _DATA_CACHE = {'body': None, 'ts': 0.0}
 _DATA_CACHE_LOCK = threading.Lock()
 _DATA_CACHE_TTL = 600
+_ANALYTICS_CACHE = {'body': None, 'ts': 0.0}
+_ANALYTICS_CACHE_LOCK = threading.Lock()
 
 def _data_cache_get():
     with _DATA_CACHE_LOCK:
@@ -291,6 +323,18 @@ def _data_cache_set(body):
 def _data_cache_clear():
     with _DATA_CACHE_LOCK:
         _DATA_CACHE['body'] = None
+    with _ANALYTICS_CACHE_LOCK:
+        _ANALYTICS_CACHE['body'] = None
+
+def _analytics_payload():
+    with _ANALYTICS_CACHE_LOCK:
+        if (_ANALYTICS_CACHE['body'] is not None and
+                time.time() - _ANALYTICS_CACHE['ts'] < _DATA_CACHE_TTL):
+            return _ANALYTICS_CACHE['body']
+    body = build_macro_analytics_payload(DB_PATH)
+    with _ANALYTICS_CACHE_LOCK:
+        _ANALYTICS_CACHE.update(body=body, ts=time.time())
+    return body
 
 def _run_update_job(name, fn, blocking=False):
     """在后台守护线程里跑 fn()，串行(共享 _UPDATE_LOCK)。
@@ -1355,22 +1399,67 @@ def scrape_and_update():
         return {'status':'error','message':str(e)}
 
 # ── HTTP API ──────────────────────────────────────────────────────────────────
-def cors_headers():
-    return {
-        'Access-Control-Allow-Origin': '*',
+def _is_loopback_address(address):
+    """Return True only for a real loopback client, including IPv4-mapped IPv6."""
+    try:
+        ip = ipaddress.ip_address(str(address).split('%', 1)[0])
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        return ip.is_loopback
+    except ValueError:
+        return False
+
+
+def _write_request_allowed(client_ip, supplied_token=''):
+    """Keep LAN viewing available while protecting all state-changing routes."""
+    if _is_loopback_address(client_ip) or ALLOW_REMOTE_WRITES:
+        return True
+    return bool(ADMIN_TOKEN and supplied_token and
+                hmac.compare_digest(ADMIN_TOKEN, supplied_token))
+
+
+def _translation_access_allowed(client_ip, supplied_token=''):
+    """Paper names, text, and outputs are loopback-only unless explicitly enabled."""
+    if _is_loopback_address(client_ip):
+        return True
+    return bool(TRANSLATION_ALLOW_REMOTE and
+                _write_request_allowed(client_ip, supplied_token))
+
+
+def _audio_access_allowed(client_ip, supplied_token=''):
+    """Raw recordings and transcripts stay loopback-only unless explicitly enabled."""
+    if _is_loopback_address(client_ip):
+        return True
+    return bool(AUDIO_TRANSCRIPTION_ALLOW_REMOTE and
+                _write_request_allowed(client_ip, supplied_token))
+
+
+def cors_headers(origin=None):
+    headers = {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Headers': ('Content-Type, X-Research-Admin-Token, '
+                                         'X-File-Name, X-Translation-Options, X-Audio-Options'),
         'Content-Type': 'application/json; charset=utf-8',
     }
+    # Same-origin browser requests need no CORS header. Cross-origin access is
+    # opt-in so an arbitrary website cannot read or mutate the local service.
+    if CORS_ORIGIN and origin and (CORS_ORIGIN == '*' or origin == CORS_ORIGIN):
+        headers['Access-Control-Allow-Origin'] = origin if CORS_ORIGIN != '*' else '*'
+        headers['Vary'] = 'Origin'
+    return headers
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
 
-    def send_json(self, data, code=200):
+    def send_json(self, data, code=200, cache_control=None):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         try:
             self.send_response(code)
-            for k,v in cors_headers().items(): self.send_header(k,v)
+            for k,v in cors_headers(self.headers.get('Origin')).items(): self.send_header(k,v)
+            if cache_control:
+                self.send_header('Cache-Control', cache_control)
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'same-origin')
             self.send_header('Content-Length', len(body))
             self.end_headers()
             self.wfile.write(body)
@@ -1387,6 +1476,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', mime or 'application/octet-stream')
             self.send_header('Content-Length', len(body))
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'same-origin')
             # 缓存策略：HTML 每次向服务器校验(改完立即生效，不用强刷)；
             # vendor 第三方库文件不变，长缓存一年。
             if os.sep + 'vendor' + os.sep in file_path:
@@ -1402,6 +1493,49 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass   # 客户端提前断开，正常现象
 
+    def send_download(self, file_path, download_name, content_type=None, inline=False):
+        """Stream a private translation output without caching it in the browser."""
+        try:
+            size = os.path.getsize(file_path)
+            mime, _ = mimetypes.guess_type(download_name)
+            fallback = re.sub(r'[^A-Za-z0-9._-]+', '_', download_name) or 'translation.docx'
+            self.send_response(200)
+            self.send_header('Content-Type', content_type or mime or 'application/octet-stream')
+            self.send_header('Content-Length', size)
+            disposition = 'inline' if inline else 'attachment'
+            self.send_header('Content-Disposition',
+                             f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(download_name)}")
+            self.send_header('Cache-Control', 'no-store, private')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'same-origin')
+            self.end_headers()
+            with open(file_path, 'rb') as handle:
+                shutil.copyfileobj(handle, self.wfile, length=1024 * 1024)
+        except FileNotFoundError:
+            self.send_json({'error': 'not found'}, 404)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
+    def _require_translation_access(self):
+        allowed = _translation_access_allowed(
+            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+        if not allowed:
+            self.send_json({
+                'error': '论文翻译文件默认仅允许服务器本机访问',
+                'code': 'translation_local_only',
+            }, 403)
+        return allowed
+
+    def _require_audio_access(self):
+        allowed = _audio_access_allowed(
+            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+        if not allowed:
+            self.send_json({
+                'error': '原始录音、转录与字幕默认仅允许服务器本机访问',
+                'code': 'audio_local_only',
+            }, 403)
+        return allowed
+
     def _serve_static(self, url_path):
         # 把 URL 路径映射到 STATIC_DIR 下的文件，防止目录穿越
         rel = url_path.lstrip('/').replace('/', os.sep)
@@ -1413,7 +1547,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        for k,v in cors_headers().items(): self.send_header(k,v)
+        for k,v in cors_headers(self.headers.get('Origin')).items(): self.send_header(k,v)
         self.end_headers()
 
     def do_GET(self):
@@ -1422,11 +1556,63 @@ class Handler(BaseHTTPRequestHandler):
             # API routes
             if   path == '/api/data':       self._api_data()
             elif path == '/api/status':     self._api_status()
-            elif path == '/api/health':     self.send_json({'status':'ok','time':datetime.now().isoformat()})
+            elif path == '/api/health':
+                can_write = _write_request_allowed(
+                    self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+                self.send_json({'status':'ok', 'time':datetime.now().isoformat(),
+                                'bound_host': HOST, 'client_can_write': can_write,
+                                'access_mode': 'manage' if can_write else 'read_only'})
             elif path == '/api/jobs':
                 with _JOBS_LOCK:
                     jobs = dict(_JOBS)
                 self.send_json({'update_lock_busy': _UPDATE_LOCK.locked(), 'jobs': jobs})
+            elif path == '/api/translation/config':
+                if self._require_translation_access():
+                    self.send_json(PAPER_TRANSLATION.config())
+            elif path == '/api/translation/jobs':
+                if self._require_translation_access():
+                    self.send_json({'jobs': PAPER_TRANSLATION.list_jobs()})
+            elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/download$', path):
+                if self._require_translation_access():
+                    job_id = path.split('/')[4]
+                    params = self._query_params()
+                    kind = 'summary' if (params.get('type') or '').strip() == 'summary' else 'translation'
+                    inline = (params.get('inline') or '').strip() == '1'
+                    output_path, output_name = PAPER_TRANSLATION.output_path(job_id, kind)
+                    self.send_download(output_path, output_name, inline=inline)
+            elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/view$', path):
+                if self._require_translation_access():
+                    job_id = path.split('/')[4]
+                    kind = 'summary' if (self._query_params().get('type') or '').strip() == 'summary' else 'translation'
+                    content, name = PAPER_TRANSLATION.read_text_output(job_id, kind)
+                    self.send_json({'content': content, 'filename': name, 'kind': kind},
+                                   cache_control='no-store, private')
+            elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}$', path):
+                if self._require_translation_access():
+                    self.send_json(PAPER_TRANSLATION.get_job(path.rsplit('/', 1)[1]))
+            elif path == '/api/audio/config':
+                if self._require_audio_access():
+                    self.send_json(AUDIO_TRANSCRIPTION.config())
+            elif path == '/api/audio/jobs':
+                if self._require_audio_access():
+                    self.send_json({'jobs': AUDIO_TRANSCRIPTION.list_jobs()},
+                                   cache_control='no-store, private')
+            elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/download$', path):
+                if self._require_audio_access():
+                    job_id = path.split('/')[4]
+                    output_kind = (self._query_params().get('format') or 'bundle').strip()
+                    output_path, output_name, output_type = AUDIO_TRANSCRIPTION.output_path(
+                        job_id, output_kind)
+                    self.send_download(output_path, output_name, output_type)
+            elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/result$', path):
+                if self._require_audio_access():
+                    job_id = path.split('/')[4]
+                    self.send_json(AUDIO_TRANSCRIPTION.view_result(job_id),
+                                   cache_control='no-store, private')
+            elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}$', path):
+                if self._require_audio_access():
+                    self.send_json(AUDIO_TRANSCRIPTION.get_job(path.rsplit('/', 1)[1]),
+                                   cache_control='no-store, private')
             elif path == '/api/abdc/data':  self._api_abdc_data()
             elif path == '/api/financial/debug': self._api_financial_debug()
             elif path == '/api/fiscal-debt/data': self._api_fiscal_debt_data()
@@ -1456,8 +1642,13 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
+            elif path == '/api/analytics': self.send_json(_analytics_payload())
+            elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing','/api/analytics/debt'):
+                self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
             elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
             elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
+            elif path == '/api/housing/anjuke':   self.send_json(build_anjuke_payload())
+            elif path == '/api/housing/compare':  self.send_json(build_housing_compare_payload(DB_PATH))
             elif path == '/api/abdc/astar/semantic-search':
                 from services.astar_semantic_service import semantic_search
                 p = self._query_params()
@@ -1467,6 +1658,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.send_json(semantic_search(q, topk=int(p.get('topk', 30))))
             # Static page routes
+            elif path == '/favicon.ico':
+                self.send_response(204)
+                self.send_header('Cache-Control', 'public, max-age=86400')
+                self.end_headers()
             elif path in ('/', ''):         self.send_file(os.path.join(STATIC_DIR, 'index.html'))
             elif path in ('/dashboard', '/dashboard.html'):
                 self.send_file(os.path.join(STATIC_DIR, 'dashboard.html'))
@@ -1480,20 +1675,51 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'abdc', 'index.html'))
             elif path in ('/abdc-astar-research', '/abdc-astar-research/'):
                 self.send_file(os.path.join(STATIC_DIR, 'abdc_astar_research.html'))
+            elif path in ('/paper-translation', '/paper-translation/'):
+                self.send_file(os.path.join(STATIC_DIR, 'paper_translation.html'))
+            elif path in ('/audio-transcription', '/audio-transcription/'):
+                self.send_file(os.path.join(STATIC_DIR, 'audio_transcription.html'))
+            elif re.match(r'^/audio-transcription/results/[0-9a-f]{32}/?$', path):
+                self.send_file(os.path.join(STATIC_DIR, 'audio_transcription_result.html'))
             elif path in ('/china-rates', '/china-rates/'):
                 self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
             elif path in ('/us-macro', '/us-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
+            elif path in ('/macro-analytics', '/macro-analytics/'):
+                self.send_file(os.path.join(STATIC_DIR, 'macro_analytics.html'))
             elif path in ('/housing', '/housing/'):
                 self.send_file(os.path.join(STATIC_DIR, 'housing.html'))
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
+        except (TranslationError, AudioTranscriptionError) as e:
+            self.send_json({'error': str(e)}, 400)
         except Exception as e:
             self.send_json({'error':str(e)},500)
 
     def do_POST(self):
         path = urlparse(self.path).path
+        try:
+            content_length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            self.send_json({'error': 'invalid Content-Length'}, 400)
+            return
+        if path == '/api/translation/jobs':
+            request_limit = TRANSLATION_MAX_UPLOAD_BYTES
+        elif path == '/api/audio/jobs':
+            request_limit = AUDIO_MAX_UPLOAD_BYTES
+        else:
+            request_limit = MAX_POST_BYTES
+        if content_length > request_limit:
+            self.send_json({'error': 'request body too large', 'max_bytes': request_limit}, 413)
+            return
+        if not _write_request_allowed(
+                self.client_address[0], self.headers.get('X-Research-Admin-Token', '')):
+            self.send_json({
+                'error': '当前为局域网只读访问；更新、保存和情景运行仅允许本机操作',
+                'code': 'remote_write_forbidden',
+            }, 403)
+            return
         if path == '/api/scrape':
             self.send_json(_run_update_job('pboc_scrape', scrape_and_update))
         elif path == '/api/financial/update':
@@ -1508,6 +1734,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
         elif path == '/api/housing/update':
             self.send_json(_run_update_job('housing', lambda: update_housing_prices(DB_PATH)))
+        elif path == '/api/housing/anjuke/update':
+            self.send_json(_run_update_job('anjuke', update_anjuke_listings))
         elif path == '/api/fiscal-debt/local-government-debt/update':
             self.send_json(_run_update_job('local_government_debt', lambda: run_fiscal_module_update(DB_PATH, 'local_government_debt')))
         elif path == '/api/fiscal-debt/central-government-debt/update':
@@ -1548,6 +1776,20 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=lambda: enrich_with_semantic_scholar(limit=limit), daemon=True).start()
             self.send_json({'status': 'started',
                             'message': 'Semantic Scholar 补全已启动（补摘要/引用/学科，按批进行，可在 Debug 看进度）'})
+        elif path == '/api/translation/jobs':
+            self._api_translation_create(content_length)
+        elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/retry$', path):
+            self._api_translation_retry(path.split('/')[4])
+        elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/delete$', path):
+            self._api_translation_delete(path.split('/')[4])
+        elif path == '/api/audio/jobs':
+            self._api_audio_create(content_length)
+        elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/retry$', path):
+            self._api_audio_retry(path.split('/')[4])
+        elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/delete$', path):
+            self._api_audio_delete(path.split('/')[4])
+        elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/translate$', path):
+            self._api_audio_translate(path.split('/')[4])
         else:
             self.send_json({'error':'not found'},404)
 
@@ -1559,6 +1801,88 @@ class Handler(BaseHTTPRequestHandler):
         payload = build_api_payload(DB_PATH)
         _data_cache_set(payload)
         self.send_json(payload)
+
+    def _api_translation_create(self, content_length):
+        if not self._require_translation_access():
+            return
+        try:
+            filename = unquote(self.headers.get('X-File-Name', ''))
+            options = decode_options_header(self.headers.get('X-Translation-Options'))
+            content = self.rfile.read(content_length) if content_length else b''
+            self.send_json(PAPER_TRANSLATION.create_job(filename, content, options), 202)
+        except TranslationError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '创建翻译任务失败'}, 500)
+
+    def _api_translation_retry(self, job_id):
+        if not self._require_translation_access():
+            return
+        try:
+            self.send_json(PAPER_TRANSLATION.retry_job(job_id), 202)
+        except TranslationError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '重试翻译任务失败'}, 500)
+
+    def _api_translation_delete(self, job_id):
+        if not self._require_translation_access():
+            return
+        try:
+            PAPER_TRANSLATION.delete_job(job_id)
+            self.send_json({'status': 'deleted'})
+        except TranslationError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '删除翻译任务失败'}, 500)
+
+    def _api_audio_create(self, content_length):
+        if not self._require_audio_access():
+            return
+        try:
+            filename = unquote(self.headers.get('X-File-Name', ''))
+            options = decode_audio_options_header(self.headers.get('X-Audio-Options'))
+            job = AUDIO_TRANSCRIPTION.create_job_from_stream(
+                filename, self.rfile, content_length, options)
+            self.send_json(job, 202, cache_control='no-store, private')
+        except AudioTranscriptionError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '创建语音任务失败'}, 500)
+
+    def _api_audio_retry(self, job_id):
+        if not self._require_audio_access():
+            return
+        try:
+            self.send_json(AUDIO_TRANSCRIPTION.retry_job(job_id), 202,
+                           cache_control='no-store, private')
+        except AudioTranscriptionError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '重试语音任务失败'}, 500)
+
+    def _api_audio_delete(self, job_id):
+        if not self._require_audio_access():
+            return
+        try:
+            AUDIO_TRANSCRIPTION.delete_job(job_id)
+            self.send_json({'status': 'deleted'}, cache_control='no-store, private')
+        except AudioTranscriptionError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '删除语音任务失败'}, 500)
+
+    def _api_audio_translate(self, job_id):
+        if not self._require_audio_access():
+            return
+        try:
+            options = decode_audio_options_header(self.headers.get('X-Audio-Options'))
+            self.send_json(AUDIO_TRANSCRIPTION.translate_job(job_id, options), 202,
+                           cache_control='no-store, private')
+        except AudioTranscriptionError as exc:
+            self.send_json({'error': str(exc)}, 400)
+        except Exception:
+            self.send_json({'error': '追加语音翻译失败'}, 500)
 
     def _api_financial_update(self):
         self.send_json(_run_update_job('financial', _do_financial_update))
@@ -1828,7 +2152,9 @@ def rates_scheduler_thread(interval_hours=24):
             r1 = _run_update_job('china_rates', lambda: update_china_rates(DB_PATH), blocking=True)
             r2 = _run_update_job('us_macro', lambda: update_us_macro(DB_PATH), blocking=True)
             r3 = _run_update_job('housing', lambda: update_housing_prices(DB_PATH), blocking=True)
-            log.info(f"利率/宏观/房价更新：cn={r1.get('records_upserted')} us={r2.get('records_upserted')} housing={r3.get('records_upserted')}")
+            r4 = _run_update_job('china_macro', lambda: update_china_macro(DB_PATH), blocking=True)
+            log.info(f"利率/宏观/房价更新：cn={r1.get('records_upserted')} us={r2.get('records_upserted')} "
+                     f"housing={r3.get('records_upserted')} cn_macro={r4.get('records_upserted')}")
         except Exception as e:
             log.warning(f'利率/宏观更新失败（旧数据保留）: {e}')
         time.sleep(interval_hours * 3600)
@@ -1844,6 +2170,19 @@ def fiscal_scheduler_thread(interval_hours=168):
             log.info(f"财政债务更新完成：status={result.get('status')}")
         except Exception as e:
             log.warning(f'财政债务更新失败（旧数据保留）: {e}')
+        time.sleep(interval_hours * 3600)
+
+
+def anjuke_scheduler_thread(interval_hours=168):
+    """安居客挂牌价每周低频检查；验证页只记录 blocked，不影响官方住房模块。"""
+    log.info(f'安居客挂牌价调度器启动，每 {interval_hours}h 低频检查')
+    time.sleep(2700)
+    while True:
+        try:
+            result = _run_update_job('anjuke', update_anjuke_listings, blocking=True)
+            log.info(f"安居客挂牌价更新：ok={result.get('cities_ok')} blocked={result.get('cities_blocked')} failed={result.get('cities_failed')}")
+        except Exception as e:
+            log.warning(f'安居客挂牌价更新失败（旧数据保留，官方70城不受影响）: {e}')
         time.sleep(interval_hours * 3600)
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────
@@ -1880,6 +2219,9 @@ if __name__ == '__main__':
         threading.Thread(target=astar_scheduler_thread, daemon=True).start()
     if os.environ.get('FISCAL_AUTO', '1') != '0':
         threading.Thread(target=fiscal_scheduler_thread, daemon=True).start()
+    # 三城人工确认并完成首次全量验收前默认关闭；验收后改为默认开启。
+    if os.environ.get('ANJUKE_AUTO', '0') != '0':
+        threading.Thread(target=anjuke_scheduler_thread, daemon=True).start()
     if os.environ.get('RATES_AUTO', '1') != '0':
         threading.Thread(target=rates_scheduler_thread, daemon=True).start()
     if os.environ.get('BACKUP_AUTO', '1') != '0':
@@ -1892,8 +2234,8 @@ if __name__ == '__main__':
         dedup_article_sources()             # 来源表去重 + 建唯一索引（幂等）
     except Exception as e:
         log.warning(f'prestige lists 载入失败: {e}')
-    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
-    log.info(f'服务启动 → http://localhost:{PORT}')
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    log.info(f'服务启动 → http://localhost:{PORT} (bind={HOST}, remote_writes={ALLOW_REMOTE_WRITES})')
     try:
         server.serve_forever()
     except KeyboardInterrupt:
