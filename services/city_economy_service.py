@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime
 
 from services.anjuke_listing_service import build_anjuke_payload
+from services.data_conflict_service import list_conflicts
 from services.regional_fiscal_service import (
     build_regional_fiscal_payload,
     ensure_regional_fiscal_table,
@@ -53,6 +54,13 @@ FISCAL_LABELS = {
     'principal_repayment': '地方债还本',
     'interest_expenditure': '地方债付息',
     'interest_burden': '付息/一般预算收入',
+}
+
+GDP_INDICATORS = {
+    'nominal_gdp': '地区 GDP',
+    'primary_industry_value': '第一产业增加值',
+    'secondary_industry_value': '第二产业增加值',
+    'tertiary_industry_value': '第三产业增加值',
 }
 
 
@@ -102,7 +110,9 @@ def _read_gdp_rows(conn):
         return [dict(row) for row in conn.execute(f'''SELECT country_code,region_code,
           region_name,indicator_code,period,value,unit,data_status,source_name,source_url
           FROM gdp_region_observations WHERE country_code='CN' AND region_code IN ({marks})
-          AND indicator_code='nominal_gdp' ORDER BY region_code,period''', codes)]
+          AND indicator_code IN ('nominal_gdp','primary_industry_value',
+          'secondary_industry_value','tertiary_industry_value')
+          ORDER BY region_code,period,indicator_code''', codes)]
     except sqlite3.OperationalError:
         return []
 
@@ -126,6 +136,15 @@ def _listing_rows(listing_payload):
     return rows
 
 
+def _merge_fiscal_rows(*groups):
+    """Merge fiscal rows in priority order, de-duplicating indicator-period pairs."""
+    selected = {}
+    for group in groups:
+        for row in group:
+            selected.setdefault((row['indicator_code'], row['period']), row)
+    return list(selected.values())
+
+
 def build_city_economy_payload(db_path, listing_payload=None):
     """Build a compact city selector payload without relabelling province data."""
     conn = _connect(db_path)
@@ -134,13 +153,16 @@ def build_city_economy_payload(db_path, listing_payload=None):
         official_housing = _read_official_housing(conn)
         gdp_rows = _read_gdp_rows(conn)
         regional = build_regional_fiscal_payload(conn)
+        conflicts = list_conflicts(conn, domain='city_economy')
     finally:
         conn.close()
 
     listing_payload = listing_payload if listing_payload is not None else build_anjuke_payload()
     listing = _listing_rows(listing_payload)
     target_provinces = {item['province_code'] for item in CITY_CONFIG}
-    target_cities = {item['city_code'] for item in CITY_CONFIG}
+    target_cities = ({item['city_code'] for item in CITY_CONFIG} |
+                     {item['province_code'] for item in CITY_CONFIG
+                      if item['municipality']})
     fiscal_all = [row for row in regional['rows'] if row['country_code'] == 'CN']
     province_fiscal = [row for row in fiscal_all
                        if row['region_code'] in target_provinces and
@@ -155,15 +177,17 @@ def build_city_economy_payload(db_path, listing_payload=None):
     city_items = []
     for config in CITY_CONFIG:
         city = config['city']
-        direct_fiscal = [row for row in city_fiscal if row['region_code'] == config['city_code']]
+        direct_code = config['province_code'] if config['municipality'] else config['city_code']
+        direct_city_fiscal = [row for row in city_fiscal
+                              if row['region_code'] == direct_code]
+        direct_fiscal = direct_city_fiscal
         province_rows = [row for row in province_fiscal
                          if row['region_code'] == config['province_code']]
         if config['municipality']:
             level_rows = [row for row in province_level_fiscal
                           if row['region_code'] == config['province_code']]
-            total_codes = {row['indicator_code'] for row in province_rows}
-            direct_fiscal = province_rows + [row for row in level_rows
-                                             if row['indicator_code'] not in total_codes]
+            direct_fiscal = _merge_fiscal_rows(
+                direct_city_fiscal, province_rows, level_rows)
             fiscal_scope = 'city_total'
             fiscal_scope_label = '全市口径为主（直辖市；个别指标为市本级补充）'
         elif direct_fiscal:
@@ -217,12 +241,13 @@ def build_city_economy_payload(db_path, listing_payload=None):
     fiscal_rows = []
     for config in CITY_CONFIG:
         if config['municipality']:
+            direct_rows = [row for row in city_fiscal
+                           if row['region_code'] == config['province_code']]
             total_rows = [row for row in province_fiscal
                           if row['region_code'] == config['province_code']]
-            total_codes = {row['indicator_code'] for row in total_rows}
-            rows = total_rows + [row for row in province_level_fiscal
-                                 if row['region_code'] == config['province_code'] and
-                                 row['indicator_code'] not in total_codes]
+            level_rows = [row for row in province_level_fiscal
+                          if row['region_code'] == config['province_code']]
+            rows = _merge_fiscal_rows(direct_rows, total_rows, level_rows)
         else:
             rows = [row for row in city_fiscal if row['region_code'] == config['city_code']]
         for row in rows:
@@ -247,7 +272,10 @@ def build_city_economy_payload(db_path, listing_payload=None):
         'generated_at': datetime.now().isoformat(), 'cities': city_items,
         'official_housing': official_housing, 'listing_housing': listing,
         'fiscal_rows': fiscal_rows, 'gdp_rows': gdp_city_rows,
-        'indicator_labels': FISCAL_LABELS,
+        'indicator_labels': {**FISCAL_LABELS, **GDP_INDICATORS},
+        # 多来源分歧：保留了城市已发布值，但统计局在线序列给出不同数字的观测。
+        # 这是口径修订的证据，单列出来供人工判断，不影响上面的取值。
+        'source_conflicts': conflicts,
         'coverage': {
             'cities': len(CITY_CONFIG),
             'official_housing_cities': len({row['city'] for row in official_housing}),
@@ -268,6 +296,7 @@ def build_city_economy_payload(db_path, listing_payload=None):
             '省级数据属于省域经济，不在此模块出现，也不用于填补城市缺口；城市值未入库即显示为缺失。',
             '直辖市的省级行政区即该市本身，可作为全市口径；个别仅市本级披露的指标单独标注。',
             '政府性基金和土地出让数据仅在官方决算直接披露时展示，缺失不估算、不按比例拆分。',
+            '七个国家统计局主要城市使用在线年度序列补历史；official_revised 表示该在线序列可能包含历史修订。',
             '安居客为商业挂牌参考，本地独立库存储，不进入公开数据库或公开快照。',
         ],
     }

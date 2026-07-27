@@ -76,6 +76,8 @@ from services.housing_compare_service import build_housing_compare_payload
 from services.city_economy_service import build_city_economy_payload
 from services.city_official_service import update_city_official
 from services.city_mirror_service import update_city_mirror
+from services.city_nbs_service import update_city_nbs
+from services.city_fiscal_decision_service import update_city_fiscal_decisions
 from services.debt_ceiling_service import update_debt_ceiling
 from services.debt_projection_service import build_projection_payload, parse_overrides
 from services.abdc_astar_research_service import (
@@ -1861,7 +1863,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job('gdp', lambda: update_gdp(DB_PATH)))
         elif path == '/api/city-economy/update':
             self.send_json(_run_update_job('city_official',
-                                           lambda: update_city_official(DB_PATH)))
+                                           lambda: {
+                                               'nbs_major_cities': update_city_nbs(DB_PATH),
+                                               'city_bulletins': update_city_official(DB_PATH),
+                                               'city_fiscal_decisions': update_city_fiscal_decisions(DB_PATH),
+                                           }))
+        elif path == '/api/city-economy/update-nbs':
+            # 统计局单独入口：默认走 30 天新鲜度护栏，?force=1 强制重抓
+            self.send_json(_run_update_job(
+                'city_nbs',
+                lambda: update_city_nbs(
+                    DB_PATH, force=self._query_params().get('force') in ('1', 'true'))))
         elif path == '/api/debt-ceiling/update':
             self.send_json(_run_update_job('debt_ceiling',
                                            lambda: update_debt_ceiling(DB_PATH)))

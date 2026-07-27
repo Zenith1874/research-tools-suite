@@ -13,6 +13,7 @@
     .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0}.chart-head{align-items:center;margin-bottom:7px}.chart-title{font-size:14px}.chart-sub{font-size:11px;color:var(--muted);margin-top:4px}.axis{display:flex;align-items:end;gap:6px;flex-wrap:wrap}.axis select,.axis input{padding:5px 7px;height:30px;font-size:11px}.axis input{width:82px}.chart{height:300px}.empty{display:grid;place-items:center;height:240px;color:var(--muted);border:1px dashed #28405b;border-radius:8px}.wide{grid-column:1/-1}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kpi{background:var(--panel2);border-radius:9px;padding:12px;min-height:100px}.kpi b{font-size:20px;display:block;margin:6px 0;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted);line-height:1.4}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.badge{display:inline-flex;border:1px solid #38516d;border-radius:999px;padding:3px 8px;font-size:11px;color:#b9cae0}.badge.city{border-color:#247c68;color:#62e4c5}.badge.province{border-color:#8a661c;color:#ffd36e}.hidden{display:none!important}.scroll{overflow:auto;max-height:560px}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:9px;border-bottom:1px solid #1b3048;text-align:right}th:first-child,td:first-child{text-align:left}th{position:sticky;top:0;background:var(--panel);z-index:1}td small{display:block;color:var(--muted);margin-top:3px}
     .ctag{font-style:normal;font-size:10px;border-radius:4px;padding:1px 4px;margin-right:5px;border:1px solid #38516d;color:#b9cae0}
     td.lvl{background:rgba(87,149,255,.05)}td.lvl .ctag{border-color:#31588f;color:#9dc0ff}
+    td.rev{background:rgba(39,211,178,.04)}td.rev .ctag{border-color:#247c68;color:#62e4c5}
     td.mir{background:rgba(224,193,104,.05)}td.mir .ctag{border-color:#6b5a2b;color:#e0c168}td.mir small{color:#b09a5c}
     td.gap{color:#c07fa4;font-size:12px;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(192,127,164,.07) 6px,rgba(192,127,164,.07) 12px)}
     .badge.gap{border-color:#5a3f52;color:#e39ac2}
@@ -23,7 +24,7 @@
 <body>
 <main class="wrap">
   <div class="head">
-    <div><h1>城市经济</h1><div class="sub">多城市 × 多指标横向比较；房价按城市，财政与 GDP 严格标记城市口径或所属省背景。</div></div>
+    <div><h1>城市经济</h1><div class="sub">多城市 × 多指标横向比较；房价、财政与 GDP 均只使用城市自身口径，缺失不以省级数据代替。</div></div>
     <div class="actions"><a href="/housing">房价完整详页</a><a href="/gdp">中美 GDP 与地方排行</a></div>
   </div>
 
@@ -54,7 +55,7 @@
     <div id="compareCounts" class="count-strip"></div>
     <div id="comparisonCharts" class="chart-grid"></div>
     <div class="card wide" style="margin-top:14px"><div class="row"><h3>所选城市最新值矩阵</h3><span class="muted">各列独立取所选期间内最新可用值；缺失不补零</span></div>
-      <div class="legend"><span>本表<b>只放城市自己的官方值</b>，省级数据不参与填充：</span><span><i class="ctag" style="border-color:#31588f;color:#9dc0ff">市本级</i>该指标只有市本级披露，口径小于全市，不与别城全市值直接比</span><span><i class="ctag" style="border-color:#6b5a2b;color:#e0c168">镜像</i>官方原站本机不可达，取自第三方镜像转存的该市公报原件</span><span><i class="ctag" style="border-color:#5a3f52;color:#e39ac2">待入库</i>该市这项官方值尚未采集，保持空缺</span><span>无标注＝该市全市口径</span></div>
+      <div class="legend"><span>本表<b>只放城市自己的官方值</b>，省级数据不参与填充：</span><span><i class="ctag" style="border-color:#31588f;color:#9dc0ff">市本级</i>该指标只有市本级披露，口径小于全市，不与别城全市值直接比</span><span><i class="ctag" style="border-color:#247c68;color:#62e4c5">统计局修订</i>国家统计局在线主要城市序列，可能含历史修订</span><span><i class="ctag" style="border-color:#6b5a2b;color:#e0c168">镜像</i>官方原站本机不可达，仅作补缺</span><span><i class="ctag" style="border-color:#5a3f52;color:#e39ac2">待入库</i>该市这项官方值尚未采集，保持空缺</span><span>无标注＝该市全市口径</span></div>
       <div class="muted" style="font-size:11px;margin-bottom:8px">同一列的年份可能不同（如卖地收入北京 2022、上海 2023），跨口径或跨年份的格子不要直接横向相减。</div><div class="scroll"><table><thead id="matrixHead"></thead><tbody id="matrixBody"></tbody></table></div></div>
   </section>
 
@@ -74,6 +75,8 @@
   <section id="coverage" class="hidden">
     <div id="coverageCards" class="coverage"></div>
     <div class="card" style="margin-top:14px"><h3>十城数据覆盖</h3><div class="scroll"><table><thead><tr><th>城市</th><th>官方房价</th><th>挂牌历史</th><th>财政采用口径</th><th>财政记录</th><th>GDP记录</th></tr></thead><tbody id="coverageTable"></tbody></table></div></div>
+    <div class="card" style="margin-top:14px"><div class="row"><h3>多来源数值分歧</h3><span class="muted" id="conflictNote"></span></div>
+      <div class="scroll"><table><thead><tr><th>城市</th><th>指标</th><th>年份</th><th>已采用值</th><th>来源</th><th>统计局修订值</th><th>差异</th><th>原文</th></tr></thead><tbody id="conflictTable"></tbody></table></div></div>
     <div class="card" style="margin-top:14px"><h3>口径纪律</h3><div id="caveats" class="muted"></div></div>
   </section>
 </main>

@@ -7,6 +7,9 @@ const METRICS=[
   {key:'listing_price',label:'挂牌均价',group:'房价',source:'listing',field:'avg_price',unit:'元/㎡'},
   {key:'listing_yoy',label:'挂牌同比',group:'房价',source:'listing',field:'yoy_pct',unit:'%',rate:true},
   {key:'nominal_gdp',label:'地区 GDP',group:'经济',source:'gdp',code:'nominal_gdp',field:'value',unit:'亿元'},
+  {key:'primary_industry_value',label:'第一产业增加值',group:'经济',source:'gdp',code:'primary_industry_value',field:'value',unit:'亿元'},
+  {key:'secondary_industry_value',label:'第二产业增加值',group:'经济',source:'gdp',code:'secondary_industry_value',field:'value',unit:'亿元'},
+  {key:'tertiary_industry_value',label:'第三产业增加值',group:'经济',source:'gdp',code:'tertiary_industry_value',field:'value',unit:'亿元'},
   {key:'general_budget_revenue',label:'一般预算收入',group:'财政',source:'fiscal',code:'general_budget_revenue',field:'value',unit:'亿元'},
   {key:'general_budget_expenditure',label:'一般预算支出',group:'财政',source:'fiscal',code:'general_budget_expenditure',field:'value',unit:'亿元'},
   {key:'gov_fund_revenue',label:'政府性基金收入',group:'财政',source:'fiscal',code:'gov_fund_revenue',field:'value',unit:'亿元'},
@@ -102,6 +105,9 @@ function cellScope(metric,row,city){
   if(row.data_status==='official_mirror')
     return{cls:'mir',tag:'镜像',note:'镜像',
            title:`${city}官方原站在本机网络不可达，此值取自第三方镜像转存的该市统计局公报原件；已与可直连城市逐条对照验证`};
+  if(row.data_status==='official_revised')
+    return{cls:'rev',tag:'统计局修订',note:'在线修订序列',
+           title:`${city}国家统计局主要城市年度数据；在线序列可能包含历史修订`};
   if(row.scope_label==='市本级补充'||row.scope_label==='市本级')
     return{cls:'lvl',tag:'市本级',note:'市本级',title:`${city}市本级口径，小于全市口径，与其他城市的全市值不可直接比较`};
   return{cls:'',tag:'',note:'',title:`${city}${row.scope_label||'城市口径'}`};
@@ -154,7 +160,20 @@ function renderDetail(){
   const g=detailRows(payload.gdp_rows,'nominal_gdp'),gp=g.map(r=>r.period),gm=map(g,'nominal_gdp');$('detailGdpTitle').textContent=c.gdp_scope_label;line('detail:gdp',$('detailGdp'),gp,[{label:'名义 GDP',data:gp.map(p=>gm.get(p)??null),borderColor:'#5795ff',pointRadius:2}],'亿元');renderFiscalTable();
 }
 function renderFiscalTable(){const c=detailCity(),code=$('fiscalMetric').value,rows=detailRows(payload.fiscal_rows,code).sort((a,b)=>b.period.localeCompare(a.period));$('fiscalTable').innerHTML=rows.map(r=>`<tr><td>${r.period}</td><td>${fmt(r.value,2)} ${r.unit}</td><td>${r.scope_label}</td><td>${r.data_status}</td><td>${r.source_url?`<a href="${r.source_url}" target="_blank" rel="noopener">原文</a>`:'—'}</td></tr>`).join('')||'<tr><td colspan="5">暂无该口径直接数据</td></tr>'}
-function renderCoverage(){const c=payload.coverage;$('coverageCards').innerHTML=`<div>目标城市<b>${c.cities}</b></div><div>官方房价城市<b>${c.official_housing_cities}</b></div><div>挂牌历史城市<b>${c.listing_cities}</b></div><div>有市级财政<b>${c.direct_city_fiscal_cities}</b></div><div>有城市 GDP<b>${c.city_gdp_cities}</b></div>`;$('coverageTable').innerHTML=payload.cities.map(x=>`<tr><td>${x.city}</td><td>${x.coverage.official_housing_records}</td><td>${x.coverage.listing_records}</td><td><span class="badge ${x.fiscal_scope==='missing'?'gap':'city'}">${x.fiscal_scope_label}</span></td><td>${x.coverage.fiscal_records}</td><td>${x.coverage.gdp_records}</td></tr>`).join('');$('caveats').innerHTML=payload.caveats.map(x=>`<p>• ${x}</p>`).join('')}
+function renderCoverage(){const c=payload.coverage;$('coverageCards').innerHTML=`<div>目标城市<b>${c.cities}</b></div><div>官方房价城市<b>${c.official_housing_cities}</b></div><div>挂牌历史城市<b>${c.listing_cities}</b></div><div>有市级财政<b>${c.direct_city_fiscal_cities}</b></div><div>有城市 GDP<b>${c.city_gdp_cities}</b></div>`;$('coverageTable').innerHTML=payload.cities.map(x=>`<tr><td>${x.city}</td><td>${x.coverage.official_housing_records}</td><td>${x.coverage.listing_records}</td><td><span class="badge ${x.fiscal_scope==='missing'?'gap':'city'}">${x.fiscal_scope_label}</span></td><td>${x.coverage.fiscal_records}</td><td>${x.coverage.gdp_records}</td></tr>`).join('');$('caveats').innerHTML=payload.caveats.map(x=>`<p>• ${x}</p>`).join('');renderConflicts()}
+function renderConflicts(){
+  const rows=payload.source_conflicts||[],labels=payload.indicator_labels||{};
+  $('conflictNote').textContent=rows.length
+    ?`${rows.length} 条：城市已发布值与国家统计局在线序列不一致（相对差异 >0.5%）。此处仅记录，不改变上方取值。`
+    :'当前没有超过 0.5% 的跨来源分歧。';
+  $('conflictTable').innerHTML=rows.map(r=>{
+    const pct=(r.relative_diff*100).toFixed(2);
+    return `<tr><td>${r.region_name}</td><td>${labels[r.indicator_code]||r.indicator_code}</td><td>${r.period}</td>`+
+      `<td>${fmt(r.kept_value,2)}</td><td><small>${r.kept_source_name||'—'}</small></td>`+
+      `<td>${fmt(r.candidate_value,2)}</td><td>${r.relative_diff>0?'+':''}${pct}%</td>`+
+      `<td>${r.candidate_source_url?`<a href="${r.candidate_source_url}" target="_blank" rel="noopener">统计局</a>`:'—'}</td></tr>`;
+  }).join('')||'<tr><td colspan="8">无</td></tr>';
+}
 function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['compare','detail','coverage'].forEach(x=>$(x).classList.toggle('hidden',x!==tab));if(tab==='detail')renderDetail();if(tab==='coverage')renderCoverage()}
 function init(){
   selectedCities=new Set(payload.cities.map(c=>c.city));$('city').innerHTML=payload.cities.map(c=>`<option>${c.city}</option>`).join('');const periods=[...new Set(payload.official_housing.concat(payload.listing_housing,payload.fiscal_rows,payload.gdp_rows).map(r=>r.period))].sort();$('start').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('end').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('start').value=periods[0]||'';$('end').value=periods.at(-1)||'';const fiscalCodes=[...new Set(payload.fiscal_rows.map(r=>r.indicator_code))];$('fiscalMetric').innerHTML=fiscalCodes.map(code=>`<option value="${code}">${payload.indicator_labels[code]||code}</option>`).join('');$('fiscalMetric').value='general_budget_revenue';
