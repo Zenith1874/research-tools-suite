@@ -117,6 +117,36 @@ def _read_gdp_rows(conn):
         return []
 
 
+INDICATOR_LABELS = {
+    'residential_avg_price': '住宅新房均价（官方）',
+    'commercial_housing_sold_area': '商品房销售面积',
+    'real_estate_investment': '房地产开发投资',
+    'land_purchased_area': '房企购置土地面积',
+    'retail_sales': '社会消费品零售总额',
+    'trade_total': '货物进出口总额',
+    'household_deposits': '住户存款余额',
+    'registered_population': '年末户籍人口',
+    'avg_wage': '在岗职工平均工资',
+}
+
+
+def _read_city_indicators(conn):
+    """城市年度一般指标；按城市码归到十城，落不到的地区直接丢弃。"""
+    by_code = {item['city_code']: item['city'] for item in CITY_CONFIG}
+    marks = ','.join('?' for _ in by_code)
+    try:
+        rows = conn.execute(f'''SELECT region_code,region_name,indicator_code,period,value,
+          unit,data_status,source_name,source_url FROM city_indicator_observations
+          WHERE country_code='CN' AND region_code IN ({marks})
+          ORDER BY region_code,indicator_code,period''', list(by_code)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [{**dict(row), 'city': by_code[row['region_code']],
+             'geographic_scope': 'city_total',
+             'scope_label': INDICATOR_LABELS.get(row['indicator_code'], row['indicator_code'])}
+            for row in rows]
+
+
 def _listing_rows(listing_payload):
     rows = []
     target = {item['city'] for item in CITY_CONFIG}
@@ -173,6 +203,7 @@ def build_city_economy_payload(db_path, listing_payload=None):
         official_housing = _read_official_housing(conn)
         gdp_rows = _read_gdp_rows(conn)
         regional = build_regional_fiscal_payload(conn)
+        indicator_rows = _read_city_indicators(conn)
         conflicts = list_conflicts(conn, domain='city_economy')
     finally:
         conn.close()
@@ -292,7 +323,8 @@ def build_city_economy_payload(db_path, listing_payload=None):
         'generated_at': datetime.now().isoformat(), 'cities': city_items,
         'official_housing': official_housing, 'listing_housing': listing,
         'fiscal_rows': fiscal_rows, 'gdp_rows': gdp_city_rows,
-        'indicator_labels': {**FISCAL_LABELS, **GDP_INDICATORS},
+        'indicator_rows': indicator_rows,
+        'indicator_labels': {**FISCAL_LABELS, **GDP_INDICATORS, **INDICATOR_LABELS},
         # 多来源分歧：保留了城市已发布值，但统计局在线序列给出不同数字的观测。
         # 这是口径修订的证据，单列出来供人工判断，不影响上面的取值。
         'source_conflicts': conflicts,

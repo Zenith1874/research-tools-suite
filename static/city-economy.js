@@ -17,6 +17,13 @@ const METRICS=[
   {key:'land_transfer_revenue',label:'卖地收入',group:'土地',source:'fiscal',code:'land_transfer_revenue',field:'value',unit:'亿元'},
   {key:'debt_outstanding',label:'地方债余额',group:'债务',source:'fiscal',code:'debt_outstanding',field:'value',unit:'亿元'},
   {key:'tax_revenue',label:'税收收入',group:'财政',source:'fiscal',code:'tax_revenue',field:'value',unit:'亿元'},
+  {key:'residential_avg_price',label:'住宅新房均价（官方）',group:'房价',source:'indicator',code:'residential_avg_price',field:'value',unit:'元/㎡'},
+  {key:'commercial_housing_sold_area',label:'商品房销售面积',group:'房价',source:'indicator',code:'commercial_housing_sold_area',field:'value',unit:'万㎡'},
+  {key:'real_estate_investment',label:'房地产开发投资',group:'房价',source:'indicator',code:'real_estate_investment',field:'value',unit:'亿元'},
+  {key:'land_purchased_area',label:'房企购置土地面积',group:'土地',source:'indicator',code:'land_purchased_area',field:'value',unit:'万㎡'},
+  {key:'retail_sales',label:'社会消费品零售总额',group:'经济',source:'indicator',code:'retail_sales',field:'value',unit:'亿元'},
+  {key:'household_deposits',label:'住户存款余额',group:'经济',source:'indicator',code:'household_deposits',field:'value',unit:'亿元'},
+  {key:'avg_wage',label:'在岗职工平均工资',group:'经济',source:'indicator',code:'avg_wage',field:'value',unit:'元'},
 ];
 const DEFAULT_METRICS=['official_second_yoy','listing_price','general_budget_revenue','general_budget_expenditure','gov_fund_revenue','gov_fund_expenditure','land_transfer_revenue','nominal_gdp'];
 const GROUPS={全部:[],一线:['北京','上海','广州','深圳'],长三角:['上海','南京','常州','苏州','无锡'],珠三角:['广州','深圳']};
@@ -34,6 +41,7 @@ function rawRows(metric,applyRange=true){
   if(metric.source==='listing')rows=payload.listing_housing;
   if(metric.source==='gdp')rows=payload.gdp_rows.filter(r=>r.indicator_code===metric.code);
   if(metric.source==='fiscal')rows=payload.fiscal_rows.filter(r=>r.indicator_code===metric.code);
+  if(metric.source==='indicator')rows=(payload.indicator_rows||[]).filter(r=>r.indicator_code===metric.code);
   return rows.filter(r=>selectedCities.has(r.city)&&typeof r[metric.field]==='number'&&(!applyRange||inRange(r)));
 }
 function metricSeries(metric,applyRange=true){
@@ -97,11 +105,12 @@ function latestForCity(metric,city){
   if(metric.source==='listing')rows=payload.listing_housing.filter(r=>r.city===city);
   if(metric.source==='gdp')rows=payload.gdp_rows.filter(r=>r.city===city&&r.indicator_code===metric.code);
   if(metric.source==='fiscal')rows=payload.fiscal_rows.filter(r=>r.city===city&&r.indicator_code===metric.code);
+  if(metric.source==='indicator')rows=(payload.indicator_rows||[]).filter(r=>r.city===city&&r.indicator_code===metric.code);
   rows=rows.filter(r=>inRange(r)&&typeof r[metric.field]==='number');return rows.sort((a,b)=>a.period.localeCompare(b.period)).at(-1)||null;
 }
 // 每格单独判定口径:全市 / 市本级 都是这座城市的数,但口径大小不同,不可混比
 function cellScope(metric,row,city){
-  if(!['gdp','fiscal'].includes(metric.source))return{cls:'',tag:'',note:'',title:''};
+  if(!['gdp','fiscal','indicator'].includes(metric.source))return{cls:'',tag:'',note:'',title:''};
   if(row.data_status==='official_mirror')
     return{cls:'mir',tag:'镜像',note:'镜像',
            title:`${city}官方原站在本机网络不可达，此值取自第三方镜像转存的该市统计局公报原件；已与可直连城市逐条对照验证`};
@@ -129,6 +138,7 @@ function availableCityCount(metric){
   if(metric.source==='listing')rows=payload.listing_housing;
   if(metric.source==='gdp')rows=payload.gdp_rows.filter(r=>r.indicator_code===metric.code);
   if(metric.source==='fiscal')rows=payload.fiscal_rows.filter(r=>r.indicator_code===metric.code);
+  if(metric.source==='indicator')rows=(payload.indicator_rows||[]).filter(r=>r.indicator_code===metric.code);
   return new Set(rows.filter(r=>typeof r[metric.field]==='number').map(r=>r.city)).size;
 }
 function renderPickers(){

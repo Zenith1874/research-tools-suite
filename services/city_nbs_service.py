@@ -61,6 +61,24 @@ CATEGORY_INDICATORS = {
     '财政和金融': {
         '地方一般公共预算收入': ('general_budget_revenue', '亿元', 'fiscal'),
         '地方一般公共预算支出': ('general_budget_expenditure', '亿元', 'fiscal'),
+        '住户存款余额': ('household_deposits', '亿元', 'indicator'),
+    },
+    # 以下几类同属该接口，落 city_indicator_observations（城市年度一般指标）。
+    # 其中"住宅商品房平均销售价格"是官方城市级价格水平，与统计局 70 城指数
+    # （只有涨跌幅）和安居客挂牌价（商业参考）互补，本站此前没有这一项。
+    '房地产': {
+        '房地产开发投资额': ('real_estate_investment', '亿元', 'indicator'),
+        '商品房销售面积': ('commercial_housing_sold_area', '万平方米', 'indicator'),
+        '住宅商品房平均销售价格': ('residential_avg_price', '元/平方米', 'indicator'),
+        '房地产开发企业购置土地面积': ('land_purchased_area', '万平方米', 'indicator'),
+    },
+    '贸易经济': {
+        '社会消费品零售总额': ('retail_sales', '亿元', 'indicator'),
+        '货物进出口总额': ('trade_total', '百万美元', 'indicator'),
+    },
+    '人口和就业': {
+        '年末户籍人口': ('registered_population', '万人', 'indicator'),
+        '城镇非私营单位在岗职工平均工资': ('avg_wage', '元', 'indicator'),
     },
 }
 
@@ -129,8 +147,11 @@ def parse_nbs_periods(data, city, config, indicator_specs, category):
             indicator_code, unit, destination = spec
             source_url = ('https://data.stats.gov.cn/easyquery.htm?cn=E0105'
                           f'&reg={config["nbs_da"][:6]}&sj={period}')
+            # GDP 与一般指标都是城市口径，直辖市统一落城市码；只有财政沿用
+            # 既有的省级码（与年鉴、决算那两路保持一致）。
             region_code = (config.get('gdp_region_code') or config['db_region_code']
-                           if destination == 'gdp' else config['db_region_code'])
+                           if destination in ('gdp', 'indicator')
+                           else config['db_region_code'])
             rows.append({
                 'city': city,
                 'region_code': region_code,
@@ -206,6 +227,23 @@ def fetch_nbs_city_rows(session=None, cities=None, start_year=2010, end_year=Non
     return rows, errors
 
 
+def ensure_city_indicator_table(conn):
+    """城市年度一般指标：房地产、消费、外贸、人口、储蓄等，与 GDP/财政分表存放。
+
+    这些指标既不是 GDP 核算项，也不是财政收支项，塞进那两张表会污染其语义；
+    单独一张表，同样带 region_code/来源/口径状态，写入规则与另两张一致。
+    """
+    conn.execute('''CREATE TABLE IF NOT EXISTS city_indicator_observations (
+      id INTEGER PRIMARY KEY, country_code TEXT NOT NULL, region_code TEXT NOT NULL,
+      region_name TEXT NOT NULL, indicator_code TEXT NOT NULL, period TEXT NOT NULL,
+      value REAL NOT NULL, unit TEXT NOT NULL, data_status TEXT NOT NULL,
+      source_name TEXT NOT NULL, source_url TEXT, source_title TEXT,
+      parser_notes TEXT, updated_at TEXT NOT NULL,
+      UNIQUE(country_code, region_code, indicator_code, period))''')
+    conn.execute('''CREATE INDEX IF NOT EXISTS idx_city_indicator_lookup
+                    ON city_indicator_observations(region_code, indicator_code, period)''')
+
+
 def _ensure_gdp_table(conn):
     conn.execute('''CREATE TABLE IF NOT EXISTS gdp_region_observations (
       id INTEGER PRIMARY KEY, country_code TEXT, region_code TEXT, region_name TEXT,
@@ -277,13 +315,31 @@ def store_nbs_rows(conn, rows, tolerance=0.005):
     ensure_regional_fiscal_table(conn)
     ensure_conflict_table(conn)
     _ensure_gdp_table(conn)
+    ensure_city_indicator_table(conn)
     purged = purge_misplaced_gdp(conn)
     counts = {'inserted': 0, 'replaced_mirror': 0, 'refreshed': 0,
               'kept_published': 0, 'conflicts': [], 'pruned_stale_conflicts': 0,
-              'purged_misplaced_gdp': purged}
+              'purged_misplaced_gdp': purged, 'indicators': 0}
     now = datetime.now().isoformat()
     evaluated = set()
     for row in rows:
+        # 一般指标表按城市+指标+年份唯一，来源只有统计局这一路，直接写入即可，
+        # 不参与"保留已发布值"的优先级判定（另两表才有多来源竞争）。
+        if row['destination'] == 'indicator':
+            conn.execute('''INSERT INTO city_indicator_observations
+              (country_code,region_code,region_name,indicator_code,period,value,unit,
+               data_status,source_name,source_url,source_title,parser_notes,updated_at)
+              VALUES ('CN',?,?,?,?,?,?,?,?,?,?,?,?)
+              ON CONFLICT(country_code,region_code,indicator_code,period) DO UPDATE SET
+                region_name=excluded.region_name,value=excluded.value,unit=excluded.unit,
+                data_status=excluded.data_status,source_name=excluded.source_name,
+                source_url=excluded.source_url,source_title=excluded.source_title,
+                parser_notes=excluded.parser_notes,updated_at=excluded.updated_at''',
+              (row['region_code'], row['city'], row['indicator_code'], row['period'],
+               row['value'], row['unit'], row['data_status'], row['source_name'],
+               row['source_url'], row['source_title'], row['parser_notes'], now))
+            counts['indicators'] += 1
+            continue
         scope = '' if row['destination'] == 'gdp' else row['government_scope']
         evaluated.add((row['region_code'], scope, row['indicator_code'], row['period']))
         if row['destination'] == 'gdp':
