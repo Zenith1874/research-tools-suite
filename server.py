@@ -76,6 +76,7 @@ from services.housing_compare_service import build_housing_compare_payload
 from services.city_economy_service import build_city_economy_payload
 from services.city_official_service import update_city_official
 from services.city_mirror_service import update_city_mirror
+from services.housing_scenario_service import build_housing_scenario_payload
 from services.city_nbs_service import update_city_nbs
 from services.city_fiscal_decision_service import update_city_fiscal_decisions
 from services.debt_ceiling_service import update_debt_ceiling
@@ -1747,6 +1748,28 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
+            elif path == '/api/housing-scenario/data':
+                q = self._query_params()
+                def _num(name, default, low, high):
+                    try: return max(low, min(high, float(q.get(name, default))))
+                    except (TypeError, ValueError): return default
+                over = {}
+                for key in ('optimistic', 'base', 'stress'):
+                    raw = q.get(key)
+                    if raw not in (None, ''):
+                        try:
+                            rate = float(raw)
+                        except ValueError:
+                            continue
+                        if -5.0 <= rate <= 5.0:      # 月度环比，超出即视为误输入
+                            over.setdefault('second', {})[key] = rate
+                            over.setdefault('new', {})[key] = rate
+                self.send_json(build_housing_scenario_payload(
+                    DB_PATH, q.get('city') or '厦门',
+                    horizon=int(_num('horizon', 24, 6, 120)),
+                    down_payment=_num('down_payment', 0.35, 0.15, 1.0),
+                    overrides=over or None,
+                    city_code=q.get('city_code')))
             elif path == '/api/debt-ceiling/data':
                 flat = self._query_params()
                 def _int(name, default, low, high):

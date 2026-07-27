@@ -22,7 +22,9 @@ const METRICS=[
   {key:'real_estate_investment',label:'房地产开发投资',group:'房价',source:'indicator',code:'real_estate_investment',field:'value',unit:'亿元'},
   {key:'land_purchased_area',label:'房企购置土地面积',group:'土地',source:'indicator',code:'land_purchased_area',field:'value',unit:'万㎡'},
   {key:'retail_sales',label:'社会消费品零售总额',group:'经济',source:'indicator',code:'retail_sales',field:'value',unit:'亿元'},
+  {key:'trade_total',label:'货物进出口总额',group:'经济',source:'indicator',code:'trade_total',field:'value',unit:'百万美元'},
   {key:'household_deposits',label:'住户存款余额',group:'经济',source:'indicator',code:'household_deposits',field:'value',unit:'亿元'},
+  {key:'registered_population',label:'年末户籍人口',group:'经济',source:'indicator',code:'registered_population',field:'value',unit:'万人'},
   {key:'avg_wage',label:'在岗职工平均工资',group:'经济',source:'indicator',code:'avg_wage',field:'value',unit:'元'},
 ];
 const DEFAULT_METRICS=['official_second_yoy','listing_price','general_budget_revenue','general_budget_expenditure','gov_fund_revenue','gov_fund_expenditure','land_transfer_revenue','nominal_gdp'];
@@ -187,10 +189,84 @@ function renderConflicts(){
       `<td>${r.candidate_source_url?`<a href="${r.candidate_source_url}" target="_blank" rel="noopener">统计局</a>`:'—'}</td></tr>`;
   }).join('')||'<tr><td colspan="8">无</td></tr>';
 }
-function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['compare','detail','coverage'].forEach(x=>$(x).classList.toggle('hidden',x!==tab));if(tab==='detail')renderDetail();if(tab==='coverage')renderCoverage()}
+function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['compare','detail','scenario','coverage'].forEach(x=>$(x).classList.toggle('hidden',x!==tab));if(tab==='detail')renderDetail();if(tab==='coverage')renderCoverage();if(tab==='scenario'&&!scPayload)initScenario()}
 function init(){
   selectedCities=new Set(payload.cities.map(c=>c.city));$('city').innerHTML=payload.cities.map(c=>`<option>${c.city}</option>`).join('');const periods=[...new Set(payload.official_housing.concat(payload.listing_housing,payload.fiscal_rows,payload.gdp_rows).map(r=>r.period))].sort();$('start').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('end').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('start').value=periods[0]||'';$('end').value=periods.at(-1)||'';const fiscalCodes=[...new Set(payload.fiscal_rows.map(r=>r.indicator_code))];$('fiscalMetric').innerHTML=fiscalCodes.map(code=>`<option value="${code}">${payload.indicator_labels[code]||code}</option>`).join('');$('fiscalMetric').value='general_budget_revenue';
   const rerenderRange=()=>{renderCompare();if(!$('detail').classList.contains('hidden'))renderDetail()};
   renderCompare();renderCoverage();$('start').onchange=rerenderRange;$('end').onchange=rerenderRange;$('city').onchange=renderDetail;$('fiscalMetric').onchange=renderFiscalTable;document.querySelectorAll('[data-tab]').forEach(x=>x.onclick=()=>switchTab(x.dataset.tab));
 }
 fetch('/api/city-economy/data').then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json()}).then(p=>{payload=p;init()}).catch(e=>{document.querySelector('main').insertAdjacentHTML('beforeend',`<div class="notice">加载失败：${e.message}</div>`)});
+
+// ── 房价情景推演 ───────────────────────────────────────────────────────────
+const SC_FIELDS={optimistic:'scOpt',base:'scBase',stress:'scStress'};
+const SC_COLOR={optimistic:'#27d3b2',base:'#f5a623',stress:'#ff6b7d'};
+let scPayload=null;
+function scQuery(){
+  const q=new URLSearchParams({city:$('scCity').value,horizon:$('scHorizon').value,
+    down_payment:(Number($('scDown').value)/100)||0.35});
+  const meta=cityMeta($('scCity').value); if(meta)q.set('city_code',meta.city_code);
+  for(const[k,id]of Object.entries(SC_FIELDS)){const v=$(id).value.trim();if(v!=='')q.set(k,v)}
+  return q.toString();
+}
+function loadScenario(){
+  fetch('/api/housing-scenario/data?'+scQuery()).then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()})
+    .then(p=>{scPayload=p;renderScenario()})
+    .catch(e=>{$('scMomentum').textContent='加载失败：'+e.message});
+}
+function renderScenario(){
+  const kind=$('scKind').value,s=scPayload.series[kind];
+  ['scenario:main','scenario:anchor'].forEach(destroy);
+  if(!s||s.status!=='ok'){$('scKpis').innerHTML='';$('scMomentum').textContent='该城该口径历史不足，无法推演。';
+    $('scEquity').innerHTML='<tr><td colspan="6">—</td></tr>';return}
+  const byKey=Object.fromEntries(s.scenarios.filter(x=>!x.status).map(x=>[x.key,x]));
+  $('scKpis').innerHTML=`
+    <div class="kpi">较峰值<b>${s.current_vs_peak.toFixed(1)}%</b><small>峰值 ${s.peak.period} · 最新 ${s.current.period}</small></div>
+    <div class="kpi">乐观 ${scPayload.horizon_months} 月后<b>${byKey.optimistic?byKey.optimistic.end_vs_peak.toFixed(1)+'%':'—'}</b><small>较峰值 · 相对今天 ${byKey.optimistic?byKey.optimistic.end_vs_now.toFixed(1)+'%':'—'}</small></div>
+    <div class="kpi">基准<b>${byKey.base?byKey.base.end_vs_peak.toFixed(1)+'%':'—'}</b><small>相对今天 ${byKey.base?byKey.base.end_vs_now.toFixed(1)+'%':'—'}</small></div>
+    <div class="kpi">压力<b>${byKey.stress?byKey.stress.end_vs_peak.toFixed(1)+'%':'—'}</b><small>相对今天 ${byKey.stress?byKey.stress.end_vs_now.toFixed(1)+'%':'—'}</small></div>`;
+  const m=s.momentum;
+  $('scMomentum').textContent=`观测动能：近6月 ${m['6m']??'—'}%/月 · 近12月 ${m['12m']??'—'}%/月 · 近24月 ${m['24m']??'—'}%/月 · 近36月 ${m['36m']??'—'}%/月`;
+  for(const[k,id]of Object.entries(SC_FIELDS)){const sc=byKey[k];
+    $(id).placeholder=sc&&sc.derived_monthly_rate!=null?sc.derived_monthly_rate.toFixed(3):'—';
+    $(id).classList.toggle('overridden',!!(sc&&sc.overridden))}
+  // 图：历史 + 三条情景，横轴取历史后段以免压扁
+  const hist=s.points.slice(-72),labels=hist.map(p=>p.period)
+    .concat((byKey.base?byKey.base.path:[]).map(p=>p.period));
+  const pad=new Array(hist.length-1).fill(null);
+  const ds=[{label:'实际（统计局定基指数）',data:hist.map(p=>p.index).concat(new Array(labels.length-hist.length).fill(null)),
+             borderColor:'#5795ff',pointRadius:0,borderWidth:2,spanGaps:false}];
+  for(const k of ['optimistic','base','stress']){const sc=byKey[k];if(!sc)continue;
+    ds.push({label:sc.label,data:pad.concat([hist.at(-1).index],sc.path.map(p=>p.index)),
+             borderColor:SC_COLOR[k],borderDash:[6,3],pointRadius:0,borderWidth:1.8,spanGaps:false})}
+  ds.push({label:`峰值 ${s.peak.period}`,data:labels.map(()=>s.peak.index),borderColor:'#6b7c93',borderDash:[3,3],pointRadius:0,borderWidth:1});
+  charts['scenario:main']=new Chart($('scChart'),{type:'line',data:{labels,datasets:ds},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      scales:{x:{ticks:{color:'#8fa4bd',maxTicksLimit:12},grid:{color:'#14263a'}},
+              y:{ticks:{color:'#8fa4bd'},grid:{color:'#14263a'},title:{display:true,text:'定基指数',color:'#8fa4bd'}}},
+      plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6',boxWidth:16,usePointStyle:true}}}}});
+  const dp=(s.equity.down_payment*100).toFixed(0);
+  $('scEquityNote').textContent=`首付 ${dp}%。自有资金变动＝房价变动 ÷ 首付比，是价格变动对权益的杠杆放大；未计已还本金与利息支出，因此不等于家庭净值变动。低于 -100% 表示价格跌幅已超过首付，账面上房产价值低于剩余贷款。`;
+  $('scEquity').innerHTML=s.equity.rows.map(r=>{
+    const g=k=>r.by_scenario[k]?`${r.by_scenario[k].equity_change.toFixed(0)}%`:'—';
+    return `<tr><td>${r.purchase_period}</td><td>${r.price_change_to_now.toFixed(1)}%</td>`+
+      `<td>${r.equity_change_to_now.toFixed(0)}%</td><td>${g('optimistic')}</td><td>${g('base')}</td><td>${g('stress')}</td></tr>`}).join('')
+    ||'<tr><td colspan="6">无可用买入时点</td></tr>';
+  const a=scPayload.valuation_anchor;
+  if(a){$('scAnchorNote').textContent=`${a.note} 峰值 ${a.peak.period}（${a.peak.ratio}），最新 ${a.latest.period}（${a.latest.ratio}），较峰值 ${a.latest_vs_peak}%。工资序列止于 ${a.wage_end}。`;
+    charts['scenario:anchor']=new Chart($('scAnchorChart'),{type:'line',
+      data:{labels:a.points.map(p=>p.period),datasets:[{label:'房价/工资比',data:a.points.map(p=>p.ratio),borderColor:'#a78bfa',pointRadius:2}]},
+      options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#8fa4bd'},grid:{color:'#14263a'}},y:{ticks:{color:'#8fa4bd'},grid:{color:'#14263a'}}},plugins:{legend:{display:false}}}});
+  } else {$('scAnchorNote').textContent='该城缺在岗职工平均工资序列，估值锚无法计算。'}
+  $('scCaveats').innerHTML=scPayload.caveats.map(x=>`<p>• ${x}</p>`).join('');
+}
+function initScenario(){
+  const cities=payload.cities.map(c=>c.city);
+  $('scCity').innerHTML=cities.map(c=>`<option>${c}</option>`).join('');
+  $('scCity').value=cities.includes('厦门')?'厦门':cities[0];
+  $('scRun').onclick=loadScenario;
+  $('scReset').onclick=()=>{Object.values(SC_FIELDS).forEach(id=>{$(id).value='';$(id).classList.remove('overridden')});
+    $('scHorizon').value=24;$('scDown').value=35;loadScenario()};
+  ['scCity','scHorizon','scDown'].forEach(id=>$(id).onchange=loadScenario);
+  $('scKind').onchange=()=>{if(scPayload)renderScenario()};
+  loadScenario();
+}

@@ -37,7 +37,7 @@
   <div class="tabs">
     <button data-tab="compare" class="active">多城多指标</button>
     <button data-tab="detail">单城详情</button>
-    <button data-tab="coverage">覆盖与口径</button>
+    <button data-tab="scenario">房价情景</button><button data-tab="coverage">覆盖与口径</button>
   </div>
 
   <section id="compare">
@@ -75,6 +75,32 @@
 
   <section id="coverage" class="hidden">
     <div id="coverageCards" class="coverage"></div>
+  <section id="scenario" class="hidden">
+    <div class="notice"><b>本页全部为情景推演，不是预测。</b>三档速度各锚定一段真实观测到的动能窗口，后续月份公布即可验证实际走在哪条线上。房价拐点取决于政策、信贷与人口流动，这些变量不在本库内。</div>
+    <div class="controls">
+      <label>城市<select id="scCity"></select></label>
+      <label>口径<select id="scKind"><option value="second">二手房</option><option value="new">新房</option></select></label>
+      <label>外推月数<input id="scHorizon" type="number" min="6" max="120" step="6" value="24"></label>
+      <label>首付比 %<input id="scDown" type="number" min="15" max="100" step="5" value="35"></label>
+      <label>乐观 月速%<input id="scOpt" type="number" step="0.05" placeholder=""></label>
+      <label>基准 月速%<input id="scBase" type="number" step="0.05" placeholder=""></label>
+      <label>压力 月速%<input id="scStress" type="number" step="0.05" placeholder=""></label>
+      <button id="scRun">重新推演</button><button id="scReset">恢复观测动能</button>
+    </div>
+    <div id="scKpis" class="kpis"></div>
+    <div class="card wide" style="margin-top:14px"><div class="row"><h3 id="scChartTitle">定基指数与三档情景</h3><span class="muted" id="scMomentum"></span></div>
+      <div class="chart" style="height:330px"><canvas id="scChart"></canvas></div></div>
+    <div class="detail-grid" style="margin-top:14px">
+      <div class="card"><h3>不同买入时点的自有资金变动</h3>
+        <p class="muted" id="scEquityNote"></p>
+        <div class="scroll"><table><thead><tr><th>买入时点</th><th>房价至今</th><th>自有资金至今</th><th>乐观</th><th>基准</th><th>压力</th></tr></thead><tbody id="scEquity"></tbody></table></div></div>
+      <div class="card"><h3>估值锚：房价指数 / 工资指数</h3>
+        <p class="muted" id="scAnchorNote"></p>
+        <div class="chart"><canvas id="scAnchorChart"></canvas></div></div>
+    </div>
+    <div class="card wide" style="margin-top:14px"><h3>口径与假设</h3><div id="scCaveats" class="muted"></div></div>
+  </section>
+
     <div class="card" style="margin-top:14px"><h3>十城数据覆盖</h3><div class="scroll"><table><thead><tr><th>城市</th><th>官方房价</th><th>挂牌历史</th><th>财政采用口径</th><th>财政记录</th><th>GDP记录</th></tr></thead><tbody id="coverageTable"></tbody></table></div></div>
     <div class="card" style="margin-top:14px"><div class="row"><h3>多来源数值分歧</h3><span class="muted" id="conflictNote"></span></div>
       <div class="scroll"><table><thead><tr><th>城市</th><th>指标</th><th>年份</th><th>已采用值</th><th>来源</th><th>统计局修订值</th><th>差异</th><th>原文</th></tr></thead><tbody id="conflictTable"></tbody></table></div></div>
