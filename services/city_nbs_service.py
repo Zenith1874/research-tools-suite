@@ -14,7 +14,7 @@ import requests
 
 from services.regional_fiscal_service import ensure_regional_fiscal_table
 from services.data_conflict_service import (
-    ensure_conflict_table, record_conflict, clear_conflict,
+    ensure_conflict_table, record_conflict, clear_conflict, prune_stale,
 )
 
 
@@ -31,11 +31,18 @@ HEADERS = {
                    'AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36'),
 }
 
-# db_region_code/scope 与既有库保持一致：直辖市全市值存省级行政区代码，
+# db_region_code/scope 与既有库保持一致：直辖市财政存省级行政区代码，
 # 其他城市存地级市代码；nbs_da 是统计局接口中的地区维度值。
+#
+# gdp_region_code 单独给：统计局在线序列是五经普修订后的口径，而库里省级行政区
+# 那批 GDP 是年鉴修订前口径且覆盖 31 个省。若把直辖市的修订值写回省级码，
+# 省级排行就会变成 2 个省用新口径、29 个用旧口径——那是新造一个断点。
+# 因此直辖市的 GDP 写到城市码，省级码原样保留，两套口径各自内部自洽。
 NBS_CITIES = {
-    '北京': {'db_region_code': '110000', 'scope': 'province_total', 'nbs_da': '110000000000'},
-    '上海': {'db_region_code': '310000', 'scope': 'province_total', 'nbs_da': '310000000000'},
+    '北京': {'db_region_code': '110000', 'gdp_region_code': '110100',
+             'scope': 'province_total', 'nbs_da': '110000000000'},
+    '上海': {'db_region_code': '310000', 'gdp_region_code': '310100',
+             'scope': 'province_total', 'nbs_da': '310000000000'},
     '广州': {'db_region_code': '440100', 'scope': 'city_total', 'nbs_da': '440100000000'},
     '深圳': {'db_region_code': '440300', 'scope': 'city_total', 'nbs_da': '440300000000'},
     '厦门': {'db_region_code': '350200', 'scope': 'city_total', 'nbs_da': '350200000000'},
@@ -122,9 +129,11 @@ def parse_nbs_periods(data, city, config, indicator_specs, category):
             indicator_code, unit, destination = spec
             source_url = ('https://data.stats.gov.cn/easyquery.htm?cn=E0105'
                           f'&reg={config["nbs_da"][:6]}&sj={period}')
+            region_code = (config.get('gdp_region_code') or config['db_region_code']
+                           if destination == 'gdp' else config['db_region_code'])
             rows.append({
                 'city': city,
-                'region_code': config['db_region_code'],
+                'region_code': region_code,
                 'government_scope': config['scope'],
                 'indicator_code': indicator_code,
                 'period': period,
@@ -136,7 +145,8 @@ def parse_nbs_periods(data, city, config, indicator_specs, category):
                 'source_url': source_url,
                 'source_title': f'主要城市年度数据—{category}',
                 'parser_notes': ('国家统计局在线主要城市年度数据直接值；全市口径。'
-                                 '在线序列可能包含历史修订，标为 official_revised。'),
+                                 '该在线序列为经济普查修订后的统一口径，整段可比，'
+                                 '与年鉴各年初值不同，标为 official_revised。'),
             })
     return rows
 
@@ -204,6 +214,25 @@ def _ensure_gdp_table(conn):
       UNIQUE(country_code, region_code, indicator_code, period))''')
 
 
+def purge_misplaced_gdp(conn):
+    """删除写错落点的统计局 GDP 行。
+
+    直辖市的 GDP 落点从省级码改成了城市码；早先按省级码写入的那批若不清掉，
+    省级排行的尾部就会混进修订后口径，与其余 29 个省的修订前口径不可比。
+    按来源名精确定位，只删统计局主要城市这一路写的行，年鉴值不受影响。
+    """
+    removed = 0
+    for config in NBS_CITIES.values():
+        gdp_code = config.get('gdp_region_code')
+        if not gdp_code or gdp_code == config['db_region_code']:
+            continue
+        cursor = conn.execute('''DELETE FROM gdp_region_observations
+          WHERE country_code='CN' AND region_code=? AND source_name=?''',
+          (config['db_region_code'], NBS_SOURCE_NAME))
+        removed += cursor.rowcount or 0
+    return removed
+
+
 def _replace_allowed(existing_status, existing_source):
     """官方在线序列只替换镜像或自身旧抓取；城市官网已发布值保留。"""
     return existing_status == 'official_mirror' or existing_source == NBS_SOURCE_NAME
@@ -248,10 +277,15 @@ def store_nbs_rows(conn, rows, tolerance=0.005):
     ensure_regional_fiscal_table(conn)
     ensure_conflict_table(conn)
     _ensure_gdp_table(conn)
+    purged = purge_misplaced_gdp(conn)
     counts = {'inserted': 0, 'replaced_mirror': 0, 'refreshed': 0,
-              'kept_published': 0, 'conflicts': []}
+              'kept_published': 0, 'conflicts': [], 'pruned_stale_conflicts': 0,
+              'purged_misplaced_gdp': purged}
     now = datetime.now().isoformat()
+    evaluated = set()
     for row in rows:
+        scope = '' if row['destination'] == 'gdp' else row['government_scope']
+        evaluated.add((row['region_code'], scope, row['indicator_code'], row['period']))
         if row['destination'] == 'gdp':
             existing = conn.execute('''SELECT value,data_status,source_name
               FROM gdp_region_observations WHERE country_code='CN' AND region_code=?
@@ -309,6 +343,8 @@ def store_nbs_rows(conn, rows, tolerance=0.005):
             counts['replaced_mirror'] += 1
         else:
             counts['refreshed'] += 1
+    counts['pruned_stale_conflicts'] = prune_stale(
+        conn, 'city_economy', NBS_SOURCE_NAME, evaluated)
     conn.commit()
     return counts
 

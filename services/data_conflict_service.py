@@ -86,6 +86,28 @@ def clear_conflict(conn, conflict):
       AND candidate_source_name=?''', _key(conflict))
 
 
+def prune_stale(conn, domain, candidate_source_name, evaluated_keys):
+    """删除本轮未被比较到的旧分歧。
+
+    来源改写目标（例如直辖市 GDP 从省级码改写到城市码）后，旧键上不再有比较发生，
+    那些记录就变成了僵尸；不清掉会让页面一直展示已经不存在的分歧。
+    """
+    ensure_conflict_table(conn)
+    existing = conn.execute(
+        f'''SELECT region_code,government_scope,indicator_code,period FROM {TABLE}
+            WHERE domain=? AND candidate_source_name=?''',
+        (domain, candidate_source_name)).fetchall()
+    removed = 0
+    for row in existing:
+        if tuple(row) not in evaluated_keys:
+            conn.execute(f'''DELETE FROM {TABLE} WHERE domain=? AND region_code=?
+              AND government_scope=? AND indicator_code=? AND period=?
+              AND candidate_source_name=?''',
+              (domain, row[0], row[1], row[2], row[3], candidate_source_name))
+            removed += 1
+    return removed
+
+
 def list_conflicts(conn, domain=None):
     ensure_conflict_table(conn)
     sql = f'SELECT * FROM {TABLE}'

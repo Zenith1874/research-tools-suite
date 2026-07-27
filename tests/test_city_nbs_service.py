@@ -190,3 +190,45 @@ class NbsConflictPersistenceTests(unittest.TestCase):
                                     'indicator_code': 'general_budget_revenue',
                                     'value': 2.0}])
         self.assertEqual(self._conflicts(), [])
+
+
+class MunicipalityGdpTargetTests(unittest.TestCase):
+    """直辖市 GDP 落城市码：省级排行必须保持 31 省同一口径。"""
+
+    SPECS = {'g': ('nominal_gdp', '亿元', 'gdp'),
+             'r': ('general_budget_revenue', '亿元', 'fiscal')}
+    DATA = [{'code': '2023YY', 'values': [{'_id': 'g', 'value': '47353.7'},
+                                          {'_id': 'r', 'value': '6181.1'}]}]
+
+    def test_gdp_goes_to_city_code_while_fiscal_stays_on_province_code(self):
+        rows = parse_nbs_periods(self.DATA, '北京', NBS_CITIES['北京'],
+                                 self.SPECS, '国民经济核算')
+        by_code = {row['indicator_code']: row['region_code'] for row in rows}
+        self.assertEqual(by_code['nominal_gdp'], '110100')
+        self.assertEqual(by_code['general_budget_revenue'], '110000')
+
+    def test_non_municipality_uses_one_code_for_both(self):
+        rows = parse_nbs_periods(self.DATA, '广州', NBS_CITIES['广州'],
+                                 self.SPECS, '国民经济核算')
+        self.assertEqual({row['region_code'] for row in rows}, {'440100'})
+
+    def test_purge_removes_only_nbs_rows_left_on_the_province_code(self):
+        from services.city_nbs_service import purge_misplaced_gdp, _ensure_gdp_table
+        conn = sqlite3.connect(':memory:')
+        _ensure_gdp_table(conn)
+        conn.executemany(
+            '''INSERT INTO gdp_region_observations
+               (country_code,region_code,region_name,indicator_code,period,value,unit,
+                data_status,source_name) VALUES ('CN',?,?,?,?,?,'亿元',?,?)''',
+            [('110000', '北京', 'nominal_gdp', '2025', 52073.4, 'official_revised',
+              NBS_SOURCE_NAME),                                  # 错落点，应删
+             ('110000', '北京', 'nominal_gdp', '2024', 49843.1, 'official',
+              '国家统计局《中国统计年鉴》'),                        # 年鉴值，必须留
+             ('440100', '广州', 'nominal_gdp', '2024', 31032.5, 'official_revised',
+              NBS_SOURCE_NAME)])                                 # 非直辖市，落点正确
+        conn.commit()
+        self.assertEqual(purge_misplaced_gdp(conn), 1)
+        kept = {(r[0], r[1]) for r in conn.execute(
+            'SELECT region_code,period FROM gdp_region_observations')}
+        self.assertEqual(kept, {('110000', '2024'), ('440100', '2024')})
+        conn.close()
