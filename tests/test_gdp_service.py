@@ -106,5 +106,16 @@ class ChinaProvincialViewTests(unittest.TestCase):
         self.assertEqual(len(payload['regions']['US']), 1)   # 美国侧不受影响
 
 
+
+
+class MethodsNoteTests(unittest.TestCase):
+    def test_china_methods_note_warns_against_mixing_vintages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = build_gdp_payload(directory + '/empty.db')
+        note = payload['methods']['CN']
+        for token in ('修订前', '城市经济页', '不可混用'):
+            self.assertIn(token, note)
+
+
 if __name__ == '__main__':
     unittest.main()

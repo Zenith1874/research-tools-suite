@@ -145,6 +145,9 @@ function renderCompare(){
   renderPickers();const pending=[...selectedCities].filter(c=>cityMeta(c).fiscal_scope==='missing');
   $('compareNotice').textContent=pending.length?`本模块只画城市自己的官方值。${pending.join('、')}的市级财政/GDP 尚未入库，相关图与格子显示为缺口，不用所属省数据顶替（省域经济请看财政收支与债务页）。`:'所选城市的房价、GDP 与财政均为城市口径。';
   $('compareCounts').innerHTML=`<div>已选城市<b>${selectedCities.size}</b></div><div>已选指标<b>${selectedMetrics.size}</b></div><div>有城市房价<b>${[...selectedCities].filter(c=>cityMeta(c).coverage.official_housing_records).length}</b></div><div>市级财政待入库<b>${pending.length}</b></div>`;
+  const v=payload.vintage_note;
+  $('vintageNotice').classList.toggle('hidden',!v);
+  if(v)$('vintageNotice').innerHTML=`<b>口径版本提示：</b>${v.text}`;
   renderComparisonCharts();renderMatrix();
 }
 function line(name,canvas,labels,datasets,unit=''){destroy(name);charts[name]=new Chart(canvas,{type:'line',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{ticks:{color:'#8fa4bd',maxTicksLimit:10},grid:{color:'#14263a'}},y:{ticks:{color:'#8fa4bd',callback:v=>fmt(v,unit==='%'?1:0)+(unit==='%'?'%':'')},grid:{color:'#14263a'}}},plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6'}}}}})}

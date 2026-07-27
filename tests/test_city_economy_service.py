@@ -83,6 +83,29 @@ class CityEconomyServiceTests(unittest.TestCase):
         self.assertEqual(payload['listing_housing'][0]['value'], 50000)
         self.assertIn('本地独立库', ' '.join(payload['caveats']))
 
+    def test_municipality_city_total_decision_rows_are_not_dropped(self):
+        conn = sqlite3.connect(self.db_path)
+        _upsert(conn, {
+            'country_code': 'CN', 'government_scope': 'city_total',
+            'region_code': '110000', 'region_name': '北京',
+            'indicator_code': 'gov_fund_revenue', 'period': '2024',
+            'value': 2094.9, 'unit': '亿元', 'frequency': 'annual',
+            'period_type': 'calendar_year', 'data_status': 'official_preliminary',
+            'source_name': '北京市财政局',
+            'source_url': 'https://example.gov.cn/beijing-budget',
+            'source_title': '2024年预算执行报告', 'parser_notes': 'fixture',
+        })
+        conn.commit(); conn.close()
+
+        payload = build_city_economy_payload(self.db_path, listing_payload={})
+        row = next(r for r in payload['fiscal_rows']
+                   if r['city'] == '北京' and
+                   r['indicator_code'] == 'gov_fund_revenue')
+        self.assertEqual(row['value'], 2094.9)
+        self.assertEqual(row['government_scope'], 'city_total')
+        city = next(r for r in payload['cities'] if r['city'] == '北京')
+        self.assertEqual(city['latest']['gov_fund_revenue']['value'], 2094.9)
+
     def test_page_exposes_multi_city_multi_metric_and_period_controls(self):
         page = (Path(__file__).resolve().parents[1] / 'static' / 'city_economy.html').read_text(
             encoding='utf-8')
@@ -94,11 +117,36 @@ class CityEconomyServiceTests(unittest.TestCase):
             self.assertIn(token, page)
         for token in ('/api/city-economy/data', 'DEFAULT_METRICS', 'selectedCities',
                       '政府性基金收入', '政府性基金支出', '卖地收入',
-                      '首期=100', '自定义', '待入库'):
+                      '第一产业增加值', '第二产业增加值', '第三产业增加值',
+                      '首期=100', '自定义', '待入库', '统计局修订'):
             self.assertIn(token, script)
         # 省级背景渲染逻辑必须彻底移除，避免省值以任何形式重新出现在城市视图
         for banned in ('province_context', 'province:${row.region_code}', '省背景'):
             self.assertNotIn(banned, script)
+
+
+
+
+class VintageNoteTests(unittest.TestCase):
+    """口径提示必须由实际 data_status 推导，不写死城市名。"""
+
+    def test_note_lists_only_cities_actually_on_the_revised_series(self):
+        from services.city_economy_service import _vintage_note
+        note = _vintage_note([
+            {'city': '北京', 'indicator_code': 'nominal_gdp', 'data_status': 'official_revised'},
+            {'city': '苏州', 'indicator_code': 'nominal_gdp', 'data_status': 'official'},
+            {'city': '无锡', 'indicator_code': 'nominal_gdp', 'data_status': 'official_mirror'},
+            # 非 GDP 指标不应把城市带进提示
+            {'city': '常州', 'indicator_code': 'primary_industry_value',
+             'data_status': 'official_revised'},
+        ])
+        self.assertEqual(note['cities'], ['北京'])
+        self.assertIn('不可混用', note['text'])
+
+    def test_no_note_when_nothing_is_on_the_revised_series(self):
+        from services.city_economy_service import _vintage_note
+        self.assertIsNone(_vintage_note([
+            {'city': '苏州', 'indicator_code': 'nominal_gdp', 'data_status': 'official'}]))
 
 
 if __name__ == '__main__':

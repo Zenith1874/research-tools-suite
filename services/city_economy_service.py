@@ -145,6 +145,26 @@ def _merge_fiscal_rows(*groups):
     return list(selected.values())
 
 
+def _vintage_note(gdp_rows):
+    """按实际落库的 data_status 生成口径提示，避免写死城市名日后失真。
+
+    统计局在线序列是经济普查修订后的口径，与《中国统计年鉴》各年初值不同，
+    也与本站"中美 GDP"页的中国省级序列（修订前）不可混用。
+    """
+    revised = sorted({row['city'] for row in gdp_rows
+                      if row.get('data_status') == 'official_revised'
+                      and row.get('indicator_code') == 'nominal_gdp'})
+    if not revised:
+        return None
+    return {
+        'cities': revised,
+        'text': (f'{"、".join(revised)} 的 GDP 取自国家统计局在线主要城市年度数据，'
+                 '为经济普查修订后的统一口径，整段可比，但与旧版《中国统计年鉴》'
+                 '各年初值不同。本站"中美 GDP"页的中国省级序列仍为年鉴修订前口径，'
+                 '两者不可混用或相减；论文引用时请注明所用版本。'),
+    }
+
+
 def build_city_economy_payload(db_path, listing_payload=None):
     """Build a compact city selector payload without relabelling province data."""
     conn = _connect(db_path)
@@ -276,6 +296,7 @@ def build_city_economy_payload(db_path, listing_payload=None):
         # 多来源分歧：保留了城市已发布值，但统计局在线序列给出不同数字的观测。
         # 这是口径修订的证据，单列出来供人工判断，不影响上面的取值。
         'source_conflicts': conflicts,
+        'vintage_note': _vintage_note(gdp_city_rows),
         'coverage': {
             'cities': len(CITY_CONFIG),
             'official_housing_cities': len({row['city'] for row in official_housing}),
