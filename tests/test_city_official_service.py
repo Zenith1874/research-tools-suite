@@ -37,6 +37,14 @@ class CityOfficialExtractionTests(unittest.TestCase):
         self.assertEqual(extract_value(text, 'general_budget_revenue'), 379.0)
         self.assertEqual(extract_value(text, 'general_budget_expenditure'), 384.1)
 
+    def test_window_never_crosses_a_sentence_boundary(self):
+        """常州 2013：收入名第二次出现后接的是比重句，跨句会把下一句的支出数当收入。"""
+        text = ('全年实现公共财政预算收入408.9亿元，比上年增长7.9%。'
+                '公共财政预算收入占GDP的比重为9.4%。'
+                '全年公共财政预算支出417.9亿元，比上年增长6.8%。')
+        self.assertEqual(extract_value(text, 'general_budget_revenue'), 408.9)
+        self.assertEqual(extract_value(text, 'general_budget_expenditure'), 417.9)
+
     def test_out_of_range_values_are_rejected(self):
         self.assertIsNone(extract_value('地区生产总值 3.5亿元，', 'nominal_gdp'))
         self.assertIsNone(extract_value('地区生产总值 999999亿元，', 'nominal_gdp'))
@@ -67,5 +75,55 @@ class CityOfficialExtractionTests(unittest.TestCase):
             self.assertEqual(config['region_code'], known[city], city)
 
 
-if __name__ == '__main__':
+class CityMirrorTests(unittest.TestCase):
+    """镜像通道的纪律：值可以用，但绝不能标成直连官方。"""
+
+    def test_mirror_rows_are_stored_as_official_mirror(self):
+        import sqlite3
+        from services.city_official_service import store_rows
+        from services.city_mirror_service import ALL_MIRROR_CODES
+        conn = sqlite3.connect(':memory:')
+        rows = [{'city': '厦门', 'period': '2024', 'indicator_code': 'nominal_gdp',
+                 'value': 8589.01, 'unit': '亿元', 'source_url': 'https://mirror/x',
+                 'source_title': '厦门市2024年国民经济和社会发展统计公报'},
+                {'city': '厦门', 'period': '2024',
+                 'indicator_code': 'general_budget_revenue', 'value': 800.0,
+                 'unit': '亿元', 'source_url': 'https://mirror/x', 'source_title': 't'}]
+        store_rows(conn, rows, region_codes=ALL_MIRROR_CODES,
+                   data_status='official_mirror',
+                   source_name_fmt='{city}市统计局（经红黑统计公报库镜像）',
+                   notes_prefix='本机网络无法直连该市官方原站，')
+        gdp = conn.execute('SELECT data_status,source_name,region_code,parser_notes '
+                           'FROM gdp_region_observations').fetchone()
+        self.assertEqual(gdp[0], 'official_mirror')
+        self.assertIn('镜像', gdp[1])
+        self.assertEqual(gdp[2], '350200')
+        self.assertIn('无法直连', gdp[3])
+        fiscal = conn.execute('SELECT data_status,source_name '
+                              'FROM regional_fiscal_observations').fetchone()
+        self.assertEqual(fiscal[0], 'official_mirror')
+        self.assertIn('镜像', fiscal[1])
+        conn.close()
+
+    def test_official_channel_keeps_plain_official_status(self):
+        import sqlite3
+        from services.city_official_service import store_rows
+        conn = sqlite3.connect(':memory:')
+        store_rows(conn, [{'city': '苏州', 'period': '2024',
+                           'indicator_code': 'nominal_gdp', 'value': 26727.0,
+                           'unit': '亿元', 'source_url': 'https://tjj.suzhou.gov.cn/x',
+                           'source_title': 't'}])
+        row = conn.execute('SELECT data_status,source_name FROM gdp_region_observations').fetchone()
+        self.assertEqual(row[0], 'official')
+        self.assertNotIn('镜像', row[1])
+        conn.close()
+
+    def test_mirror_only_covers_cities_without_official_access(self):
+        from services.city_mirror_service import MIRROR_CITIES, VERIFY_CITIES
+        from services.city_official_service import CITY_SOURCES
+        self.assertEqual(set(MIRROR_CITIES) & set(CITY_SOURCES), set())
+        self.assertEqual(set(VERIFY_CITIES), set(CITY_SOURCES))
+
+
+if __name__ == "__main__":
     unittest.main()

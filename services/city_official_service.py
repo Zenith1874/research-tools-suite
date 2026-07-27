@@ -45,8 +45,9 @@ BULLETIN_TITLE = '国民经济和社会发展统计公报'
 # 公报正文里这三项都是"指标名 + 数字 + 亿元"的直陈句
 # 2015 年前公报把同一指标写作"公共财政预算收入/支出"，是同口径的旧称
 INDICATOR_PATTERNS = {
-    # 深圳 2017 年前公报用"本市/全市生产总值"，与地区生产总值同口径
-    'nominal_gdp': r'地区生产总值|(?:本市|全市)生产总值',
+    # 各市写法不一：深圳 2017 年前用"本市/全市生产总值"，合肥用"全年生产总值（GDP）"，
+    # 都与地区生产总值同口径。
+    'nominal_gdp': r'地区生产总值|(?:本市|全市|全年)生产总值|生产总值（GDP）',
     'general_budget_revenue': r'(?:一般)?公共财政预算收入|一般公共预算收入',
     'general_budget_expenditure': r'(?:一般)?公共财政预算支出|一般公共预算支出',
 }
@@ -133,7 +134,10 @@ def extract_value(text, indicator_code):
         before = re.split(r'[。；;！!]', text[max(0, match.start() - 40):match.start()])[-1]
         if any(word in before for word in DISQUALIFY_BEFORE):
             continue
-        value = first_amount(text[match.end():match.end() + 60])
+        # 窗口不得跨句：常州 2013"公共财政预算收入占GDP的比重为9.4%。全年公共财政
+        # 预算支出417.9亿元"——跨句会把下一句的支出数当成本句的收入值。
+        window = re.split(r'[。；;]', text[match.end():match.end() + 60])[0]
+        value = first_amount(window)
         if value is not None and low <= value <= high:
             candidates.append(round(value, 4))
     return max(candidates) if candidates else None
@@ -196,8 +200,14 @@ def collect_city(city, config, limit_years=None):
     return drop_yoy_outliers(rows), errors
 
 
-def store_rows(conn, rows):
-    """GDP 进 gdp_region_observations，财政进 regional_fiscal_observations(city_total)。"""
+def store_rows(conn, rows, region_codes=None, data_status='official',
+               source_name_fmt='{city}市统计局', notes_prefix=''):
+    """GDP 进 gdp_region_observations，财政进 regional_fiscal_observations(city_total)。
+
+    镜像通道复用同一套写入，但传入 data_status='official_mirror' 与镜像来源名，
+    让页面能把"直连官方原站"和"第三方镜像"分开显示。
+    """
+    region_codes = region_codes or {c: cfg['region_code'] for c, cfg in CITY_SOURCES.items()}
     ensure_regional_fiscal_table(conn)
     conn.execute('''CREATE TABLE IF NOT EXISTS gdp_region_observations (
       id INTEGER PRIMARY KEY, country_code TEXT, region_code TEXT, region_name TEXT,
@@ -208,8 +218,10 @@ def store_rows(conn, rows):
     counts = {'gdp': 0, 'fiscal': 0}
     for row in rows:
         city = row['city']
-        region_code = CITY_SOURCES[city]['region_code']
-        notes = f"{city}市统计局《{row['source_title']}》原文直接值；全市口径、当年价。"
+        region_code = region_codes[city]
+        source_name = source_name_fmt.format(city=city)
+        notes = (f"{notes_prefix}{city}市统计局《{row['source_title']}》原文直接值；"
+                 '全市口径、当年价。')
         # 早年公报常以整数关口表述（如苏州 2011"达到10500亿元"），如实标注
         if row['value'] >= 1000 and float(row['value']).is_integer():
             notes += '公报原文即为整数表述，未提供小数位。'
@@ -217,12 +229,13 @@ def store_rows(conn, rows):
             conn.execute('''INSERT INTO gdp_region_observations
               (country_code,region_code,region_name,indicator_code,period,value,unit,
                data_status,source_name,source_url,parser_notes,updated_at)
-              VALUES ('CN',?,?,?,?,?,?,'official',?,?,?,?)
+              VALUES ('CN',?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(country_code,region_code,indicator_code,period)
-              DO UPDATE SET value=excluded.value,source_url=excluded.source_url,
+              DO UPDATE SET value=excluded.value,data_status=excluded.data_status,
+                            source_name=excluded.source_name,source_url=excluded.source_url,
                             parser_notes=excluded.parser_notes,updated_at=excluded.updated_at''',
               (region_code, city, 'nominal_gdp', row['period'], row['value'], '亿元',
-               f'{city}市统计局', row['source_url'], notes, now))
+               data_status, source_name, row['source_url'], notes, now))
             counts['gdp'] += 1
         else:
             _upsert(conn, {
@@ -230,7 +243,8 @@ def store_rows(conn, rows):
                 'region_code': region_code, 'region_name': city,
                 'indicator_code': row['indicator_code'], 'period': row['period'],
                 'value': row['value'], 'unit': '亿元', 'frequency': 'annual',
-                'period_type': 'calendar_year', 'source_name': f'{city}市统计局',
+                'period_type': 'calendar_year', 'data_status': data_status,
+                'source_name': source_name,
                 'source_url': row['source_url'], 'source_title': row['source_title'],
                 'parser_notes': notes})
             counts['fiscal'] += 1

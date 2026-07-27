@@ -75,6 +75,7 @@ from services.anjuke_listing_service import build_anjuke_payload, update_anjuke_
 from services.housing_compare_service import build_housing_compare_payload
 from services.city_economy_service import build_city_economy_payload
 from services.city_official_service import update_city_official
+from services.city_mirror_service import update_city_mirror
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -1846,6 +1847,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/city-economy/update':
             self.send_json(_run_update_job('city_official',
                                            lambda: update_city_official(DB_PATH)))
+        elif path == '/api/city-economy/update-mirror':
+            self.send_json(_run_update_job('city_mirror',
+                                           lambda: update_city_mirror(DB_PATH)))
         elif path == '/api/housing/update':
             self.send_json(_run_update_job('housing', lambda: update_housing_prices(DB_PATH)))
         elif path == '/api/housing/anjuke/update':

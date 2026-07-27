@@ -99,6 +99,9 @@ function latestForCity(metric,city){
 // 每格单独判定口径:全市 / 市本级 都是这座城市的数,但口径大小不同,不可混比
 function cellScope(metric,row,city){
   if(!['gdp','fiscal'].includes(metric.source))return{cls:'',tag:'',note:'',title:''};
+  if(row.data_status==='official_mirror')
+    return{cls:'mir',tag:'镜像',note:'镜像',
+           title:`${city}官方原站在本机网络不可达，此值取自第三方镜像转存的该市统计局公报原件；已与可直连城市逐条对照验证`};
   if(row.scope_label==='市本级补充'||row.scope_label==='市本级')
     return{cls:'lvl',tag:'市本级',note:'市本级',title:`${city}市本级口径，小于全市口径，与其他城市的全市值不可直接比较`};
   return{cls:'',tag:'',note:'',title:`${city}${row.scope_label||'城市口径'}`};
