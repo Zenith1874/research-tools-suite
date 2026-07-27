@@ -1,0 +1,71 @@
+# -*- coding: utf-8 -*-
+"""城市公报抽取的三个真实陷阱，全部取自实际公报原文。"""
+import unittest
+
+from services.city_official_service import (
+    CITY_SOURCES, extract_value, find_bulletins, parse_bulletin, drop_yoy_outliers,
+)
+
+
+class CityOfficialExtractionTests(unittest.TestCase):
+    def test_local_subtotal_never_wins_over_city_total(self):
+        """常州 2023 公报里开发区口径排在全市值前面，取第一个匹配会抓错 410.8。"""
+        text = ('全市开发区完成一般公共预算收入410.8亿元，增长15.9%。'
+                '八、财政 全年实现一般公共预算收入680.3亿元，比上年增长7.7%。')
+        self.assertEqual(extract_value(text, 'general_budget_revenue'), 680.3)
+
+    def test_ratio_clause_in_previous_sentence_does_not_disqualify(self):
+        """广州 2022：上一句的"占…比重"不能把下一句的全市支出排除掉。"""
+        text = ('分别占全市一般公共预算收入比重为67.7%、32.3%。'
+                '全年一般公共预算支出3014.22亿元，下降0.2%。'
+                '其中，教育支出626.94亿元。')
+        self.assertEqual(extract_value(text, 'general_budget_expenditure'), 3014.22)
+
+    def test_milestone_number_is_skipped_for_the_precise_value(self):
+        """苏州 2005："突破4000亿元，达4026.52亿元"，要后者。"""
+        text = '全市地区生产总值突破4000亿元，达4026.52亿元，按可比价格计算比上年增长15.3%。'
+        self.assertEqual(extract_value(text, 'nominal_gdp'), 4026.52)
+
+    def test_per_capita_and_share_are_not_totals(self):
+        text = ('全市实现地区生产总值31032.50亿元，增长2.1%。'
+                '人均地区生产总值达164171元。'
+                '民营经济增加值占地区生产总值比重为42.3%。')
+        self.assertEqual(extract_value(text, 'nominal_gdp'), 31032.5)
+
+    def test_pre_2015_wording_maps_to_the_same_indicator(self):
+        text = '全年完成公共财政预算收入379.0亿元，增长12%。公共财政预算支出384.1亿元。'
+        self.assertEqual(extract_value(text, 'general_budget_revenue'), 379.0)
+        self.assertEqual(extract_value(text, 'general_budget_expenditure'), 384.1)
+
+    def test_out_of_range_values_are_rejected(self):
+        self.assertIsNone(extract_value('地区生产总值 3.5亿元，', 'nominal_gdp'))
+        self.assertIsNone(extract_value('地区生产总值 999999亿元，', 'nominal_gdp'))
+
+    def test_bulletin_links_need_city_name_and_year(self):
+        html = ('<a href="/a.html">2024年常州市国民经济和社会发展统计公报</a>'
+                '<a href="/b.html">2024年江苏省国民经济和社会发展统计公报</a>'
+                '<a href="/c.html">常州市第五次全国经济普查公报</a>')
+        found = find_bulletins(html, 'https://tjj.changzhou.gov.cn/', '常州')
+        self.assertEqual(list(found), ['2024'])
+        self.assertTrue(found['2024'][0].endswith('/a.html'))
+
+    def test_gdp_smaller_than_three_times_revenue_is_rejected(self):
+        """抽错列时 GDP 会落到财政量级，用这条比例关系整篇丢弃。"""
+        html = '<p>地区生产总值1000.0亿元，一般公共预算收入900.0亿元。</p>'
+        self.assertEqual(parse_bulletin(html, '常州', '2024', 'https://x', 't'), [])
+
+    def test_isolated_year_spike_is_dropped(self):
+        rows = [{'city': '常州', 'indicator_code': 'nominal_gdp', 'period': p, 'value': v}
+                for p, v in (('2021', 8800.0), ('2022', 30000.0), ('2023', 10116.4))]
+        kept = {row['period'] for row in drop_yoy_outliers(rows)}
+        self.assertEqual(kept, {'2021', '2023'})
+
+    def test_every_configured_city_is_a_known_city_economy_city(self):
+        from services.city_economy_service import CITY_CONFIG
+        known = {item['city']: item['city_code'] for item in CITY_CONFIG}
+        for city, config in CITY_SOURCES.items():
+            self.assertEqual(config['region_code'], known[city], city)
+
+
+if __name__ == '__main__':
+    unittest.main()

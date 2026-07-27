@@ -63,6 +63,7 @@ from services.us_macro_service import (
     build_us_macro_payload,
     update_us_macro,
 )
+from services.gdp_service import build_gdp_payload, update_gdp
 from services.china_macro_service import update_china_macro
 from services.macro_analytics_service import build_macro_analytics_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
@@ -72,6 +73,8 @@ from services.housing_price_service import (
 )
 from services.anjuke_listing_service import build_anjuke_payload, update_anjuke_listings
 from services.housing_compare_service import build_housing_compare_payload
+from services.city_economy_service import build_city_economy_payload
+from services.city_official_service import update_city_official
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -110,6 +113,10 @@ from services.audio_transcription_service import (
     AudioTranscriptionManager,
     decode_audio_options_header,
 )
+from services.yuedu_fm_service import (
+    YueduFMError,
+    YueduFMManager,
+)
 
 logging.basicConfig(level=logging.INFO,
     format='%(asctime)s  %(levelname)-7s  %(message)s', datefmt='%H:%M:%S')
@@ -142,6 +149,8 @@ ALLOW_REMOTE_WRITES = os.environ.get('ALLOW_REMOTE_WRITES', '0').strip().lower()
 TRANSLATION_ALLOW_REMOTE = os.environ.get('TRANSLATION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 AUDIO_TRANSCRIPTION_ALLOW_REMOTE = os.environ.get(
     'AUDIO_TRANSCRIPTION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
+YUEDU_FM_ALLOW_REMOTE = os.environ.get(
+    'YUEDU_FM_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 AUDIO_MAX_UPLOAD_BYTES = int(os.environ.get(
     'AUDIO_MAX_UPLOAD_BYTES', AUDIO_DEFAULT_MAX_UPLOAD_BYTES))
 MAX_POST_BYTES = 1024 * 1024
@@ -152,6 +161,7 @@ ABDC_PATH  = os.path.join(_ROOT, 'data', 'abdc_data.json')
 PAPER_TRANSLATION = PaperTranslationManager(os.path.join(_ROOT, 'data', 'translation_jobs'))
 AUDIO_TRANSCRIPTION = AudioTranscriptionManager(
     os.path.join(_ROOT, 'data', 'audio_jobs'), max_upload_bytes=AUDIO_MAX_UPLOAD_BYTES)
+YUEDU_FM = YueduFMManager(os.path.join(_ROOT, 'data', 'yuedu_fm'))
 BASE    = 'https://www.pbc.gov.cn'
 INDEX_URL = BASE + '/goutongjiaoliu/113456/113469/index.html'
 HEADERS = {
@@ -1434,6 +1444,14 @@ def _audio_access_allowed(client_ip, supplied_token=''):
                 _write_request_allowed(client_ip, supplied_token))
 
 
+def _yuedu_fm_access_allowed(client_ip, supplied_token=''):
+    """Downloaded podcast media stays on this computer unless explicitly shared."""
+    if _is_loopback_address(client_ip):
+        return True
+    return bool(YUEDU_FM_ALLOW_REMOTE and
+                _write_request_allowed(client_ip, supplied_token))
+
+
 def cors_headers(origin=None):
     headers = {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -1516,6 +1534,59 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass
 
+    def send_ranged_file(self, file_path, content_type=None):
+        """Stream local media with single-range support so browser seeking works."""
+        try:
+            size = os.path.getsize(file_path)
+            start, end = 0, max(0, size - 1)
+            range_header = (self.headers.get('Range') or '').strip()
+            status = 200
+            if range_header:
+                match = re.fullmatch(r'bytes=(\d*)-(\d*)', range_header)
+                if not match or (not match.group(1) and not match.group(2)):
+                    self.send_response(416)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.end_headers()
+                    return
+                if match.group(1):
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else end
+                else:
+                    suffix = int(match.group(2))
+                    start = max(0, size - suffix)
+                if start >= size or end < start:
+                    self.send_response(416)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.end_headers()
+                    return
+                end = min(end, size - 1)
+                status = 206
+            length = end - start + 1
+            mime, _ = mimetypes.guess_type(file_path)
+            self.send_response(status)
+            self.send_header('Content-Type', content_type or mime or 'application/octet-stream')
+            self.send_header('Content-Length', length)
+            self.send_header('Accept-Ranges', 'bytes')
+            if status == 206:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.send_header('Cache-Control', 'no-store, private')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'same-origin')
+            self.end_headers()
+            remaining = length
+            with open(file_path, 'rb') as handle:
+                handle.seek(start)
+                while remaining:
+                    chunk = handle.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except FileNotFoundError:
+            self.send_json({'error': 'not found'}, 404)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
     def _require_translation_access(self):
         allowed = _translation_access_allowed(
             self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
@@ -1533,6 +1604,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({
                 'error': '原始录音、转录与字幕默认仅允许服务器本机访问',
                 'code': 'audio_local_only',
+            }, 403)
+        return allowed
+
+    def _require_yuedu_fm_access(self):
+        allowed = _yuedu_fm_access_allowed(
+            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+        if not allowed:
+            self.send_json({
+                'error': '悦读FM 本地资料默认仅允许服务器本机访问',
+                'code': 'yuedu_fm_local_only',
             }, 403)
         return allowed
 
@@ -1568,10 +1649,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'update_lock_busy': _UPDATE_LOCK.locked(), 'jobs': jobs})
             elif path == '/api/translation/config':
                 if self._require_translation_access():
-                    self.send_json(PAPER_TRANSLATION.config())
+                    self.send_json(PAPER_TRANSLATION.config(), cache_control='no-store, private')
             elif path == '/api/translation/jobs':
                 if self._require_translation_access():
-                    self.send_json({'jobs': PAPER_TRANSLATION.list_jobs()})
+                    self.send_json({'jobs': PAPER_TRANSLATION.list_jobs()},
+                                   cache_control='no-store, private')
             elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/download$', path):
                 if self._require_translation_access():
                     job_id = path.split('/')[4]
@@ -1587,9 +1669,15 @@ class Handler(BaseHTTPRequestHandler):
                     content, name = PAPER_TRANSLATION.read_text_output(job_id, kind)
                     self.send_json({'content': content, 'filename': name, 'kind': kind},
                                    cache_control='no-store, private')
+            elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/questions$', path):
+                if self._require_translation_access():
+                    job_id = path.split('/')[4]
+                    self.send_json(PAPER_TRANSLATION.question_history(job_id),
+                                   cache_control='no-store, private')
             elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}$', path):
                 if self._require_translation_access():
-                    self.send_json(PAPER_TRANSLATION.get_job(path.rsplit('/', 1)[1]))
+                    self.send_json(PAPER_TRANSLATION.get_job(path.rsplit('/', 1)[1]),
+                                   cache_control='no-store, private')
             elif path == '/api/audio/config':
                 if self._require_audio_access():
                     self.send_json(AUDIO_TRANSCRIPTION.config())
@@ -1613,6 +1701,17 @@ class Handler(BaseHTTPRequestHandler):
                 if self._require_audio_access():
                     self.send_json(AUDIO_TRANSCRIPTION.get_job(path.rsplit('/', 1)[1]),
                                    cache_control='no-store, private')
+            elif path == '/api/yuedu-fm/library':
+                if self._require_yuedu_fm_access():
+                    self.send_json(YUEDU_FM.library(), cache_control='no-store, private')
+            elif path == '/api/yuedu-fm/status':
+                if self._require_yuedu_fm_access():
+                    self.send_json(YUEDU_FM.status(), cache_control='no-store, private')
+            elif re.match(r'^/api/yuedu-fm/episodes/[0-9a-f]{24}/(audio|image)$', path):
+                if self._require_yuedu_fm_access():
+                    parts = path.split('/')
+                    media_path, media_type = YUEDU_FM.media_path(parts[4], parts[5])
+                    self.send_ranged_file(media_path, media_type)
             elif path == '/api/abdc/data':  self._api_abdc_data()
             elif path == '/api/financial/debug': self._api_financial_debug()
             elif path == '/api/fiscal-debt/data': self._api_fiscal_debt_data()
@@ -1642,6 +1741,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
+            elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
             elif path == '/api/analytics': self.send_json(_analytics_payload())
             elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing','/api/analytics/debt'):
                 self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
@@ -1649,6 +1749,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
             elif path == '/api/housing/anjuke':   self.send_json(build_anjuke_payload())
             elif path == '/api/housing/compare':  self.send_json(build_housing_compare_payload(DB_PATH))
+            elif path == '/api/city-economy/data': self.send_json(build_city_economy_payload(DB_PATH))
             elif path == '/api/abdc/astar/semantic-search':
                 from services.astar_semantic_service import semantic_search
                 p = self._query_params()
@@ -1681,19 +1782,27 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'audio_transcription.html'))
             elif re.match(r'^/audio-transcription/results/[0-9a-f]{32}/?$', path):
                 self.send_file(os.path.join(STATIC_DIR, 'audio_transcription_result.html'))
+            elif path in ('/yuedu-fm', '/yuedu-fm/'):
+                self.send_file(os.path.join(STATIC_DIR, 'yuedu_fm.html'))
             elif path in ('/china-rates', '/china-rates/'):
                 self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
             elif path in ('/us-macro', '/us-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
+            elif path in ('/gdp', '/gdp/'):
+                self.send_file(os.path.join(STATIC_DIR, 'gdp.html'))
             elif path in ('/macro-analytics', '/macro-analytics/'):
                 self.send_file(os.path.join(STATIC_DIR, 'macro_analytics.html'))
             elif path in ('/housing', '/housing/'):
                 self.send_file(os.path.join(STATIC_DIR, 'housing.html'))
+            elif path in ('/city-economy', '/city-economy/'):
+                self.send_file(os.path.join(STATIC_DIR, 'city_economy.html'))
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
-        except (TranslationError, AudioTranscriptionError) as e:
+        except (TranslationError, AudioTranscriptionError, YueduFMError) as e:
             self.send_json({'error': str(e)}, 400)
+        except FileNotFoundError:
+            self.send_json({'error': 'not found'}, 404)
         except Exception as e:
             self.send_json({'error':str(e)},500)
 
@@ -1732,6 +1841,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job('china_rates', lambda: update_china_rates(DB_PATH, backfill=backfill)))
         elif path == '/api/us-macro/update':
             self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
+        elif path == '/api/gdp/update':
+            self.send_json(_run_update_job('gdp', lambda: update_gdp(DB_PATH)))
+        elif path == '/api/city-economy/update':
+            self.send_json(_run_update_job('city_official',
+                                           lambda: update_city_official(DB_PATH)))
         elif path == '/api/housing/update':
             self.send_json(_run_update_job('housing', lambda: update_housing_prices(DB_PATH)))
         elif path == '/api/housing/anjuke/update':
@@ -1778,6 +1892,8 @@ class Handler(BaseHTTPRequestHandler):
                             'message': 'Semantic Scholar 补全已启动（补摘要/引用/学科，按批进行，可在 Debug 看进度）'})
         elif path == '/api/translation/jobs':
             self._api_translation_create(content_length)
+        elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/questions$', path):
+            self._api_translation_question(path.split('/')[4])
         elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/retry$', path):
             self._api_translation_retry(path.split('/')[4])
         elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/delete$', path):
@@ -1790,6 +1906,16 @@ class Handler(BaseHTTPRequestHandler):
             self._api_audio_delete(path.split('/')[4])
         elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/translate$', path):
             self._api_audio_translate(path.split('/')[4])
+        elif path == '/api/yuedu-fm/sync':
+            if self._require_yuedu_fm_access():
+                body = self._read_json_body()
+                try:
+                    result = YUEDU_FM.start_sync(
+                        download_audio=bool(body.get('download_audio', True)))
+                    self.send_json(result, 202, cache_control='no-store, private')
+                except YueduFMError as exc:
+                    self.send_json({'error': str(exc)}, 409,
+                                   cache_control='no-store, private')
         else:
             self.send_json({'error':'not found'},404)
 
@@ -1824,6 +1950,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'error': str(exc)}, 400)
         except Exception:
             self.send_json({'error': '重试翻译任务失败'}, 500)
+
+    def _api_translation_question(self, job_id):
+        if not self._require_translation_access():
+            return
+        try:
+            body = self._read_json_body()
+            turn = PAPER_TRANSLATION.ask_question(job_id, body.get('question'))
+            self.send_json(
+                {'turn': turn}, 201, cache_control='no-store, private')
+        except TranslationError as exc:
+            self.send_json(
+                {'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('文章问答失败 job=%s', job_id)
+            self.send_json(
+                {'error': '文章问答失败；原文和问题未写入服务日志'}, 500,
+                cache_control='no-store, private')
 
     def _api_translation_delete(self, job_id):
         if not self._require_translation_access():
