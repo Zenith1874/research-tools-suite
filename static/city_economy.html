@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>城市经济 | 研究工作台</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <script src="/vendor/chart.umd.min.js"></script>
+  <style>
+    :root{color-scheme:dark;--bg:#07111f;--panel:#0b1829;--panel2:#0e2035;--bd:#213751;--text:#dce8f6;--muted:#8fa4bd;--blue:#5795ff;--green:#27d3b2;--yellow:#f5a623;--red:#ff6b7d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui}.wrap{max-width:1500px;margin:auto;padding:28px 22px 70px}h1{font-size:29px;margin:0 0 7px}h2,h3{margin:0}.sub,.muted{color:var(--muted);line-height:1.65}.head,.row,.chart-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.actions,.tabs,.quick,.controls,.chips{display:flex;gap:8px;flex-wrap:wrap}.actions a,.tabs button,.quick button,select,input{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;text-decoration:none}.tabs{margin:20px 0}.tabs button,.quick button,.chip{cursor:pointer}.tabs button.active,.quick button.active{background:#1666d8;border-color:#4a94ff}.controls{align-items:end;margin:14px 0}.controls label,.axis label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
+    .card,.picker{background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px}.picker{margin-bottom:14px}.picker-title{font-size:12px;color:#b8c9dc;margin:0 0 9px}.picker-block+.picker-block{margin-top:14px;padding-top:13px;border-top:1px solid #1b3048}.chip{border:1px solid #2b415b;background:var(--panel2);color:var(--muted);border-radius:18px;padding:6px 10px;font:inherit;font-size:12px}.chip.active{color:var(--text);border-color:var(--chip-color,#5795ff);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--chip-color,#5795ff) 30%,transparent)}.chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--chip-color,#5795ff)}.chip.missing{border-style:dashed;opacity:.65}.count-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:14px 0}.count-strip div{background:var(--panel2);padding:12px;border-radius:9px;color:var(--muted)}.count-strip b{display:block;color:var(--text);font-size:21px;margin-top:4px}.notice{border:1px solid #80611d;background:#29230f;color:#f3d47c;border-radius:9px;padding:11px 13px;line-height:1.65;margin:11px 0}
+    .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0}.chart-head{align-items:center;margin-bottom:7px}.chart-title{font-size:14px}.chart-sub{font-size:11px;color:var(--muted);margin-top:4px}.axis{display:flex;align-items:end;gap:6px;flex-wrap:wrap}.axis select,.axis input{padding:5px 7px;height:30px;font-size:11px}.axis input{width:82px}.chart{height:300px}.empty{display:grid;place-items:center;height:240px;color:var(--muted);border:1px dashed #28405b;border-radius:8px}.wide{grid-column:1/-1}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kpi{background:var(--panel2);border-radius:9px;padding:12px;min-height:100px}.kpi b{font-size:20px;display:block;margin:6px 0;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted);line-height:1.4}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.badge{display:inline-flex;border:1px solid #38516d;border-radius:999px;padding:3px 8px;font-size:11px;color:#b9cae0}.badge.city{border-color:#247c68;color:#62e4c5}.badge.province{border-color:#8a661c;color:#ffd36e}.hidden{display:none!important}.scroll{overflow:auto;max-height:560px}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:9px;border-bottom:1px solid #1b3048;text-align:right}th:first-child,td:first-child{text-align:left}th{position:sticky;top:0;background:var(--panel);z-index:1}td small{display:block;color:var(--muted);margin-top:3px}
+    .ctag{font-style:normal;font-size:10px;border-radius:4px;padding:1px 4px;margin-right:5px;border:1px solid #38516d;color:#b9cae0}
+    td.prov{background:rgba(245,166,35,.06);color:#d9c48d}td.prov .ctag{border-color:#8a661c;color:#ffd36e}td.prov small{color:#bfa765}
+    td.lvl{background:rgba(87,149,255,.05)}td.lvl .ctag{border-color:#31588f;color:#9dc0ff}
+    .legend{display:flex;gap:14px;flex-wrap:wrap;margin:9px 0 2px;font-size:11px;color:var(--muted);line-height:1.7}.coverage{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}.coverage div{background:var(--panel2);padding:12px;border-radius:8px}.coverage b{display:block;font-size:20px;margin-top:5px}
+    @media(max-width:950px){.chart-grid,.detail-grid,.kpis,.count-strip,.coverage{grid-template-columns:1fr}.chart{height:310px}.wide{grid-column:auto}}@media(max-width:600px){.wrap{padding:20px 12px 60px}.chip{padding:7px 9px}.axis{width:100%}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <div class="head">
+    <div><h1>城市经济</h1><div class="sub">多城市 × 多指标横向比较；房价按城市，财政与 GDP 严格标记城市口径或所属省背景。</div></div>
+    <div class="actions"><a href="/housing">房价完整详页</a><a href="/gdp">中美 GDP 与地方排行</a></div>
+  </div>
+
+  <div class="controls">
+    <label>开始期间<select id="start"></select></label>
+    <label>结束期间<select id="end"></select></label>
+    <span class="muted">期间条件同时作用于所有图表和最新值矩阵</span>
+  </div>
+
+  <div class="tabs">
+    <button data-tab="compare" class="active">多城多指标</button>
+    <button data-tab="detail">单城详情</button>
+    <button data-tab="coverage">覆盖与口径</button>
+  </div>
+
+  <section id="compare">
+    <div class="picker">
+      <div class="picker-block">
+        <div class="row"><div class="picker-title">城市（可多选）</div><div class="quick" id="cityQuick"></div></div>
+        <div class="chips" id="cityChips"></div>
+      </div>
+      <div class="picker-block">
+        <div class="row"><div class="picker-title">指标（可多选；每个指标独立纵轴）</div><div class="quick" id="metricQuick"></div></div>
+        <div class="chips" id="metricChips"></div>
+      </div>
+    </div>
+    <div id="compareNotice" class="notice"></div>
+    <div id="compareCounts" class="count-strip"></div>
+    <div id="comparisonCharts" class="chart-grid"></div>
+    <div class="card wide" style="margin-top:14px"><div class="row"><h3>所选城市最新值矩阵</h3><span class="muted">各列独立取所选期间内最新可用值；缺失不补零</span></div>
+      <div class="legend"><span><i class="ctag">口径</i>每格标注该数字究竟是谁的：</span><span><i class="ctag" style="border-color:#8a661c;color:#ffd36e">广东省</i>该市本级数据未入库，填的是<b>所属省</b>的值，不是这座城市的</span><span><i class="ctag" style="border-color:#31588f;color:#9dc0ff">市本级</i>直辖市里只有市本级披露的指标，口径小于全市</span><span>无标注＝城市/全市口径</span></div>
+      <div class="muted" style="font-size:11px;margin-bottom:8px">同一列的年份可能不同（如卖地收入北京 2022、上海 2023），跨口径或跨年份的格子不要直接横向相减。</div><div class="scroll"><table><thead id="matrixHead"></thead><tbody id="matrixBody"></tbody></table></div></div>
+  </section>
+
+  <section id="detail" class="hidden">
+    <div class="controls"><label>选择城市<select id="city"></select></label><span id="scopeBadge" class="badge"></span></div>
+    <div id="scopeNotice" class="notice"></div>
+    <div id="kpis" class="kpis"></div>
+    <div class="detail-grid" style="margin-top:14px">
+      <div class="card"><h3>城市房价同比</h3><div class="chart"><canvas id="detailHousing"></canvas></div></div>
+      <div class="card"><h3>城市挂牌均价</h3><div class="chart"><canvas id="detailListing"></canvas></div></div>
+      <div class="card"><h3 id="detailFiscalTitle">财政收入与支出</h3><div class="chart"><canvas id="detailFiscal"></canvas></div></div>
+      <div class="card"><h3 id="detailGdpTitle">地区 GDP</h3><div class="chart"><canvas id="detailGdp"></canvas></div></div>
+      <div class="card wide"><div class="row"><h3>财政与土地逐年明细</h3><label class="muted">财政指标 <select id="fiscalMetric"></select></label></div><div class="scroll"><table><thead><tr><th>年份</th><th>数值</th><th>地区口径</th><th>状态</th><th>来源</th></tr></thead><tbody id="fiscalTable"></tbody></table></div></div>
+    </div>
+  </section>
+
+  <section id="coverage" class="hidden">
+    <div id="coverageCards" class="coverage"></div>
+    <div class="card" style="margin-top:14px"><h3>十城数据覆盖</h3><div class="scroll"><table><thead><tr><th>城市</th><th>官方房价</th><th>挂牌历史</th><th>财政采用口径</th><th>财政记录</th><th>GDP记录</th></tr></thead><tbody id="coverageTable"></tbody></table></div></div>
+    <div class="card" style="margin-top:14px"><h3>口径纪律</h3><div id="caveats" class="muted"></div></div>
+  </section>
+</main>
+<script src="/research-nav.js"></script>
+<script src="/city-economy.js"></script>
+</body>
+</html>
