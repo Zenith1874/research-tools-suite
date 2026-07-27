@@ -34,19 +34,16 @@ function rawRows(metric,applyRange=true){
   return rows.filter(r=>selectedCities.has(r.city)&&typeof r[metric.field]==='number'&&(!applyRange||inRange(r)));
 }
 function metricSeries(metric,applyRange=true){
+  // 一城一条线:省级数据已不进入本模块,不存在跨城合并的背景线
   const rows=rawRows(metric,applyRange),groups=new Map();
   for(const row of rows){
-    const context=(metric.source==='gdp'||metric.source==='fiscal')&&row.geographic_scope==='province_context';
-    const key=context?`province:${row.region_code}`:`city:${row.city}`;
-    if(!groups.has(key))groups.set(key,{key,context,cities:new Set(),region:row.region_name,rows:[]});
-    const group=groups.get(key);group.cities.add(row.city);group.rows.push(row);
+    if(!groups.has(row.city))groups.set(row.city,[]);
+    groups.get(row.city).push(row);
   }
-  return [...groups.values()].map(group=>{
-    const cities=[...group.cities],label=group.context?`${group.region}省背景（${cities.join('/')}）`:cities[0];
+  return [...groups.entries()].map(([city,cityRows])=>{
     const byPeriod=new Map();
-    for(const row of group.rows)if(!byPeriod.has(row.period))byPeriod.set(row.period,row[metric.field]);
-    const color=group.context?CITY_COLORS[cities[0]]:CITY_COLORS[label];
-    return {key:group.key,label,color,context:group.context,byPeriod};
+    for(const row of cityRows)if(!byPeriod.has(row.period))byPeriod.set(row.period,row[metric.field]);
+    return {key:`city:${city}`,label:city,color:CITY_COLORS[city],byPeriod};
   });
 }
 function allPeriods(series){return [...new Set(series.flatMap(s=>[...s.byPeriod.keys()]))].sort()}
@@ -64,7 +61,7 @@ function chartDataset(metric,series,periods,indexed){
   return series.map((s,i)=>{
     let data=periods.map(p=>s.byPeriod.get(p)??null);
     if(indexed){const base=data.find(v=>typeof v==='number'&&v!==0);data=data.map(v=>v==null||!base?null:Number((v/base*100).toFixed(2)))}
-    return {label:s.label,data,borderColor:s.color||CITY_COLORS[Object.keys(CITY_COLORS)[i%10]],backgroundColor:'transparent',borderWidth:s.context?1.7:2,pointRadius:periods.length>40?0:2,borderDash:s.context?[6,3]:[],spanGaps:false,tension:.08};
+    return {label:s.label,data,borderColor:s.color||CITY_COLORS[Object.keys(CITY_COLORS)[i%10]],backgroundColor:'transparent',borderWidth:2,pointRadius:periods.length>40?0:2,spanGaps:false,tension:.08};
   });
 }
 function makeChart(name,canvas,metric,series,periods,axis){
@@ -82,8 +79,8 @@ function renderComparisonCharts(){
   for(const metric of metrics){
     const series=metricSeries(metric,true),periods=allPeriods(series),axis=axisConfig(metric,series,periods);
     const card=document.createElement('div');card.className='card chart-card';
-    const contextCount=series.filter(s=>s.context).length;
-    card.innerHTML=`<div class="chart-head"><div><div class="chart-title">${metric.label}</div><div class="chart-sub">${periods[0]||'—'} 至 ${periods.at(-1)||'—'} · ${series.length} 条线${contextCount?` · ${contextCount} 条省级背景线已去重`:''}${axis.indexed?' · 可见首期=100':''}</div></div>${axisControls(metric,axis.state)}</div>${periods.length?`<div class="chart"><canvas id="chart-${metric.key}"></canvas></div>`:'<div class="empty">所选城市与期间暂无数据</div>'}`;
+    const missing=[...selectedCities].filter(c=>!series.some(s=>s.label===c));
+    card.innerHTML=`<div class="chart-head"><div><div class="chart-title">${metric.label}</div><div class="chart-sub">${periods[0]||'—'} 至 ${periods.at(-1)||'—'} · ${series.length} 城${missing.length?` · ${missing.join('、')}暂无城市级官方值`:''}${axis.indexed?' · 可见首期=100':''}</div></div>${axisControls(metric,axis.state)}</div>${periods.length?`<div class="chart"><canvas id="chart-${metric.key}"></canvas></div>`:`<div class="empty">所选城市在该期间暂无城市级官方值（不以省级数据代替）</div>`}`;
     host.appendChild(card);if(periods.length)makeChart(`compare:${metric.key}`,$(`chart-${metric.key}`),metric,series,periods,axis);
   }
   if(!metrics.length)host.innerHTML='<div class="card wide empty">请至少选择一个指标</div>';
@@ -99,13 +96,10 @@ function latestForCity(metric,city){
   if(metric.source==='fiscal')rows=payload.fiscal_rows.filter(r=>r.city===city&&r.indicator_code===metric.code);
   rows=rows.filter(r=>inRange(r)&&typeof r[metric.field]==='number');return rows.sort((a,b)=>a.period.localeCompare(b.period)).at(-1)||null;
 }
-// 每格单独判定口径:省背景值绝不能看起来像城市值(广州/深圳同为广东、南京苏锡常同为江苏)
+// 每格单独判定口径:全市 / 市本级 都是这座城市的数,但口径大小不同,不可混比
 function cellScope(metric,row,city){
   if(!['gdp','fiscal'].includes(metric.source))return{cls:'',tag:'',note:'',title:''};
-  if(row.geographic_scope==='province_context')
-    return{cls:'prov',tag:`${row.region_name}省`,note:'省背景',
-           title:`${row.region_name}省${metric.label}，${city}市本级数据未入库；不可解释为${city}的值`};
-  if(row.scope_label==='市本级补充')
+  if(row.scope_label==='市本级补充'||row.scope_label==='市本级')
     return{cls:'lvl',tag:'市本级',note:'市本级',title:`${city}市本级口径，小于全市口径，与其他城市的全市值不可直接比较`};
   return{cls:'',tag:'',note:'',title:`${city}${row.scope_label||'城市口径'}`};
 }
@@ -114,10 +108,10 @@ function renderMatrix(){
   $('matrixHead').innerHTML=`<tr><th>城市</th>${metrics.map(m=>`<th>${m.label}</th>`).join('')}<th>财政/GDP 数据来自谁</th></tr>`;
   $('matrixBody').innerHTML=[...selectedCities].map(city=>{const meta=cityMeta(city);
     const cells=metrics.map(m=>{const r=latestForCity(m,city);
-      if(!r)return '<td>—</td>';
+      if(!r)return `<td class="gap" title="${city}该指标的城市级官方值未入库；不以${cityMeta(city).province}省值代替">待入库</td>`;
       const s=cellScope(m,r,city);
       return `<td class="${s.cls}" title="${s.title}">${s.tag?`<i class="ctag">${s.tag}</i>`:''}${fmt(r[m.field],m.rate?2:0)} ${m.unit}<small>${r.period}${s.note?` · ${s.note}`:''}</small></td>`}).join('');
-    return `<tr><td>${city}</td>${cells}<td><span class="badge ${meta.fiscal_scope==='province_context'?'province':'city'}">${meta.fiscal_scope_label}</span></td></tr>`}).join('')
+    return `<tr><td>${city}</td>${cells}<td><span class="badge ${meta.fiscal_scope==='missing'?'gap':'city'}">${meta.fiscal_scope_label}</span></td></tr>`}).join('')
     ||`<tr><td colspan="${metrics.length+2}">请至少选择一个城市</td></tr>`;
 }
 function availableCityCount(metric){
@@ -132,16 +126,16 @@ function renderPickers(){
   $('cityQuick').innerHTML=Object.entries(GROUPS).map(([name,cities])=>`<button data-city-group="${name}">${name}</button>`).join('')+'<button data-city-group="清空">清空</button>';
   $('cityChips').innerHTML=payload.cities.map(c=>{const active=selectedCities.has(c.city),has=c.coverage.official_housing_records||c.coverage.listing_records;return `<button class="chip ${active?'active':''} ${has?'':'missing'}" style="--chip-color:${CITY_COLORS[c.city]}" data-city="${c.city}">${c.city}</button>`}).join('');
   $('metricQuick').innerHTML='<button data-metric-group="全景">推荐全景</button><button data-metric-group="房价">只看房价</button><button data-metric-group="财政土地">财政土地</button><button data-metric-group="清空">清空</button>';
-  $('metricChips').innerHTML=METRICS.map(m=>`<button class="chip ${selectedMetrics.has(m.key)?'active':''}" data-metric="${m.key}">${m.label} <small>${availableCityCount(m)}/10${['gdp','fiscal'].includes(m.source)?'·含省背景':''}</small></button>`).join('');
+  $('metricChips').innerHTML=METRICS.map(m=>`<button class="chip ${selectedMetrics.has(m.key)?'active':''}" data-metric="${m.key}">${m.label} <small>${availableCityCount(m)}/10 城</small></button>`).join('');
   document.querySelectorAll('[data-city]').forEach(el=>el.onclick=()=>{selectedCities.has(el.dataset.city)?selectedCities.delete(el.dataset.city):selectedCities.add(el.dataset.city);renderCompare()});
   document.querySelectorAll('[data-city-group]').forEach(el=>el.onclick=()=>{const key=el.dataset.cityGroup;if(key==='清空')selectedCities.clear();else selectedCities=new Set(key==='全部'?payload.cities.map(c=>c.city):GROUPS[key]);renderCompare()});
   document.querySelectorAll('[data-metric]').forEach(el=>el.onclick=()=>{selectedMetrics.has(el.dataset.metric)?selectedMetrics.delete(el.dataset.metric):selectedMetrics.add(el.dataset.metric);renderCompare()});
   document.querySelectorAll('[data-metric-group]').forEach(el=>el.onclick=()=>{const key=el.dataset.metricGroup;if(key==='清空')selectedMetrics.clear();else if(key==='房价')selectedMetrics=new Set(METRICS.filter(m=>m.group==='房价').map(m=>m.key));else if(key==='财政土地')selectedMetrics=new Set(METRICS.filter(m=>['财政','土地','债务'].includes(m.group)).map(m=>m.key));else selectedMetrics=new Set(DEFAULT_METRICS);renderCompare()});
 }
 function renderCompare(){
-  renderPickers();const context=[...selectedCities].filter(c=>cityMeta(c).fiscal_scope==='province_context');
-  $('compareNotice').textContent=context.length?`房价按所选城市逐城比较；财政和 GDP 中，${context.join('、')}当前是所属省背景。相同省份自动合并为一条虚线，避免重复冒充城市数据。`:'当前所选城市的财政与 GDP 均可按城市/直辖市全市口径比较。';
-  $('compareCounts').innerHTML=`<div>已选城市<b>${selectedCities.size}</b></div><div>已选指标<b>${selectedMetrics.size}</b></div><div>城市房价口径<b>${[...selectedCities].filter(c=>cityMeta(c).coverage.official_housing_records).length}</b></div><div>省级背景城市<b>${context.length}</b></div>`;
+  renderPickers();const pending=[...selectedCities].filter(c=>cityMeta(c).fiscal_scope==='missing');
+  $('compareNotice').textContent=pending.length?`本模块只画城市自己的官方值。${pending.join('、')}的市级财政/GDP 尚未入库，相关图与格子显示为缺口，不用所属省数据顶替（省域经济请看财政收支与债务页）。`:'所选城市的房价、GDP 与财政均为城市口径。';
+  $('compareCounts').innerHTML=`<div>已选城市<b>${selectedCities.size}</b></div><div>已选指标<b>${selectedMetrics.size}</b></div><div>有城市房价<b>${[...selectedCities].filter(c=>cityMeta(c).coverage.official_housing_records).length}</b></div><div>市级财政待入库<b>${pending.length}</b></div>`;
   renderComparisonCharts();renderMatrix();
 }
 function line(name,canvas,labels,datasets,unit=''){destroy(name);charts[name]=new Chart(canvas,{type:'line',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{ticks:{color:'#8fa4bd',maxTicksLimit:10},grid:{color:'#14263a'}},y:{ticks:{color:'#8fa4bd',callback:v=>fmt(v,unit==='%'?1:0)+(unit==='%'?'%':'')},grid:{color:'#14263a'}}},plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6'}}}}})}
@@ -149,7 +143,7 @@ function detailCity(){return cityMeta($('city').value)||payload.cities[0]}
 function detailRows(source,code){let rows=source.filter(r=>r.city===detailCity().city&&(!code||r.indicator_code===code));return rows.filter(inRange)}
 function kpi(label,metric){const row=latestForCity(metric,detailCity().city);return `<div class="kpi">${label}<b>${row?`${fmt(row[metric.field],metric.rate?2:0)} ${metric.unit}`:'—'}</b><small>${row?.period||'暂无直接数据'} · ${row?.scope_label||''}</small></div>`}
 function renderDetail(){
-  const c=detailCity();$('scopeBadge').className='badge '+(c.fiscal_scope==='province_context'?'province':'city');$('scopeBadge').textContent=c.fiscal_scope_label;$('scopeNotice').textContent=c.fiscal_scope==='province_context'?`${c.city}房价为城市口径；财政与 GDP 当前仅展示${c.province}省背景，绝不解释为${c.city}市本级。`:`${c.city}为直辖市，现有省级行政区财政与 GDP 可作为全市口径使用。`;
+  const c=detailCity();$('scopeBadge').className='badge '+(c.fiscal_scope==='missing'?'gap':'city');$('scopeBadge').textContent=c.fiscal_scope_label;$('scopeNotice').textContent=c.fiscal_scope==='missing'?`${c.city}房价为城市口径；${c.city}市级财政与 GDP 官方值尚未入库，此处保持空缺，不用${c.province}省数据代替。`:`${c.city}的财政与 GDP 为该市自身口径${c.municipality?'（直辖市，省级行政区即本市）':''}。`;
   const keys=['official_second_yoy','listing_price','listing_yoy','nominal_gdp','general_budget_revenue','general_budget_expenditure','gov_fund_revenue','land_transfer_revenue','debt_outstanding'];$('kpis').innerHTML=keys.map(k=>kpi(metricByKey(k).label,metricByKey(k))).join('');
   const o=detailRows(payload.official_housing),l=detailRows(payload.listing_housing),periods=[...new Set(o.map(r=>r.period).concat(l.map(r=>r.period)))].sort(),map=(rows,code,field='value')=>new Map(rows.filter(r=>!code||r.indicator_code===code).map(r=>[r.period,r[field]]));const n=map(o,'new_home_yoy_pct'),s=map(o,'second_home_yoy_pct'),ly=map(l,null,'yoy_pct');line('detail:housing',$('detailHousing'),periods,[{label:'新房同比',data:periods.map(p=>n.get(p)??null),borderColor:'#f5a623',pointRadius:0},{label:'二手同比',data:periods.map(p=>s.get(p)??null),borderColor:'#5795ff',pointRadius:0},{label:'挂牌同比',data:periods.map(p=>ly.get(p)??null),borderColor:'#27d3b2',pointRadius:0}],'%');
   const lp=l.map(r=>r.period),lm=map(l,null,'avg_price');line('detail:listing',$('detailListing'),lp,[{label:'挂牌均价',data:lp.map(p=>lm.get(p)??null),borderColor:'#27d3b2',pointRadius:0}],'元/㎡');
@@ -157,7 +151,7 @@ function renderDetail(){
   const g=detailRows(payload.gdp_rows,'nominal_gdp'),gp=g.map(r=>r.period),gm=map(g,'nominal_gdp');$('detailGdpTitle').textContent=c.gdp_scope_label;line('detail:gdp',$('detailGdp'),gp,[{label:'名义 GDP',data:gp.map(p=>gm.get(p)??null),borderColor:'#5795ff',pointRadius:2}],'亿元');renderFiscalTable();
 }
 function renderFiscalTable(){const c=detailCity(),code=$('fiscalMetric').value,rows=detailRows(payload.fiscal_rows,code).sort((a,b)=>b.period.localeCompare(a.period));$('fiscalTable').innerHTML=rows.map(r=>`<tr><td>${r.period}</td><td>${fmt(r.value,2)} ${r.unit}</td><td>${r.scope_label}</td><td>${r.data_status}</td><td>${r.source_url?`<a href="${r.source_url}" target="_blank" rel="noopener">原文</a>`:'—'}</td></tr>`).join('')||'<tr><td colspan="5">暂无该口径直接数据</td></tr>'}
-function renderCoverage(){const c=payload.coverage;$('coverageCards').innerHTML=`<div>目标城市<b>${c.cities}</b></div><div>官方房价城市<b>${c.official_housing_cities}</b></div><div>挂牌历史城市<b>${c.listing_cities}</b></div><div>城市可用财政口径<b>${c.direct_city_fiscal_cities}</b></div><div>省级背景地区<b>${c.province_context_regions}</b></div>`;$('coverageTable').innerHTML=payload.cities.map(x=>`<tr><td>${x.city}</td><td>${x.coverage.official_housing_records}</td><td>${x.coverage.listing_records}</td><td><span class="badge ${x.fiscal_scope==='province_context'?'province':'city'}">${x.fiscal_scope_label}</span></td><td>${x.coverage.fiscal_records}</td><td>${x.coverage.gdp_records}</td></tr>`).join('');$('caveats').innerHTML=payload.caveats.map(x=>`<p>• ${x}</p>`).join('')}
+function renderCoverage(){const c=payload.coverage;$('coverageCards').innerHTML=`<div>目标城市<b>${c.cities}</b></div><div>官方房价城市<b>${c.official_housing_cities}</b></div><div>挂牌历史城市<b>${c.listing_cities}</b></div><div>有市级财政<b>${c.direct_city_fiscal_cities}</b></div><div>有城市 GDP<b>${c.city_gdp_cities}</b></div>`;$('coverageTable').innerHTML=payload.cities.map(x=>`<tr><td>${x.city}</td><td>${x.coverage.official_housing_records}</td><td>${x.coverage.listing_records}</td><td><span class="badge ${x.fiscal_scope==='missing'?'gap':'city'}">${x.fiscal_scope_label}</span></td><td>${x.coverage.fiscal_records}</td><td>${x.coverage.gdp_records}</td></tr>`).join('');$('caveats').innerHTML=payload.caveats.map(x=>`<p>• ${x}</p>`).join('')}
 function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['compare','detail','coverage'].forEach(x=>$(x).classList.toggle('hidden',x!==tab));if(tab==='detail')renderDetail();if(tab==='coverage')renderCoverage()}
 function init(){
   selectedCities=new Set(payload.cities.map(c=>c.city));$('city').innerHTML=payload.cities.map(c=>`<option>${c.city}</option>`).join('');const periods=[...new Set(payload.official_housing.concat(payload.listing_housing,payload.fiscal_rows,payload.gdp_rows).map(r=>r.period))].sort();$('start').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('end').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('start').value=periods[0]||'';$('end').value=periods.at(-1)||'';const fiscalCodes=[...new Set(payload.fiscal_rows.map(r=>r.indicator_code))];$('fiscalMetric').innerHTML=fiscalCodes.map(code=>`<option value="${code}">${payload.indicator_labels[code]||code}</option>`).join('');$('fiscalMetric').value='general_budget_revenue';
