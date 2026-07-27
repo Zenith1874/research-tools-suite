@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """国家统计局“主要城市年度数据”官方管线。
 
-该接口覆盖 36 个主要城市。本项目十城中可直接取得北京、上海、广州、深圳、
-厦门、南京、合肥的 2010 年以来 GDP 与一般公共预算收支。统计局在线序列可能
+该接口覆盖 36 个主要城市，全部纳入。本项目十城中的常州、苏州、无锡不在这
+36 城名单内，其数据继续走各市统计局公报那一路。统计局在线序列可能
 包含历次修订，因此写入时遵循：补空缺、替换第三方镜像，但不静默覆盖城市官网
 公报的已发布版本；冲突会随更新结果返回，便于审计。
 """
 import re
 import sqlite3
+import time
 from datetime import datetime
 
 import requests
@@ -41,13 +42,44 @@ HEADERS = {
 NBS_CITIES = {
     '北京': {'db_region_code': '110000', 'gdp_region_code': '110100',
              'scope': 'province_total', 'nbs_da': '110000000000'},
+    '天津': {'db_region_code': '120000', 'gdp_region_code': '120100',
+             'scope': 'province_total', 'nbs_da': '120000000000'},
+    '石家庄': {'db_region_code': '130100', 'scope': 'city_total', 'nbs_da': '130100000000'},
+    '太原': {'db_region_code': '140100', 'scope': 'city_total', 'nbs_da': '140100000000'},
+    '呼和浩特': {'db_region_code': '150100', 'scope': 'city_total', 'nbs_da': '150100000000'},
+    '沈阳': {'db_region_code': '210100', 'scope': 'city_total', 'nbs_da': '210100000000'},
+    '大连': {'db_region_code': '210200', 'scope': 'city_total', 'nbs_da': '210200000000'},
+    '长春': {'db_region_code': '220100', 'scope': 'city_total', 'nbs_da': '220100000000'},
+    '哈尔滨': {'db_region_code': '230100', 'scope': 'city_total', 'nbs_da': '230100000000'},
     '上海': {'db_region_code': '310000', 'gdp_region_code': '310100',
              'scope': 'province_total', 'nbs_da': '310000000000'},
+    '南京': {'db_region_code': '320100', 'scope': 'city_total', 'nbs_da': '320100000000'},
+    '杭州': {'db_region_code': '330100', 'scope': 'city_total', 'nbs_da': '330100000000'},
+    '宁波': {'db_region_code': '330200', 'scope': 'city_total', 'nbs_da': '330200000000'},
+    '合肥': {'db_region_code': '340100', 'scope': 'city_total', 'nbs_da': '340100000000'},
+    '福州': {'db_region_code': '350100', 'scope': 'city_total', 'nbs_da': '350100000000'},
+    '厦门': {'db_region_code': '350200', 'scope': 'city_total', 'nbs_da': '350200000000'},
+    '南昌': {'db_region_code': '360100', 'scope': 'city_total', 'nbs_da': '360100000000'},
+    '济南': {'db_region_code': '370100', 'scope': 'city_total', 'nbs_da': '370100000000'},
+    '青岛': {'db_region_code': '370200', 'scope': 'city_total', 'nbs_da': '370200000000'},
+    '郑州': {'db_region_code': '410100', 'scope': 'city_total', 'nbs_da': '410100000000'},
+    '武汉': {'db_region_code': '420100', 'scope': 'city_total', 'nbs_da': '420100000000'},
+    '长沙': {'db_region_code': '430100', 'scope': 'city_total', 'nbs_da': '430100000000'},
     '广州': {'db_region_code': '440100', 'scope': 'city_total', 'nbs_da': '440100000000'},
     '深圳': {'db_region_code': '440300', 'scope': 'city_total', 'nbs_da': '440300000000'},
-    '厦门': {'db_region_code': '350200', 'scope': 'city_total', 'nbs_da': '350200000000'},
-    '南京': {'db_region_code': '320100', 'scope': 'city_total', 'nbs_da': '320100000000'},
-    '合肥': {'db_region_code': '340100', 'scope': 'city_total', 'nbs_da': '340100000000'},
+    '南宁': {'db_region_code': '450100', 'scope': 'city_total', 'nbs_da': '450100000000'},
+    '海口': {'db_region_code': '460100', 'scope': 'city_total', 'nbs_da': '460100000000'},
+    '重庆': {'db_region_code': '500000', 'gdp_region_code': '500100',
+             'scope': 'province_total', 'nbs_da': '500000000000'},
+    '成都': {'db_region_code': '510100', 'scope': 'city_total', 'nbs_da': '510100000000'},
+    '贵阳': {'db_region_code': '520100', 'scope': 'city_total', 'nbs_da': '520100000000'},
+    '昆明': {'db_region_code': '530100', 'scope': 'city_total', 'nbs_da': '530100000000'},
+    '拉萨': {'db_region_code': '540100', 'scope': 'city_total', 'nbs_da': '540100000000'},
+    '西安': {'db_region_code': '610100', 'scope': 'city_total', 'nbs_da': '610100000000'},
+    '兰州': {'db_region_code': '620100', 'scope': 'city_total', 'nbs_da': '620100000000'},
+    '西宁': {'db_region_code': '630100', 'scope': 'city_total', 'nbs_da': '630100000000'},
+    '银川': {'db_region_code': '640100', 'scope': 'city_total', 'nbs_da': '640100000000'},
+    '乌鲁木齐': {'db_region_code': '650100', 'scope': 'city_total', 'nbs_da': '650100000000'},
 }
 
 # label 使用前缀匹配，避免统计局在括号前后调整空格。destination 决定落库表。
@@ -87,13 +119,36 @@ def _normal(text):
     return re.sub(r'\s+', '', text or '')
 
 
+# 36 城 × 5 分类是近两百个请求，连打会被统计局限流（返回非 JSON 的拦截页）。
+# 两道措施：请求间固定间隔放慢节奏；命中限流时指数退避重试，而不是丢掉整个分类。
+RETRIES = 4
+RETRY_BACKOFF = 5.0
+REQUEST_PACING = 0.8
+
+
+def _with_retry(call, label):
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            time.sleep(REQUEST_PACING)
+            return call()
+        except ValueError as exc:          # 含 JSONDecodeError：多为限流页
+            last = exc
+            if attempt < RETRIES - 1:
+                time.sleep(RETRY_BACKOFF * (2 ** attempt))
+    raise ValueError(f'{label}: {last}')
+
+
 def _json_get(session, path, params):
-    response = session.get(f'{NBS_API}/{path}', params=params, headers=HEADERS, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-    if not payload.get('success', True):
-        raise ValueError(payload.get('message') or f'国家统计局接口失败: {path}')
-    return payload.get('data') or []
+    def once():
+        response = session.get(f'{NBS_API}/{path}', params=params,
+                               headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get('success', True):
+            raise ValueError(payload.get('message') or f'国家统计局接口失败: {path}')
+        return payload.get('data') or []
+    return _with_retry(once, path)
 
 
 def _catalogs(session):
@@ -174,6 +229,12 @@ def parse_nbs_periods(data, city, config, indicator_specs, category):
 
 def _post_city_data(session, cid, root_id, indicator_ids, city, config,
                     start_year, end_year):
+    return _with_retry(lambda: _post_once(
+        session, cid, root_id, indicator_ids, city, config, start_year, end_year), city)
+
+
+def _post_once(session, cid, root_id, indicator_ids, city, config,
+               start_year, end_year):
     response = session.post(
         f'{NBS_API}/stream/esData',
         json={
