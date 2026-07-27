@@ -1,0 +1,147 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>债务限额与时间推演 | 研究工作台</title>
+<script src="/vendor/chart.umd.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#07111f;--panel:#0b1829;--panel2:#0e2035;--bd:#213751;--text:#dce8f6;--muted:#8fa4bd;--blue:#5795ff;--green:#27d3b2;--yellow:#f5a623;--red:#ff6b7d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui}
+.wrap{max-width:1360px;margin:auto;padding:26px 20px 70px}h1{font-size:28px;margin:0 0 6px}h3{margin:0}
+.muted,.sub{color:var(--muted);line-height:1.65}
+.card{background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.wide{grid-column:1/-1}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
+.kpi{background:var(--panel2);border-radius:9px;padding:13px}
+.kpi b{display:block;font-size:23px;margin:6px 0;font-variant-numeric:tabular-nums}
+.kpi small{color:var(--muted);line-height:1.45;display:block}
+.chart{height:300px}
+table{width:100%;border-collapse:collapse;white-space:nowrap;margin-top:8px}
+th,td{padding:8px 9px;border-bottom:1px solid #1b3048;text-align:right}
+th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:600}
+.scroll{overflow:auto}
+.tag{display:inline-flex;border:1px solid #38516d;border-radius:999px;padding:2px 8px;font-size:11px;color:#b9cae0;margin-left:6px}
+.tag.scenario{border-color:#8a661c;color:#ffd36e}
+.tag.official{border-color:#247c68;color:#62e4c5}
+.tag.gap{border-color:#5a3f52;color:#e39ac2}
+.notice{border:1px solid #80611d;background:#29230f;color:#f3d47c;border-radius:9px;padding:11px 13px;line-height:1.7;margin:12px 0}
+.caveats{background:var(--panel2);border-radius:9px;padding:12px 14px;margin-top:12px}
+.caveats p{margin:5px 0;color:var(--muted);line-height:1.6}
+.hitline{font-size:22px;font-variant-numeric:tabular-nums}
+.hitline .y{color:var(--yellow);font-weight:600}
+@media(max-width:950px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}}
+</style>
+<main class="wrap">
+<h1>债务限额与时间推演</h1>
+<p class="sub">中国没有统一法定债务上限。此处"上限"指<b>全国人大每年批准的国债限额与地方政府债务限额</b>，来自财政部预算报告与人大常委会决议原文。限额与余额为官方值，推演为情景假设。</p>
+
+<div class="kpis" id="kpis"></div>
+<div class="notice" id="notice">加载中…</div>
+
+<div class="grid">
+  <div class="card wide"><h3>限额 vs 余额<span class="tag official">官方</span></h3>
+    <p class="muted" id="ceilSub"></p>
+    <div class="chart"><canvas id="ceilChart"></canvas></div>
+    <div class="scroll"><table><thead id="ceilHead"></thead><tbody id="ceilBody"></tbody></table></div>
+  </div>
+
+  <div class="card"><h3>A 限额约束<span class="tag scenario">情景推演</span></h3>
+    <p class="muted" id="limitSub"></p>
+    <div id="limitHits"></div>
+    <div class="chart"><canvas id="limitChart"></canvas></div>
+  </div>
+
+  <div class="card"><h3>B 付息压力<span class="tag scenario">情景推演</span></h3>
+    <p class="muted" id="burdenSub"></p>
+    <div id="burdenHits"></div>
+    <div class="chart"><canvas id="burdenChart"></canvas></div>
+  </div>
+
+  <div class="card wide"><h3>城投债为什么这里没有数字<span class="tag gap">无官方口径</span></h3>
+    <div class="muted" style="line-height:1.85;margin-top:8px">
+      <p><b>"城投"不是任何官方分类。</b>国家统计局、财政部、人民银行、中债登都没有"城投债"这一登记类别。市场上的城投债余额，全部来自 Wind、中诚信、YY 等机构<b>各自划定的发行人名单</b>——判定标准（股东背景、业务构成、政府补贴占比、是否承担公益性项目）各家不同，同一年的口径差异可达十万亿量级。</p>
+      <p><b>它也不在人大限额之内。</b>本页的"上限"是《预算法》框架下人大批准的法定政府债务限额；城投债在会计上是企业债务，不计入政府债务余额，因此既没有对应的官方限额，也不能与本页数字相加。</p>
+      <p><b>2024 年 11 月的 6 万亿是化债，不是承认。</b>人大常委会一次性增加 6 万亿地方专项债务限额，用途是<b>置换</b>纳入监测范围的存量隐性债务——把隐性债务转为法定债务。财政部在议案说明中明确"不增加政府债务总体负担，不改变地方偿债责任"。置换规模本身不构成隐性债务总量的官方披露。</p>
+      <p>因此本项目对城投债<b>一贯不给数字</b>：给不出带官方来源的值，就不给估算冒充。若需要研究口径，应在论文中自行声明名单规则并自证合理性。</p>
+    </div>
+  </div>
+
+  <div class="card wide"><h3>口径与假设</h3><div class="caveats" id="caveats"></div></div>
+</div>
+</main>
+<script src="/research-nav.js"></script>
+<script>
+const F=(v,d=0)=>v==null?'—':Number(v).toLocaleString(undefined,{maximumFractionDigits:d});
+const WY=v=>v==null?'—':(v/10000).toFixed(2)+' 万亿';
+const OPT=(yTitle)=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+  scales:{x:{ticks:{color:'#8fa4bd',maxTicksLimit:12},grid:{color:'#14263a'}},
+          y:{ticks:{color:'#8fa4bd',callback:v=>F(v)},grid:{color:'#14263a'},title:{display:!!yTitle,text:yTitle,color:'#8fa4bd'}}},
+  plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6',boxWidth:16,usePointStyle:true}}}});
+
+fetch('/api/debt-ceiling/data').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()}).then(p=>{
+  const years=p.ceiling.years, last=[...years].reverse().find(y=>y.treasury_headroom!=null)||{};
+  const lastLocal=[...years].reverse().find(y=>y.local_headroom!=null)||{};
+  const lc=p.limit_constraint, ib=p.interest_burden;
+
+  document.getElementById('kpis').innerHTML=`
+    <div class="kpi">国债剩余空间<b>${WY(last.treasury_headroom)}</b><small>${last.period||'—'} 年末 · 已用 ${last.treasury_balance&&last.treasury_limit?(last.treasury_balance/last.treasury_limit*100).toFixed(1):'—'}% 限额</small></div>
+    <div class="kpi">地方剩余空间<b>${WY(lastLocal.local_headroom)}</b><small>${lastLocal.period||'—'} 年末 · 已用 ${lastLocal.local_balance&&lastLocal.local_limit?(lastLocal.local_balance/lastLocal.local_limit*100).toFixed(1):'—'}% 限额</small></div>
+    <div class="kpi">付息 / 一般预算收入<b>${ib.base_ratio!=null?ib.base_ratio.toFixed(2)+'%':'—'}</b><small>${ib.base_year||'—'} 年 · 付息 ${WY(ib.base_interest)}</small></div>
+    <div class="kpi">按现节奏国债需再提额<b>${lc.treasury&&lc.treasury.hit_year?lc.treasury.hit_year+' 年':'本情景下不触及'}</b><small>剩余空间归零＝须再次提高限额，非违约</small></div>`;
+
+  document.getElementById('notice').innerHTML=p.ceiling.definition+
+    ' 下方 A、B 两条推演线互相独立，均为<b>情景假设</b>，不是预测。';
+
+  // 限额 vs 余额
+  const ys=years.map(y=>y.period);
+  document.getElementById('ceilSub').textContent=
+    `国债与地方政府债务的人大批准限额与年末实际余额（亿元）。${years.filter(y=>y.local_limit_status==='superseded').length?'标注 superseded 的年份限额已被年中追加决议取代。':''}`;
+  new Chart(document.getElementById('ceilChart'),{type:'line',data:{labels:ys,datasets:[
+    {label:'国债限额',data:years.map(y=>y.treasury_limit),borderColor:'#5795ff',borderDash:[6,3],pointRadius:2,spanGaps:false},
+    {label:'国债余额',data:years.map(y=>y.treasury_balance),borderColor:'#5795ff',pointRadius:2,spanGaps:false},
+    {label:'地方债务限额',data:years.map(y=>y.local_limit),borderColor:'#f5a623',borderDash:[6,3],pointRadius:2,spanGaps:false},
+    {label:'地方债务余额',data:years.map(y=>y.local_balance),borderColor:'#f5a623',pointRadius:2,spanGaps:false}]},options:OPT('亿元')});
+  document.getElementById('ceilHead').innerHTML='<tr><th>年份</th><th>国债限额</th><th>国债余额</th><th>国债剩余</th><th>地方限额</th><th>地方余额</th><th>地方剩余</th><th>限额口径</th></tr>';
+  document.getElementById('ceilBody').innerHTML=years.map(y=>{
+    const st=y.local_limit_status==='superseded'?'<span class="tag gap">年中已追加</span>'
+      :y.local_limit_status==='incomplete'||y.treasury_limit_status==='incomplete'?'<span class="tag">部分缺</span>':'<span class="tag official">如批准</span>';
+    return `<tr><td>${y.period}</td><td>${F(y.treasury_limit)}</td><td>${F(y.treasury_balance)}</td><td>${F(y.treasury_headroom)}</td><td>${F(y.local_limit)}</td><td>${F(y.local_balance)}</td><td>${F(y.local_headroom)}</td><td>${st}</td></tr>`}).join('');
+
+  // A 限额约束
+  const t=lc.treasury||{},l=lc.local||{};
+  document.getElementById('limitSub').textContent=
+    t.status==='projected'?`余额与限额各按近 ${t.window_years} 年复合增速定速外推。国债余额年均 ${(t.balance_growth*100).toFixed(2)}%、限额 ${(t.limit_growth*100).toFixed(2)}%。`:'历史点不足，无法外推。';
+  document.getElementById('limitHits').innerHTML=
+    `<p class="hitline">国债剩余空间归零：<span class="y">${t.hit_year||'本情景下不归零'}</span></p>
+     <p class="hitline">地方剩余空间归零：<span class="y">${l.hit_year||'本情景下不归零'}</span></p>
+     <p class="muted" style="margin:4px 0 10px">${t.note||''}</p>`;
+  if(t.status==='projected'){
+    const path=t.path,lp=(l.path||[]);
+    new Chart(document.getElementById('limitChart'),{type:'line',data:{labels:path.map(x=>x.period),datasets:[
+      {label:'国债限额使用率 %',data:path.map(x=>x.utilisation),borderColor:'#5795ff',pointRadius:0},
+      {label:'地方限额使用率 %',data:lp.map(x=>x.utilisation),borderColor:'#f5a623',pointRadius:0},
+      {label:'100%（触顶）',data:path.map(()=>100),borderColor:'#ff6b7d',borderDash:[4,4],pointRadius:0}]},
+      options:{...OPT('限额使用率 %'),scales:{...OPT().scales,y:{...OPT().scales.y,ticks:{color:'#8fa4bd',callback:v=>v+'%'}}}}});
+  }
+
+  // B 付息压力
+  document.getElementById('burdenSub').textContent=
+    ib.status==='projected'?`付息与收入各按近 ${ib.window_years} 年复合增速外推：付息年均 ${(ib.interest_growth*100).toFixed(2)}%，一般公共预算收入年均 ${(ib.revenue_growth*100).toFixed(2)}%。`:'历史点不足，无法外推。';
+  const ty=ib.threshold_years||{};
+  document.getElementById('burdenHits').innerHTML=
+    `<p class="hitline">付息占收入 10%：<span class="y">${ty['10%']||'情景内不触及'}</span> · 15%：<span class="y">${ty['15%']||'不触及'}</span> · 20%：<span class="y">${ty['20%']||'不触及'}</span></p>
+     <p class="muted" style="margin:4px 0 10px">${ib.note||''}</p>`;
+  if(ib.status==='projected'){
+    const hist=ib.history,path=ib.path,labels=hist.map(x=>x.period).concat(path.slice(1).map(x=>x.period));
+    const histRatio=hist.map(x=>x.ratio).concat(path.slice(1).map(()=>null));
+    const projRatio=hist.map((x,i)=>i===hist.length-1?x.ratio:null).concat(path.slice(1).map(x=>x.ratio));
+    new Chart(document.getElementById('burdenChart'),{type:'line',data:{labels,datasets:[
+      {label:'实际（官方）',data:histRatio,borderColor:'#27d3b2',pointRadius:2,spanGaps:false},
+      {label:'推演',data:projRatio,borderColor:'#f5a623',borderDash:[6,3],pointRadius:0,spanGaps:false},
+      {label:'10% 观察线',data:labels.map(()=>10),borderColor:'#ff6b7d',borderDash:[4,4],pointRadius:0}]},
+      options:{...OPT('付息 / 一般公共预算收入 %'),scales:{...OPT().scales,y:{...OPT().scales.y,ticks:{color:'#8fa4bd',callback:v=>v+'%'}}}}});
+  }
+
+  document.getElementById('caveats').innerHTML=
+    p.ceiling.caveats.concat(p.caveats).map(x=>`<p>• ${x}</p>`).join('')+
+    `<p>• 推演方法：${p.assumptions.method} 窗口：限额 ${p.assumptions.limit_window_years} 年、付息 ${p.assumptions.interest_window_years} 年；外推上限 ${p.assumptions.horizon_years} 年。</p>`;
+}).catch(e=>{document.getElementById('notice').textContent='加载失败：'+e.message});
+</script>

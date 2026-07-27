@@ -4,14 +4,16 @@
   const groups = {
     china: {
       label: '中国宏观',
-      summary: '总览 · 财政债务 · 利率汇率 · 房地产',
+      summary: '总览 · 财政债务 · 利率汇率 · 城市经济',
       defaultHref: '/dashboard',
       items: [
         { label: '宏观总览', href: '/dashboard', description: '央行金融统计、货币与信用核心指标。' },
         { label: '宏观统计分析', href: '/macro-analytics', description: '中国、美国与中美对照的派生统计分析。' },
+        { label: '中美 GDP', href: '/gdp', description: '全国历史规模、增长与中国省级/美国州级地区 GDP。' },
         { label: '财政收支与债务', href: '/fiscal-debt', description: '年度财政收支、未来情景、政府债务与央行相关工具。' },
+        { label: '债务限额与推演', href: '/debt-ceiling', description: '人大批准的国债/地方债限额、剩余空间与两条时间推演线。' },
         { label: '利率与汇率', href: '/china-rates', description: 'LPR、SHIBOR 与人民币中间价。' },
-        { label: '房地产', href: '/housing', description: '70 城官方指数、BIS 与挂牌价双口径。' }
+        { label: '城市经济', href: '/city-economy', description: '城市房价、地区 GDP、地方财政、土地财政与地方债。' }
       ]
     },
     us: {
@@ -19,7 +21,8 @@
       summary: '美国宏观总览',
       defaultHref: '/us-macro',
       items: [
-        { label: '美国宏观总览', href: '/us-macro', description: '就业、通胀、增长、联邦财政债务与完整利率曲线。' }
+        { label: '美国宏观总览', href: '/us-macro', description: '就业、通胀、增长、联邦财政债务与完整利率曲线。' },
+        { label: '中美 GDP', href: '/gdp', description: '全国历史规模与美国州级 GDP。' }
       ]
     },
     research: {
@@ -37,13 +40,32 @@
         { label: 'OB / HR', slug: 'ob-hr' },
         { label: '计算社会科学', slug: 'computational-social-science' }
       ]
+    },
+    tools: {
+      label: '科研工具',
+      summary: '文档翻译 · 语音转录',
+      defaultHref: '/paper-translation',
+      items: [
+        { label: '学术语言工作台', href: '/paper-translation', description: '隐私优先的 PDF、DOCX 与文本翻译。' },
+        { label: '研究语音工作台', href: '/audio-transcription', description: '访谈与会议的说话人区分、转录、翻译和双语字幕。' }
+      ]
+    },
+    leisure: {
+      label: '娱乐',
+      summary: '悦读FM · 本地听',
+      defaultHref: '/yuedu-fm',
+      items: [
+        { label: '悦读FM', href: '/yuedu-fm', description: '本地保存标题、节目文字、封面和音频，断网也可收听。' }
+      ]
     }
   };
 
   function activeGroupForPath(pathname) {
-    if (/^\/(dashboard|macro-analytics|fiscal-debt|financial\/debug|china-rates|housing)/.test(pathname)) return 'china';
+    if (/^\/(dashboard|macro-analytics|fiscal-debt|financial\/debug|china-rates|city-economy|housing|gdp|debt-ceiling)/.test(pathname)) return 'china';
     if (/^\/us-macro/.test(pathname)) return 'us';
     if (/^\/(abdc|abdc-astar-research)/.test(pathname)) return 'research';
+    if (/^\/(paper-translation|audio-transcription)/.test(pathname)) return 'tools';
+    if (/^\/yuedu-fm/.test(pathname)) return 'leisure';
     return '';
   }
 
@@ -98,14 +120,14 @@
     shell.innerHTML = '<div class="research-nav-inner">' +
       '<div class="research-nav-brand-block"><a class="research-nav-brand" href="/">研究工作台</a>' +
       '<span class="research-nav-access" aria-live="polite">检查权限…</span></div>' +
-      '<nav class="research-nav-tabs" aria-label="主要研究领域">' +
+      '<nav class="research-nav-tabs" aria-label="主要研究与工具入口">' +
       Object.keys(groups).map(function (key) {
         const group = groups[key];
         return '<a class="research-nav-tab' + (active === key ? ' is-active' : '') + '" data-group="' + key + '" href="' + group.defaultHref + '"' +
           (active === key ? ' aria-current="page"' : '') + '><span class="research-nav-tab-label">' + group.label + '</span>' +
           '<span class="research-nav-tab-summary">' + group.summary + '</span></a>';
       }).join('') + '</nav>' +
-      '<div class="research-nav-search"><input type="search" aria-label="搜索研究页面" placeholder="搜索页面、指标、期刊或主题" autocomplete="off">' +
+      '<div class="research-nav-search"><input type="search" aria-label="搜索研究页面" placeholder="搜索页面、指标、期刊或工具" autocomplete="off">' +
       '<div class="research-nav-search-results" role="listbox"></div></div></div>' + subnavHtml(active);
     document.body.insertBefore(shell, document.body.firstChild);
     document.body.classList.add('research-nav-mounted');

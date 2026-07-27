@@ -40,6 +40,35 @@ class BudgetReportParsingTests(unittest.TestCase):
                             self.rows[('2026', 'treasury_debt_limit')])
 
 
+class WordingVariantTests(unittest.TestCase):
+    """2022 年报告用"中央财政国债余额…债务限额"，且把地方年末有效限额也写了出来。"""
+
+    REPORT_2023 = (
+        '2022年末，中央财政国债余额258692.76亿元，控制在全国人大批准的债务限额267008.35亿元'
+        '以内，主要是适当调减国债发行额度；地方政府债务余额350651亿元，包括一般债务余额'
+        '143944.69亿元、专项债务余额206706.31亿元，控制在全国人大批准的债务限额376474.3亿元'
+        '以内，主要是一些地区消化了部分存量政府债务。'
+        '2023年，中央财政国债限额298608.35亿元；地方政府一般债务限额165489.22亿元、'
+        '专项债务限额256185.08亿元。'
+    )
+
+    def test_older_wording_still_yields_both_limits(self):
+        rows = {(r['period'], r['indicator_code']): r['value']
+                for r in parse_budget_report(self.REPORT_2023, '2022', '2023')}
+        self.assertEqual(rows[('2022', 'treasury_debt_limit')], 267008.35)
+        self.assertEqual(rows[('2022', 'local_debt_limit_effective')], 376474.3)
+        self.assertEqual(rows[('2022', 'local_debt_balance_yearend')], 350651.0)
+        # 次年限额句带"中央财政"前缀，仍须归到 2023
+        self.assertEqual(rows[('2023', 'treasury_debt_limit')], 298608.35)
+
+    def test_treasury_clause_limit_is_not_taken_from_the_local_clause(self):
+        """两个分句都写"债务限额"，国债那句必须取 267008.35 而非地方的 376474.3。"""
+        rows = {(r['period'], r['indicator_code']): r['value']
+                for r in parse_budget_report(self.REPORT_2023, '2022', '2023')}
+        self.assertNotEqual(rows[('2022', 'treasury_debt_limit')],
+                            rows[('2022', 'local_debt_limit_effective')])
+
+
 class HeadroomGuardTests(unittest.TestCase):
     """2024 年 11 月人大常委会追加了地方债务限额，年初限额已过时，
     此时余额会超过年初限额——绝不能呈现为负的剩余空间。"""
@@ -71,6 +100,16 @@ class HeadroomGuardTests(unittest.TestCase):
         # 国债当年未被追加，正常给出剩余空间
         self.assertEqual(year['treasury_limit_status'], 'as_approved')
         self.assertAlmostEqual(year['treasury_headroom'], 6284.35, places=2)
+
+    def test_amendment_limit_restores_a_real_headroom(self):
+        """人大常委会追加后的专项限额写入库中，2024 年就不再是 superseded。"""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("UPDATE fiscal_debt_observations SET value=355185.08 "
+                     "WHERE indicator_code='local_special_debt_limit'")
+        conn.commit(); conn.close()
+        year = build_ceiling_payload(self.db_path)['years'][0]
+        self.assertEqual(year['local_limit_status'], 'as_approved')
+        self.assertAlmostEqual(year['local_headroom'], 52704.08, places=2)
 
     def test_missing_side_yields_no_headroom(self):
         conn = sqlite3.connect(self.db_path)

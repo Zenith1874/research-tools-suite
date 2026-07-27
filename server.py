@@ -76,6 +76,8 @@ from services.housing_compare_service import build_housing_compare_payload
 from services.city_economy_service import build_city_economy_payload
 from services.city_official_service import update_city_official
 from services.city_mirror_service import update_city_mirror
+from services.debt_ceiling_service import update_debt_ceiling
+from services.debt_projection_service import build_projection_payload
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -1743,6 +1745,8 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
+            elif path == '/api/debt-ceiling/data':
+                self.send_json(build_projection_payload(DB_PATH))
             elif path == '/api/analytics': self.send_json(_analytics_payload())
             elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing','/api/analytics/debt'):
                 self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
@@ -1795,6 +1799,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'macro_analytics.html'))
             elif path in ('/housing', '/housing/'):
                 self.send_file(os.path.join(STATIC_DIR, 'housing.html'))
+            elif path in ('/debt-ceiling', '/debt-ceiling/'):
+                self.send_file(os.path.join(STATIC_DIR, 'debt_ceiling.html'))
             elif path in ('/city-economy', '/city-economy/'):
                 self.send_file(os.path.join(STATIC_DIR, 'city_economy.html'))
             else:
@@ -1847,6 +1853,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/city-economy/update':
             self.send_json(_run_update_job('city_official',
                                            lambda: update_city_official(DB_PATH)))
+        elif path == '/api/debt-ceiling/update':
+            self.send_json(_run_update_job('debt_ceiling',
+                                           lambda: update_debt_ceiling(DB_PATH)))
         elif path == '/api/city-economy/update-mirror':
             self.send_json(_run_update_job('city_mirror',
                                            lambda: update_city_mirror(DB_PATH)))

@@ -27,6 +27,19 @@ BUDGET_REPORTS = (
     {'execution_year': '2023', 'budget_year': '2024',
      'url': 'https://www.gov.cn/yaowen/liebiao/202403/content_6939289.htm',
      'title': '关于2023年中央和地方预算执行情况与2024年中央和地方预算草案的报告'},
+    {'execution_year': '2022', 'budget_year': '2023',
+     'url': 'http://www.gov.cn/xinwen/2023-03/15/content_5746960.htm',
+     'title': '关于2022年中央和地方预算执行情况与2023年中央和地方预算草案的报告'},
+)
+
+# 人大常委会年中追加限额的决议/议案说明：3 月预算报告之后改变限额的官方文件。
+# 2024-11-08 决议把 6 万亿一次性加在专项债务限额上，正是当年余额反超年初限额的原因。
+LIMIT_AMENDMENTS = (
+    {'period': '2024', 'indicator_code': 'local_special_debt_limit',
+     'url': 'https://www.gov.cn/yaowen/liebiao/202411/content_6985598.htm',
+     'title': '关于提请审议增加地方政府债务限额置换存量隐性债务的议案的说明',
+     'pattern': r'2024年末地方政府专项债务限额将由[\d.]+亿元增加到' + r'([\d]+(?:\.\d+)?)\s*亿元',
+     'source_name': '财政部（十四届全国人大常委会第十二次会议议案说明）'},
 )
 
 SOURCE_NAME = '财政部（提请全国人大审议的预算报告）'
@@ -40,6 +53,7 @@ INDICATOR_NAMES = {
     'local_special_debt_balance_yearend': '地方政府专项债务余额（年末）',
     'local_general_debt_limit': '地方政府一般债务限额（全国人大批准）',
     'local_special_debt_limit': '地方政府专项债务限额（全国人大批准）',
+    'local_debt_limit_effective': '地方政府债务限额（年末有效值）',
 }
 # 余额与限额都是十万亿量级，用宽区间兜住抽错列
 VALUE_BOUNDS = (10000.0, 2000000.0)
@@ -63,6 +77,10 @@ def parse_budget_report(text, execution_year, budget_year):
     预算年那句形如：
       "2026年，国债限额485508.35亿元；地方政府一般债务限额188689.22亿元、
        专项债务限额443185.08亿元"
+
+    各年表述不完全一致：2022 年报告写"中央财政国债余额…控制在全国人大批准的债务限额
+    267008.35亿元以内"，并把地方年末有效限额也写了出来；2025 年报告则只说地方
+    "控制在…限额以内"而不给数。按分句定位，抽得到就抽，抽不到留空。
     """
     rows = []
 
@@ -70,22 +88,31 @@ def parse_budget_report(text, execution_year, budget_year):
         if value is not None:
             rows.append({'period': period, 'indicator_code': code, 'value': value})
 
+    # 执行年那段用 。和；分句：国债与地方各占一个分句
+    clauses = re.split(r'[。；]', text)
+    treasury = next((c for c in clauses if '国债余额' in c), '')
     add(execution_year, 'treasury_debt_balance_yearend',
-        _amount(text, r'国债余额' + NUM))
+        _amount(treasury, r'国债余额' + NUM))
+    # "控制在全国人大批准的债务限额X亿元以内" —— 这是该年末的有效限额，优先于
+    # 上一年报告里前瞻给出的限额（年中可能被人大常委会追加过）
     add(execution_year, 'treasury_debt_limit',
-        _amount(text, r'国债余额.{0,40}?国债限额' + NUM))
-    add(execution_year, 'local_debt_balance_yearend',
-        _amount(text, r'地方政府债务余额' + NUM))
-    add(execution_year, 'local_general_debt_balance_yearend',
-        _amount(text, r'一般债务余额' + NUM))
-    add(execution_year, 'local_special_debt_balance_yearend',
-        _amount(text, r'专项债务余额' + NUM))
+        _amount(treasury, r'(?:国债|债务)限额' + NUM))
 
-    # 预算年限额句以"YYYY年，国债限额"开头，与执行年那句区分
-    forward = re.search(budget_year + r'年，\s*国债限额' + NUM, text)
+    local = next((c for c in clauses if '地方政府债务余额' in c), '')
+    add(execution_year, 'local_debt_balance_yearend',
+        _amount(local, r'地方政府债务余额' + NUM))
+    add(execution_year, 'local_general_debt_balance_yearend',
+        _amount(local, r'一般债务余额' + NUM))
+    add(execution_year, 'local_special_debt_balance_yearend',
+        _amount(local, r'专项债务余额' + NUM))
+    add(execution_year, 'local_debt_limit_effective',
+        _amount(local, r'(?:地方政府债务|债务)限额' + NUM))
+
+    # 预算年那句形如"2026年，(中央财政)国债限额X亿元；地方政府一般债务限额Y、专项债务限额Z"
+    forward = re.search(budget_year + r'年，\s*(?:中央财政)?国债限额' + NUM, text)
     if forward:
         add(budget_year, 'treasury_debt_limit', float(forward.group(1)))
-        tail = text[forward.end():forward.end() + 160]
+        tail = text[forward.end():forward.end() + 200]
         add(budget_year, 'local_general_debt_limit',
             _amount(tail, r'一般债务限额' + NUM))
         add(budget_year, 'local_special_debt_limit',
@@ -93,7 +120,7 @@ def parse_budget_report(text, execution_year, budget_year):
     return rows
 
 
-def _upsert(conn, row, report, now):
+def _upsert(conn, row, report, now, source_name=SOURCE_NAME):
     conn.execute('''INSERT INTO fiscal_debt_observations
       (indicator_code,indicator_name,value,unit_raw,unit_display,scale_factor,period,date,
        frequency,source_name,source_type,source_url,source_title,parser_notes,data_status,
@@ -105,7 +132,7 @@ def _upsert(conn, row, report, now):
         source_title=excluded.source_title,parser_notes=excluded.parser_notes,
         raw_text=excluded.raw_text,updated_at=excluded.updated_at''',
       (row['indicator_code'], INDICATOR_NAMES[row['indicator_code']], row['value'],
-       row['period'], f"{row['period']}-12-31", SOURCE_NAME, report['url'], report['title'],
+       row['period'], f"{row['period']}-12-31", source_name, report['url'], report['title'],
        f"《{report['title']}》正文直陈值；全国人大批准口径，未做任何折算。",
        'central_government_debt' if row['indicator_code'].startswith('treasury')
        else 'local_government_debt',
@@ -135,6 +162,22 @@ def update_debt_ceiling(db_path):
             for row in rows:
                 _upsert(conn, row, report, now)
                 collected += 1
+        # 追加决议最后写入，覆盖 3 月预算报告里已被取代的限额
+        for amendment in LIMIT_AMENDMENTS:
+            try:
+                text = plain_text(fetch(amendment['url']))
+                match = re.search(amendment['pattern'], text)
+                if not match:
+                    errors.append(f"{amendment['title']}: 未匹配到追加后的限额")
+                    continue
+                _upsert(conn, {'period': amendment['period'],
+                               'indicator_code': amendment['indicator_code'],
+                               'value': float(match.group(1))},
+                        {'url': amendment['url'], 'title': amendment['title']}, now,
+                        source_name=amendment['source_name'])
+                collected += 1
+            except Exception as exc:
+                errors.append(f"{amendment['title']}: {exc}")
         conn.commit()
     finally:
         conn.close()
@@ -163,7 +206,12 @@ def build_ceiling_payload(db_path):
         general_limit, special_limit = get('local_general_debt_limit'), get('local_special_debt_limit')
         general_balance = get('local_general_debt_balance_yearend')
         special_balance = get('local_special_debt_balance_yearend')
-        local_limit = (general_limit or 0) + (special_limit or 0) if (general_limit or special_limit) else None
+        # 年末有效限额由执行年报告直接给出，已含人大常委会年中追加；
+        # 拿不到时才退回上一年报告前瞻批准的"一般＋专项"之和。
+        effective = get('local_debt_limit_effective')
+        local_limit = effective if effective is not None else (
+            (general_limit or 0) + (special_limit or 0)
+            if (general_limit or special_limit) else None)
         years.append({
             'period': period,
             'treasury_limit': treasury_limit, 'treasury_balance': treasury_balance,
