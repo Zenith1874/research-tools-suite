@@ -27,6 +27,13 @@ th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:
 .caveats p{margin:5px 0;color:var(--muted);line-height:1.6}
 .hitline{font-size:22px;font-variant-numeric:tabular-nums}
 .hitline .y{color:var(--yellow);font-weight:600}
+.params{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.params label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
+input,button{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;font:inherit}
+button{cursor:pointer}button:hover{border-color:#4a94ff}
+input::placeholder{color:#5d7794}
+.overridden{border-color:#8a661c}
+@media(max-width:700px){.params{grid-template-columns:1fr 1fr}}
 @media(max-width:950px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}}
 </style>
 <main class="wrap">
@@ -35,6 +42,25 @@ th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:
 
 <div class="kpis" id="kpis"></div>
 <div class="notice" id="notice">加载中…</div>
+
+<div class="card" style="margin-top:14px"><h3>推演假设<span class="tag scenario">改了就重算</span></h3>
+  <p class="muted" style="margin:6px 0 10px">留空＝用历史窗口推算出的复合增速（灰字为该值）。填入年增速百分数即可覆盖，看结论怎么变。</p>
+  <div class="params" id="params">
+    <label>国债余额增速 %<input id="treasury_balance_growth" type="number" step="0.1" placeholder=""></label>
+    <label>国债限额增速 %<input id="treasury_limit_growth" type="number" step="0.1" placeholder=""></label>
+    <label>地方余额增速 %<input id="local_balance_growth" type="number" step="0.1" placeholder=""></label>
+    <label>地方限额增速 %<input id="local_limit_growth" type="number" step="0.1" placeholder=""></label>
+    <label>一般预算收入增速 %<input id="revenue_growth" type="number" step="0.1" placeholder=""></label>
+    <label>债务付息增速 %<input id="interest_growth" type="number" step="0.1" placeholder=""></label>
+    <label>限额窗口(年)<input id="limit_window" type="number" step="1" min="2" max="20" value="4"></label>
+    <label>付息窗口(年)<input id="interest_window" type="number" step="1" min="2" max="30" value="7"></label>
+    <label>外推年限<input id="horizon" type="number" step="1" min="5" max="60" value="25"></label>
+  </div>
+  <div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap">
+    <button id="recalc">重新推演</button><button id="reset">恢复历史推算</button>
+    <span class="muted" id="paramState" style="align-self:center"></span>
+  </div>
+</div>
 
 <div class="grid">
   <div class="card wide"><h3>限额 vs 余额<span class="tag official">官方</span></h3>
@@ -76,7 +102,23 @@ const OPT=(yTitle)=>({responsive:true,maintainAspectRatio:false,interaction:{mod
           y:{ticks:{color:'#8fa4bd',callback:v=>F(v)},grid:{color:'#14263a'},title:{display:!!yTitle,text:yTitle,color:'#8fa4bd'}}},
   plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6',boxWidth:16,usePointStyle:true}}}});
 
-fetch('/api/debt-ceiling/data').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()}).then(p=>{
+const GROWTH_IDS=['treasury_balance_growth','treasury_limit_growth','local_balance_growth','local_limit_growth','revenue_growth','interest_growth'];
+const WINDOW_IDS=['limit_window','interest_window','horizon'];
+const $=id=>document.getElementById(id);
+let charts={};
+function destroy(){Object.values(charts).forEach(c=>c&&c.destroy());charts={}}
+function queryString(){
+  const q=new URLSearchParams();
+  GROWTH_IDS.concat(WINDOW_IDS).forEach(id=>{const v=$(id).value.trim();if(v!=='')q.set(id,v)});
+  return q.toString()?'?'+q.toString():'';
+}
+function load(){
+  destroy();
+  fetch('/api/debt-ceiling/data'+queryString())
+    .then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()}).then(render)
+    .catch(e=>{$('notice').textContent='加载失败：'+e.message});
+}
+function render(p){
   const years=p.ceiling.years, last=[...years].reverse().find(y=>y.treasury_headroom!=null)||{};
   const lastLocal=[...years].reverse().find(y=>y.local_headroom!=null)||{};
   const lc=p.limit_constraint, ib=p.interest_burden;
@@ -94,7 +136,7 @@ fetch('/api/debt-ceiling/data').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);
   const ys=years.map(y=>y.period);
   document.getElementById('ceilSub').textContent=
     `国债与地方政府债务的人大批准限额与年末实际余额（亿元）。${years.filter(y=>y.local_limit_status==='superseded').length?'标注 superseded 的年份限额已被年中追加决议取代。':''}`;
-  new Chart(document.getElementById('ceilChart'),{type:'line',data:{labels:ys,datasets:[
+  charts.ceil=new Chart(document.getElementById('ceilChart'),{type:'line',data:{labels:ys,datasets:[
     {label:'国债限额',data:years.map(y=>y.treasury_limit),borderColor:'#5795ff',borderDash:[6,3],pointRadius:2,spanGaps:false},
     {label:'国债余额',data:years.map(y=>y.treasury_balance),borderColor:'#5795ff',pointRadius:2,spanGaps:false},
     {label:'地方债务限额',data:years.map(y=>y.local_limit),borderColor:'#f5a623',borderDash:[6,3],pointRadius:2,spanGaps:false},
@@ -115,7 +157,7 @@ fetch('/api/debt-ceiling/data').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);
      <p class="muted" style="margin:4px 0 10px">${t.note||''}</p>`;
   if(t.status==='projected'){
     const path=t.path,lp=(l.path||[]);
-    new Chart(document.getElementById('limitChart'),{type:'line',data:{labels:path.map(x=>x.period),datasets:[
+    charts.limit=new Chart(document.getElementById('limitChart'),{type:'line',data:{labels:path.map(x=>x.period),datasets:[
       {label:'国债限额使用率 %',data:path.map(x=>x.utilisation),borderColor:'#5795ff',pointRadius:0},
       {label:'地方限额使用率 %',data:lp.map(x=>x.utilisation),borderColor:'#f5a623',pointRadius:0},
       {label:'100%（触顶）',data:path.map(()=>100),borderColor:'#ff6b7d',borderDash:[4,4],pointRadius:0}]},
@@ -133,7 +175,7 @@ fetch('/api/debt-ceiling/data').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);
     const hist=ib.history,path=ib.path,labels=hist.map(x=>x.period).concat(path.slice(1).map(x=>x.period));
     const histRatio=hist.map(x=>x.ratio).concat(path.slice(1).map(()=>null));
     const projRatio=hist.map((x,i)=>i===hist.length-1?x.ratio:null).concat(path.slice(1).map(x=>x.ratio));
-    new Chart(document.getElementById('burdenChart'),{type:'line',data:{labels,datasets:[
+    charts.burden=new Chart(document.getElementById('burdenChart'),{type:'line',data:{labels,datasets:[
       {label:'实际（官方）',data:histRatio,borderColor:'#27d3b2',pointRadius:2,spanGaps:false},
       {label:'推演',data:projRatio,borderColor:'#f5a623',borderDash:[6,3],pointRadius:0,spanGaps:false},
       {label:'10% 观察线',data:labels.map(()=>10),borderColor:'#ff6b7d',borderDash:[4,4],pointRadius:0}]},
@@ -143,5 +185,23 @@ fetch('/api/debt-ceiling/data').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);
   document.getElementById('caveats').innerHTML=
     p.ceiling.caveats.concat(p.caveats).map(x=>`<p>• ${x}</p>`).join('')+
     `<p>• 推演方法：${p.assumptions.method} 窗口：限额 ${p.assumptions.limit_window_years} 年、付息 ${p.assumptions.interest_window_years} 年；外推上限 ${p.assumptions.horizon_years} 年。</p>`;
-}).catch(e=>{document.getElementById('notice').textContent='加载失败：'+e.message});
+  // 把历史推算出的增速放进 placeholder，用户留空即用它；填了就高亮该输入框
+  const derived={treasury_balance_growth:t.derived_balance_growth,treasury_limit_growth:t.derived_limit_growth,
+                 local_balance_growth:l.derived_balance_growth,local_limit_growth:l.derived_limit_growth,
+                 revenue_growth:ib.derived_revenue_growth,interest_growth:ib.derived_interest_growth};
+  const overridden=new Set([...(t.overridden||[]).map(k=>'treasury_'+k),
+                            ...(l.overridden||[]).map(k=>'local_'+k),
+                            ...(ib.overridden||[])]);
+  GROWTH_IDS.forEach(id=>{const el=$(id),d=derived[id];
+    el.placeholder=d==null?'—':(d*100).toFixed(2);
+    el.classList.toggle('overridden',overridden.has(id))});
+  const n=Object.keys(p.assumptions.overrides||{}).length;
+  $('paramState').textContent=n?`已覆盖 ${n} 项假设（橙色边框），其余仍为历史推算`:'全部使用历史推算增速';
+}
+
+document.getElementById('recalc').onclick=load;
+document.getElementById('reset').onclick=()=>{GROWTH_IDS.forEach(id=>$(id).value='');
+  $('limit_window').value=4;$('interest_window').value=7;$('horizon').value=25;load()};
+document.querySelectorAll('#params input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')load()}));
+load();
 </script>

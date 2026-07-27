@@ -33,8 +33,13 @@ def annual_yearend(conn, table, indicator_code):
     return {period[:4]: value for period, value in rows if period.endswith('-12')}
 
 
-def project_limit_constraint(years, window=4, horizon=DEFAULT_HORIZON):
-    """余额与限额各自外推，找剩余空间归零的年份。"""
+def project_limit_constraint(years, window=4, horizon=DEFAULT_HORIZON, overrides=None):
+    """余额与限额各自外推，找剩余空间归零的年份。
+
+    overrides 形如 {'treasury_balance_growth': 0.10}：用户指定增速时覆盖历史推算值，
+    并在结果里记下哪些增速是人为设定的，页面据此标注"已改假设"。
+    """
+    overrides = overrides or {}
     out = {}
     for prefix, limit_key, balance_key in (
             ('treasury', 'treasury_limit', 'treasury_balance'),
@@ -53,6 +58,16 @@ def project_limit_constraint(years, window=4, horizon=DEFAULT_HORIZON):
         if limit_growth is None or balance_growth is None:
             out[prefix] = {'status': 'insufficient_history'}
             continue
+        derived = {'limit_growth': limit_growth, 'balance_growth': balance_growth}
+        custom = []
+        for key in ('limit_growth', 'balance_growth'):
+            value = overrides.get(f'{prefix}_{key}')
+            if value is not None:
+                custom.append(key)
+                if key == 'limit_growth':
+                    limit_growth = value
+                else:
+                    balance_growth = value
         path, hit_year = [], None
         for step in range(0, horizon + 1):
             projected_limit = limit * (1 + limit_growth) ** step
@@ -70,6 +85,9 @@ def project_limit_constraint(years, window=4, horizon=DEFAULT_HORIZON):
             'base_limit': limit, 'base_balance': balance,
             'base_utilisation': round(balance / limit * 100, 3),
             'limit_growth': round(limit_growth, 6), 'balance_growth': round(balance_growth, 6),
+            'derived_limit_growth': round(derived['limit_growth'], 6),
+            'derived_balance_growth': round(derived['balance_growth'], 6),
+            'overridden': custom,
             'window_years': span, 'hit_year': str(hit_year) if hit_year else None,
             'path': path,
             'note': ('余额增速低于限额增速时剩余空间反而扩大，此情景下不会归零；'
@@ -79,8 +97,12 @@ def project_limit_constraint(years, window=4, horizon=DEFAULT_HORIZON):
 
 
 def project_interest_burden(revenue, interest, window=7, horizon=DEFAULT_HORIZON,
-                            thresholds=THRESHOLDS):
-    """付息与收入各按近年复合增速外推，找占比触及各阈值的年份。"""
+                            thresholds=THRESHOLDS, overrides=None):
+    """付息与收入各按近年复合增速外推，找占比触及各阈值的年份。
+
+    overrides 可给 revenue_growth / interest_growth，覆盖历史推算值。
+    """
+    overrides = overrides or {}
     common = sorted(set(revenue) & set(interest))
     if len(common) < 2:
         return {'status': 'insufficient_history'}
@@ -90,6 +112,12 @@ def project_interest_burden(revenue, interest, window=7, horizon=DEFAULT_HORIZON
     interest_growth = _cagr(interest[used[0]], interest[used[-1]], span)
     if revenue_growth is None or interest_growth is None:
         return {'status': 'insufficient_history'}
+    derived_revenue_growth, derived_interest_growth = revenue_growth, interest_growth
+    custom = []
+    if overrides.get('revenue_growth') is not None:
+        revenue_growth = overrides['revenue_growth']; custom.append('revenue_growth')
+    if overrides.get('interest_growth') is not None:
+        interest_growth = overrides['interest_growth']; custom.append('interest_growth')
     base_year = int(used[-1])
     base_revenue, base_interest = revenue[used[-1]], interest[used[-1]]
     path, hits = [], {}
@@ -111,7 +139,9 @@ def project_interest_burden(revenue, interest, window=7, horizon=DEFAULT_HORIZON
         'base_ratio': round(base_interest / base_revenue * 100, 4),
         'revenue_growth': round(revenue_growth, 6),
         'interest_growth': round(interest_growth, 6),
-        'window_years': span,
+        'derived_revenue_growth': round(derived_revenue_growth, 6),
+        'derived_interest_growth': round(derived_interest_growth, 6),
+        'overridden': custom, 'window_years': span,
         'history': [{'period': year, 'revenue': revenue[year], 'interest': interest[year],
                      'ratio': round(interest[year] / revenue[year] * 100, 4)}
                     for year in common],
@@ -122,8 +152,31 @@ def project_interest_burden(revenue, interest, window=7, horizon=DEFAULT_HORIZON
     }
 
 
+OVERRIDE_KEYS = ('treasury_balance_growth', 'treasury_limit_growth',
+                 'local_balance_growth', 'local_limit_growth',
+                 'revenue_growth', 'interest_growth')
+GROWTH_BOUNDS = (-0.50, 1.00)   # 增速只接受 -50%~100%，挡住手滑输入的离谱值
+
+
+def parse_overrides(raw):
+    """把查询参数里的百分数（如 '12.5'）转成小数增速，越界或非数字一律忽略。"""
+    out = {}
+    for key in OVERRIDE_KEYS:
+        value = (raw or {}).get(key)
+        if value in (None, ''):
+            continue
+        try:
+            growth = float(value) / 100.0
+        except (TypeError, ValueError):
+            continue
+        if GROWTH_BOUNDS[0] <= growth <= GROWTH_BOUNDS[1]:
+            out[key] = growth
+    return out
+
+
 def build_projection_payload(db_path, limit_window=4, interest_window=7,
-                             horizon=DEFAULT_HORIZON):
+                             horizon=DEFAULT_HORIZON, overrides=None):
+    overrides = overrides or {}
     ceiling = build_ceiling_payload(db_path)
     conn = sqlite3.connect(db_path, timeout=30)
     try:
@@ -137,12 +190,15 @@ def build_projection_payload(db_path, limit_window=4, interest_window=7,
         'generated_at': datetime.now().isoformat(),
         'data_status': 'scenario',
         'ceiling': ceiling,
-        'limit_constraint': project_limit_constraint(ceiling['years'], limit_window, horizon),
-        'interest_burden': project_interest_burden(revenue, interest, interest_window, horizon),
+        'limit_constraint': project_limit_constraint(ceiling['years'], limit_window,
+                                                     horizon, overrides),
+        'interest_burden': project_interest_burden(revenue, interest, interest_window,
+                                                   horizon, THRESHOLDS, overrides),
         'assumptions': {
             'limit_window_years': limit_window,
             'interest_window_years': interest_window,
             'horizon_years': horizon,
+            'overrides': {k: round(v, 6) for k, v in overrides.items()},
             'method': '各序列按窗口首末年复合增速定速外推，不含政策冲击、利率变动与经济周期。',
         },
         'caveats': [

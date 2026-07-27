@@ -3,7 +3,7 @@
 import unittest
 
 from services.debt_projection_service import (
-    project_limit_constraint, project_interest_burden, _cagr,
+    project_limit_constraint, project_interest_burden, parse_overrides, _cagr,
 )
 
 
@@ -67,6 +67,48 @@ class InterestBurdenTests(unittest.TestCase):
     def test_insufficient_history(self):
         self.assertEqual(project_interest_burden({'2025': 1.0}, {'2025': 0.1})['status'],
                          'insufficient_history')
+
+
+class OverrideTests(unittest.TestCase):
+    YEARS = _years([('2022', 100.0, 90.0), ('2023', 110.0, 101.0),
+                    ('2024', 121.0, 113.0), ('2025', 133.1, 127.0)])
+
+    def test_override_replaces_derived_growth_but_keeps_it_visible(self):
+        base = project_limit_constraint(self.YEARS)['treasury']
+        tuned = project_limit_constraint(
+            self.YEARS, overrides={'treasury_balance_growth': 0.01})['treasury']
+        self.assertEqual(tuned['balance_growth'], 0.01)
+        self.assertEqual(tuned['derived_balance_growth'], base['balance_growth'])
+        self.assertEqual(tuned['overridden'], ['balance_growth'])
+        # 余额几乎不涨而限额继续涨 → 不再归零
+        self.assertIsNotNone(base['hit_year'])
+        self.assertIsNone(tuned['hit_year'])
+
+    def test_interest_override_moves_the_threshold_year_later(self):
+        revenue = {str(2018 + i): 100.0 * 1.02 ** i for i in range(8)}
+        interest = {str(2018 + i): 5.0 * 1.09 ** i for i in range(8)}
+        base = project_interest_burden(revenue, interest)
+        tuned = project_interest_burden(revenue, interest,
+                                        overrides={'revenue_growth': 0.08})
+        self.assertEqual(tuned['overridden'], ['revenue_growth'])
+        self.assertLess(base['threshold_years']['10%'], tuned['threshold_years']['10%'])
+
+    def test_parse_overrides_converts_percent_and_rejects_junk(self):
+        parsed = parse_overrides({'revenue_growth': '5', 'interest_growth': '2.5',
+                                  'treasury_limit_growth': 'abc',
+                                  'local_limit_growth': '999',
+                                  'local_balance_growth': '-80',
+                                  'unknown_key': '3'})
+        self.assertAlmostEqual(parsed['revenue_growth'], 0.05)
+        self.assertAlmostEqual(parsed['interest_growth'], 0.025)
+        self.assertNotIn('treasury_limit_growth', parsed)   # 非数字
+        self.assertNotIn('local_limit_growth', parsed)      # 超过 100%
+        self.assertNotIn('local_balance_growth', parsed)    # 低于 -50%
+        self.assertNotIn('unknown_key', parsed)             # 不在白名单
+
+    def test_empty_and_none_are_ignored(self):
+        self.assertEqual(parse_overrides({'revenue_growth': ''}), {})
+        self.assertEqual(parse_overrides(None), {})
 
 
 class CagrTests(unittest.TestCase):

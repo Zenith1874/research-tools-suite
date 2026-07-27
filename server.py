@@ -77,7 +77,7 @@ from services.city_economy_service import build_city_economy_payload
 from services.city_official_service import update_city_official
 from services.city_mirror_service import update_city_mirror
 from services.debt_ceiling_service import update_debt_ceiling
-from services.debt_projection_service import build_projection_payload
+from services.debt_projection_service import build_projection_payload, parse_overrides
 from services.abdc_astar_research_service import (
     ensure_astar_tables,
     load_astar_journals_from_abdc,
@@ -1746,7 +1746,16 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
             elif path == '/api/debt-ceiling/data':
-                self.send_json(build_projection_payload(DB_PATH))
+                flat = self._query_params()
+                def _int(name, default, low, high):
+                    try: return max(low, min(high, int(flat.get(name, default))))
+                    except (TypeError, ValueError): return default
+                self.send_json(build_projection_payload(
+                    DB_PATH,
+                    limit_window=_int('limit_window', 4, 2, 20),
+                    interest_window=_int('interest_window', 7, 2, 30),
+                    horizon=_int('horizon', 25, 5, 60),
+                    overrides=parse_overrides(flat)))
             elif path == '/api/analytics': self.send_json(_analytics_payload())
             elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing','/api/analytics/debt'):
                 self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
