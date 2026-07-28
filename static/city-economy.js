@@ -238,6 +238,17 @@ function renderScenario(){
   for(const k of ['optimistic','base','stress']){const sc=byKey[k];if(!sc)continue;
     ds.push({label:sc.label,data:pad.concat([hist.at(-1).index],sc.path.map(p=>p.index)),
              borderColor:SC_COLOR[k],borderDash:[6,3],pointRadius:0,borderWidth:1.8,spanGaps:false})}
+  const sim=s.simulation;
+  if(sim&&sim.status==='ok'){
+    const simPad=new Array(hist.length-1).fill(null),tail=hist.at(-1).index;
+    ds.push({label:'P90（模拟上沿）',data:simPad.concat([tail],sim.points.map(p=>p.p90)),
+             borderColor:'rgba(167,139,250,.55)',backgroundColor:'rgba(167,139,250,.12)',
+             pointRadius:0,borderWidth:1,fill:'+2',spanGaps:false});
+    ds.push({label:'P50（模拟中位）',data:simPad.concat([tail],sim.points.map(p=>p.p50)),
+             borderColor:'#a78bfa',pointRadius:0,borderWidth:1.4,borderDash:[2,2],spanGaps:false});
+    ds.push({label:'P10（模拟下沿）',data:simPad.concat([tail],sim.points.map(p=>p.p10)),
+             borderColor:'rgba(167,139,250,.55)',pointRadius:0,borderWidth:1,spanGaps:false});
+  }
   ds.push({label:`峰值 ${s.peak.period}`,data:labels.map(()=>s.peak.index),borderColor:'#6b7c93',borderDash:[3,3],pointRadius:0,borderWidth:1});
   charts['scenario:main']=new Chart($('scChart'),{type:'line',data:{labels,datasets:ds},
     options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
@@ -251,6 +262,7 @@ function renderScenario(){
     return `<tr><td>${r.purchase_period}</td><td>${r.price_change_to_now.toFixed(1)}%</td>`+
       `<td>${r.equity_change_to_now.toFixed(0)}%</td><td>${g('optimistic')}</td><td>${g('base')}</td><td>${g('stress')}</td></tr>`}).join('')
     ||'<tr><td colspan="6">无可用买入时点</td></tr>';
+  renderBacktest(s);
   const a=scPayload.valuation_anchor;
   if(a){$('scAnchorNote').textContent=`${a.note} 峰值 ${a.peak.period}（${a.peak.ratio}），最新 ${a.latest.period}（${a.latest.ratio}），较峰值 ${a.latest_vs_peak}%。工资序列止于 ${a.wage_end}。`;
     charts['scenario:anchor']=new Chart($('scAnchorChart'),{type:'line',
@@ -269,4 +281,29 @@ function initScenario(){
   ['scCity','scHorizon','scDown'].forEach(id=>$(id).onchange=loadScenario);
   $('scKind').onchange=()=>{if(scPayload)renderScenario()};
   loadScenario();
+}
+
+function renderBacktest(s){
+  const bt=s.backtest,sim=s.simulation,band=$('scBacktest');
+  if(!bt||bt.status!=='ok'){band.textContent='历史样本不足，无法回测本方法。';
+    $('scBtNote').textContent='';$('scBtTable').innerHTML='<tr><td colspan="3">—</td></tr>';return}
+  // 模拟带宽 vs 回测已证实误差:带宽明显更窄时必须当面说破，否则读者会高估精度
+  const simWidth=sim&&sim.status==='ok'?Math.abs(sim.end_vs_now.p90-sim.end_vs_now.p10):null;
+  const warn=simWidth!=null&&simWidth<bt.median_absolute_error_pp
+    ?`　⚠ 模拟区间宽度 ${simWidth.toFixed(1)} 个百分点，<b>比回测已证实的中位误差还窄</b>，说明它只刻画了月度噪声、没有涵盖政策与信贷层面的转折。`:'';
+  band.innerHTML=`<b>先看这条：本方法在历史上有多准。</b>以 ${bt.sample_start}–${bt.sample_end} 的 ${bt.n_obs} 个起点回测，`+
+    `基准档 ${bt.horizon_months} 个月预测的中位绝对误差 <b>${bt.median_absolute_error_pp} 个百分点</b>，`+
+    `实际值落在三档区间内的比例仅 <b>${bt.envelope_coverage_pct}%</b>，方向判对 ${bt.direction_hit_pct}%。`+
+    `上方三档数字请据此打折理解。${warn}`;
+  $('scBtNote').textContent=bt.method;
+  const rows=[
+    ['样本',`${bt.n_obs} 个起点`,`${bt.sample_start} 至 ${bt.sample_end}，每 ${bt.evaluation_step_months} 个月取一个`],
+    ['基准档中位绝对误差',`${bt.median_absolute_error_pp} pp`,`${bt.horizon_months} 个月后的累计变动，预测与实际之差`],
+    ['三档区间覆盖率',`${bt.envelope_coverage_pct}%`,'实际值落在乐观与压力之间的比例；越低说明区间越不够宽'],
+    ['方向判对率',`${bt.direction_hit_pct}%`,'涨跌方向是否判对；50% 相当于抛硬币'],
+  ];
+  if(simWidth!=null)rows.push(['模拟区间宽度',`${simWidth.toFixed(1)} pp`,'P90 与 P10 之差，与上面的中位绝对误差对照看']);
+  if(bt.latest)rows.push(['最近一次评估',`${bt.latest.as_of} → ${bt.latest.target_period}`,
+    `预测 ${bt.latest.base_change}%，实际 ${bt.latest.actual_change}%，误差 ${bt.latest.base_error} pp`]);
+  $('scBtTable').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td><small>${r[2]}</small></td></tr>`).join('');
 }
