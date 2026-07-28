@@ -189,7 +189,7 @@ function renderConflicts(){
       `<td>${r.candidate_source_url?`<a href="${r.candidate_source_url}" target="_blank" rel="noopener">统计局</a>`:'—'}</td></tr>`;
   }).join('')||'<tr><td colspan="8">无</td></tr>';
 }
-function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['compare','detail','scenario','coverage'].forEach(x=>$(x).classList.toggle('hidden',x!==tab));if(tab==='detail')renderDetail();if(tab==='coverage')renderCoverage();if(tab==='scenario'&&!scPayload)initScenario()}
+function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['compare','detail','scenario','listed','coverage'].forEach(x=>$(x).classList.toggle('hidden',x!==tab));if(tab==='detail')renderDetail();if(tab==='coverage')renderCoverage();if(tab==='scenario'&&!scPayload)initScenario();if(tab==='listed'&&!lcPayload)initListed()}
 function init(){
   selectedCities=new Set(payload.cities.map(c=>c.city));$('city').innerHTML=payload.cities.map(c=>`<option>${c.city}</option>`).join('');const periods=[...new Set(payload.official_housing.concat(payload.listing_housing,payload.fiscal_rows,payload.gdp_rows).map(r=>r.period))].sort();$('start').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('end').innerHTML=periods.map(p=>`<option>${p}</option>`).join('');$('start').value=periods[0]||'';$('end').value=periods.at(-1)||'';const fiscalCodes=[...new Set(payload.fiscal_rows.map(r=>r.indicator_code))];$('fiscalMetric').innerHTML=fiscalCodes.map(code=>`<option value="${code}">${payload.indicator_labels[code]||code}</option>`).join('');$('fiscalMetric').value='general_budget_revenue';
   const rerenderRange=()=>{renderCompare();if(!$('detail').classList.contains('hidden'))renderDetail()};
@@ -306,4 +306,60 @@ function renderBacktest(s){
   if(bt.latest)rows.push(['最近一次评估',`${bt.latest.as_of} → ${bt.latest.target_period}`,
     `预测 ${bt.latest.base_change}%，实际 ${bt.latest.actual_change}%，误差 ${bt.latest.base_error} pp`]);
   $('scBtTable').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td><small>${r[2]}</small></td></tr>`).join('');
+}
+
+// ── 上市公司 ───────────────────────────────────────────────────────────────
+let lcPayload=null;
+function loadListed(){
+  const scope=$('lcScope').value;
+  const cities=payload.cities.map(c=>c.city).join(',');
+  fetch(`/api/listed-company/data?city_scope=${scope}&cities=${encodeURIComponent(cities)}`)
+    .then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.json()})
+    .then(p=>{lcPayload=p;renderListed()})
+    .catch(e=>{$('lcMeta').textContent='加载失败：'+e.message});
+}
+function renderListed(){
+  destroy('listed:rate');
+  const key=$('lcSort').value;
+  const rows=[...lcPayload.cities].sort((a,b)=>{
+    const g=x=>key==='company_count'?x.company_count
+      :key==='securitisation_rate'?(x.derived.securitisation_rate??-1)
+      :(x.totals_yi[key]??-1);
+    return g(b)-g(a);
+  });
+  const covered=rows.filter(r=>r.totals_yi.market_cap!=null).length;
+  $('lcMeta').textContent=`${rows.length} 城 · ${rows.reduce((s,r)=>s+r.company_count,0)} 家公司 · ${covered} 城有市值数据 · 归属口径 ${lcPayload.city_scope==='office_city'?'办公地':'注册地'}`;
+  const cell=(r,k)=>{
+    const v=r.totals_yi[k];if(v==null)return '<td class="gap">待入库</td>';
+    const st=(r.data_statuses[k]||[]);
+    const tag=st.includes('third_party')&&!st.includes('official')
+      ?'<i class="ctag" style="border-color:#6b5a2b;color:#e0c168">三方</i>':'';
+    return `<td>${tag}${fmt(v,0)}<small>${r.coverage[k]||0}/${r.company_count} 家有值</small></td>`;
+  };
+  $('lcTable').innerHTML=rows.map(r=>`<tr><td>${r.city}</td><td>${r.company_count}</td>`+
+    ['market_cap','revenue','net_profit','net_assets','total_assets','total_liabilities'].map(k=>cell(r,k)).join('')+
+    `<td>${r.derived.securitisation_rate!=null?r.derived.securitisation_rate.toFixed(1)+'%':'—'}`+
+    `<small>${r.gdp_yi?'GDP '+fmt(r.gdp_yi,0)+' ('+r.gdp_period+')':'无 GDP'}</small></td>`+
+    `<td>${r.derived.listed_revenue_to_gdp!=null?r.derived.listed_revenue_to_gdp.toFixed(1)+'%':'—'}</td></tr>`).join('')
+    ||'<tr><td colspan="10">暂无数据，请先运行采集</td></tr>';
+  const withRate=rows.filter(r=>r.derived.securitisation_rate!=null);
+  if(withRate.length){
+    charts['listed:rate']=new Chart($('lcRateChart'),{type:'bar',
+      data:{labels:withRate.map(r=>r.city),datasets:[
+        {label:'证券化率 %',data:withRate.map(r=>r.derived.securitisation_rate),backgroundColor:'#5795ff'},
+        {label:'上市公司营收/GDP %',data:withRate.map(r=>r.derived.listed_revenue_to_gdp??null),backgroundColor:'#f5a623'}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        scales:{x:{ticks:{color:'#8fa4bd'},grid:{color:'#14263a'}},
+                y:{ticks:{color:'#8fa4bd',callback:v=>v+'%'},grid:{color:'#14263a'}}},
+        plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6'}}}}});
+  }
+  $('lcIndustry').innerHTML=rows.map(r=>`<tr><td>${r.city}</td><td>${
+    (r.top_industries||[]).map(([n,c])=>`${n} <b>${c}</b>`).join('　')||'—'}</td></tr>`).join('');
+  $('lcCaveats').innerHTML=lcPayload.caveats.map(x=>`<p>• ${x}</p>`).join('');
+}
+function initListed(){
+  $('lcScope').onchange=loadListed;
+  $('lcSort').onchange=()=>{if(lcPayload)renderListed()};
+  $('lcReload').onclick=loadListed;
+  loadListed();
 }

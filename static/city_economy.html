@@ -37,7 +37,7 @@
   <div class="tabs">
     <button data-tab="compare" class="active">多城多指标</button>
     <button data-tab="detail">单城详情</button>
-    <button data-tab="scenario">房价情景</button><button data-tab="coverage">覆盖与口径</button>
+    <button data-tab="scenario">房价情景</button><button data-tab="listed">上市公司</button><button data-tab="coverage">覆盖与口径</button>
   </div>
 
   <section id="compare">
@@ -101,6 +101,23 @@
         <div class="chart"><canvas id="scAnchorChart"></canvas></div></div>
     </div>
     <div class="card wide" style="margin-top:14px"><h3>口径与假设</h3><div id="scCaveats" class="muted"></div></div>
+  </section>
+
+  <section id="listed" class="hidden">
+    <div class="notice">上市公司归属按<b>地址解析</b>：默认办公地，可切换注册地。两者常不同——茅台注册仁怀、格力注册珠海，为税收优惠注册在霍尔果斯/西藏而总部在北上深的更普遍；只用注册地会系统性扭曲城市产业实力。</div>
+    <div class="controls">
+      <label>归属口径<select id="lcScope"><option value="office_city">办公地（默认）</option><option value="register_city">注册地</option></select></label>
+      <label>排序<select id="lcSort"><option value="market_cap">总市值</option><option value="company_count">公司家数</option><option value="revenue">营业收入</option><option value="securitisation_rate">证券化率</option></select></label>
+      <button id="lcReload">刷新</button>
+      <span class="muted" id="lcMeta"></span>
+    </div>
+    <div class="card wide"><div class="row"><h3>十城上市公司汇总</h3><span class="muted">单位亿元；合计为各公司最新披露期简单加总</span></div>
+      <div class="scroll"><table><thead><tr><th>城市</th><th>家数</th><th>总市值</th><th>营业收入</th><th>净利润</th><th>净资产</th><th>总资产</th><th>总负债</th><th>证券化率</th><th>营收/GDP</th></tr></thead><tbody id="lcTable"></tbody></table></div></div>
+    <div class="detail-grid" style="margin-top:14px">
+      <div class="card"><h3>证券化率（总市值 / GDP）</h3><div class="chart"><canvas id="lcRateChart"></canvas></div></div>
+      <div class="card"><h3>主导行业（按公司家数）</h3><div class="scroll"><table><thead><tr><th>城市</th><th>行业构成</th></tr></thead><tbody id="lcIndustry"></tbody></table></div></div>
+    </div>
+    <div class="card wide" style="margin-top:14px"><h3>口径与边界</h3><div id="lcCaveats" class="muted"></div></div>
   </section>
 
   <section id="coverage" class="hidden">

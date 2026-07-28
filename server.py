@@ -76,7 +76,11 @@ from services.housing_compare_service import build_housing_compare_payload
 from services.city_economy_service import build_city_economy_payload
 from services.city_official_service import update_city_official
 from services.city_mirror_service import update_city_mirror
-from services.housing_scenario_service import build_housing_scenario_payload
+from services.housing_scenario_service import (
+    build_housing_scenario_comparison,
+    build_housing_scenario_payload,
+    list_housing_scenario_cities,
+)
 from services.city_nbs_service import update_city_nbs
 from services.city_fiscal_decision_service import update_city_fiscal_decisions
 from services.debt_ceiling_service import update_debt_ceiling
@@ -1748,12 +1752,44 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
+            elif path == '/api/housing-scenario/cities':
+                q = self._query_params()
+                try:
+                    self.send_json(list_housing_scenario_cities(
+                        DB_PATH, source=q.get('source') or 'official'))
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
+            elif path == '/api/housing-scenario/compare':
+                q = self._query_params()
+                cities = [value.strip() for value in (q.get('cities') or '').split(',')
+                          if value.strip()]
+                try:
+                    self.send_json(build_housing_scenario_comparison(
+                        DB_PATH, cities=cities or None,
+                        kind=q.get('kind') or 'second',
+                        horizon=int(float(q.get('horizon') or 24)),
+                        source=q.get('source') or 'official'))
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'success': False, 'data_status': 'scenario',
+                                    'error': str(exc)}, 400)
+            elif path == '/api/listed-company/data':
+                q = self._query_params()
+                scope = q.get('city_scope')
+                scope = scope if scope in ('office_city', 'register_city') else 'office_city'
+                raw_cities = (q.get('cities') or '').strip()
+                cities = [c for c in raw_cities.split(',') if c] or None
+                self.send_json(build_city_listed_payload(DB_PATH, cities=cities,
+                                                         city_scope=scope))
             elif path == '/api/housing-scenario/data':
                 q = self._query_params()
                 def _num(name, default, low, high):
                     try: return max(low, min(high, float(q.get(name, default))))
                     except (TypeError, ValueError): return default
                 over = {}
+                source = q.get('source') or 'official'
+                override_kinds = (('listing',) if source == 'anjuke' else
+                                  ((q.get('kind'),) if q.get('kind') in ('second', 'new')
+                                   else ('second', 'new')))
                 for key in ('optimistic', 'base', 'stress'):
                     raw = q.get(key)
                     if raw not in (None, ''):
@@ -1762,14 +1798,18 @@ class Handler(BaseHTTPRequestHandler):
                         except ValueError:
                             continue
                         if -5.0 <= rate <= 5.0:      # 月度环比，超出即视为误输入
-                            over.setdefault('second', {})[key] = rate
-                            over.setdefault('new', {})[key] = rate
-                self.send_json(build_housing_scenario_payload(
-                    DB_PATH, q.get('city') or '厦门',
-                    horizon=int(_num('horizon', 24, 6, 120)),
-                    down_payment=_num('down_payment', 0.35, 0.15, 1.0),
-                    overrides=over or None,
-                    city_code=q.get('city_code')))
+                            for scenario_kind in override_kinds:
+                                over.setdefault(scenario_kind, {})[key] = rate
+                try:
+                    self.send_json(build_housing_scenario_payload(
+                        DB_PATH, q.get('city') or '厦门',
+                        horizon=int(_num('horizon', 24, 6, 120)),
+                        down_payment=_num('down_payment', 0.35, 0.15, 1.0),
+                        overrides=over or None,
+                        city_code=q.get('city_code'), source=source))
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'success': False, 'data_status': 'scenario',
+                                    'error': str(exc)}, 400)
             elif path == '/api/debt-ceiling/data':
                 flat = self._query_params()
                 def _int(name, default, low, high):
@@ -1837,6 +1877,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'debt_ceiling.html'))
             elif path in ('/city-economy', '/city-economy/'):
                 self.send_file(os.path.join(STATIC_DIR, 'city_economy.html'))
+            elif path in ('/housing-scenario', '/housing-scenario/'):
+                self.send_file(os.path.join(STATIC_DIR, 'housing_scenario.html'))
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
@@ -1891,6 +1933,21 @@ class Handler(BaseHTTPRequestHandler):
                                                'city_bulletins': update_city_official(DB_PATH),
                                                'city_fiscal_decisions': update_city_fiscal_decisions(DB_PATH),
                                            }))
+        elif path == '/api/listed-company/update':
+            q = self._query_params()
+            step = q.get('step') or 'all'
+            def _run():
+                out = {}
+                if step in ('all', 'directory'):
+                    out['directory'] = update_company_directory(DB_PATH)
+                if step in ('all', 'market_cap'):
+                    out['market_cap'] = update_market_caps(DB_PATH)
+                if step in ('all', 'financials'):
+                    raw = (q.get('cities') or '').strip()
+                    out['financials'] = update_financials(
+                        DB_PATH, cities=[c for c in raw.split(',') if c] or None)
+                return out
+            self.send_json(_run_update_job('listed_company', _run))
         elif path == '/api/city-economy/update-nbs':
             # 统计局单独入口：默认走 30 天新鲜度护栏，?force=1 强制重抓
             self.send_json(_run_update_job(
