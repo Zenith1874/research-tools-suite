@@ -99,5 +99,79 @@ class StorageDisciplineTests(unittest.TestCase):
         self.assertEqual(rows, [(123.0,)])
 
 
+class AggregationTests(unittest.TestCase):
+    """聚合口径：陈旧报表不与当期混加；市值是行情快照不受报告期下限约束。"""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(':memory:')
+        ensure_tables(self.conn)
+        now = '2026-07-29T00:00:00'
+        for code, name, city in (('000001', '甲公司', '深圳'),
+                                 ('000002', '乙公司', '深圳'),
+                                 ('600000', '丙公司', '上海')):
+            upsert_company(self.conn, {
+                'code': code, 'name': name, 'org_id': None, 'category': 'A股',
+                'register_address': None, 'office_address': None,
+                'register_city': city, 'register_province': None,
+                'office_city': city, 'office_province': None,
+                'industry': '制造业', 'listed_date': None}, now)
+        # 甲：当期报表；乙：停在 2013 年应被剔除；丙：当期
+        rows = [('000001', 'revenue', '2026-03-31', 100e8),
+                ('000001', 'market_cap', '2026-07-28', 500e8),
+                ('000002', 'revenue', '2013-09-30', 999e8),
+                ('000002', 'market_cap', '2026-07-28', 30e8),
+                ('600000', 'revenue', '2026-03-31', 200e8),
+                ('600000', 'market_cap', '2026-07-28', 800e8)]
+        for code, ind, period, value in rows:
+            upsert_observation(self.conn, code, None, ind, period, value,
+                               'third_party', SOURCE_EASTMONEY, 'u', 'f', now)
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _payload(self, path):
+        from services.listed_company_service import build_city_listed_payload
+        return build_city_listed_payload(path)
+
+    def test_stale_report_excluded_but_market_cap_kept(self):
+        import tempfile, os
+        handle = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        path = handle.name
+        handle.close()
+        disk = sqlite3.connect(path)
+        self.conn.backup(disk)
+        disk.close()
+        try:
+            payload = self._payload(path)
+        finally:
+            os.unlink(path)
+        by_city = {row['city']: row for row in payload['cities']}
+        shenzhen = by_city['深圳']
+        # 乙公司 2013 年的 999 亿营收不得进入合计
+        self.assertAlmostEqual(shenzhen['totals_yi']['revenue'], 100.0, places=2)
+        self.assertEqual(shenzhen['coverage']['revenue'], 1)
+        # 市值是行情快照，两家都要算上
+        self.assertAlmostEqual(shenzhen['totals_yi']['market_cap'], 530.0, places=2)
+        self.assertEqual(shenzhen['coverage']['market_cap'], 2)
+        self.assertIn('000002', payload['stale_excluded'])
+        self.assertEqual(payload['period_floor'], '2025-06-30')
+
+    def test_city_filter_and_ordering(self):
+        import tempfile, os
+        handle = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        path = handle.name
+        handle.close()
+        disk = sqlite3.connect(path)
+        self.conn.backup(disk)
+        disk.close()
+        try:
+            payload = self._payload(path)
+        finally:
+            os.unlink(path)
+        # 按总市值降序：上海 800 > 深圳 530
+        self.assertEqual([row['city'] for row in payload['cities']], ['上海', '深圳'])
+
+
 if __name__ == '__main__':
     unittest.main()

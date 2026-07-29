@@ -40,6 +40,10 @@ EASTMONEY_BALANCE_DATES = ('https://emweb.securities.eastmoney.com/PC_HSF10/'
                            'NewFinanceAnalysis/zcfzbDateAjaxNew')
 EASTMONEY_BALANCE = ('https://emweb.securities.eastmoney.com/PC_HSF10/'
                      'NewFinanceAnalysis/zcfzbAjaxNew')
+EASTMONEY_PROFIT_DATES = ('https://emweb.securities.eastmoney.com/PC_HSF10/'
+                          'NewFinanceAnalysis/lrbDateAjaxNew')
+EASTMONEY_PROFIT = ('https://emweb.securities.eastmoney.com/PC_HSF10/'
+                    'NewFinanceAnalysis/lrbAjaxNew')
 
 SOURCE_CNINFO = '巨潮资讯网（证监会指定披露平台）'
 SOURCE_EASTMONEY = '东方财富（商业数据商）'
@@ -49,11 +53,14 @@ FIELD_REGISTER_ADDRESS = 'F004V'
 FIELD_OFFICE_ADDRESS = 'F005V'
 FIELD_INDUSTRY = 'F032V'
 FIELD_LISTED_DATE = 'F006D'
-# 头部数据字段代号：以平安银行、招商银行、农业银行三家实际披露值反推核对。
+# 巨潮头部数据只保留经核对确认的字段：股本。
+#
+# 曾把 F089N/F102N 当营收/净利、F109N 当净资产写入，前两个数值确实对得上，
+# 但 F109N 与实际净资产差了数倍（平安银行 3880 亿 vs 实际 5441 亿、
+# 茅台 488 亿 vs 约 2700 亿），是未经核对的臆断映射；而该接口的 ENDDATE
+# 是行情日期（各股统一为 2026-07-25）不是报告期，用它当财务期同样是错的。
+# 因此财务三项改由东财三表提供——那里有正确的 REPORT_DATE。
 HEADSTRIP_FIELDS = {
-    'revenue': 'F089N',
-    'net_profit': 'F102N',
-    'net_assets': 'F109N',
     'total_shares': 'F020N',
     'float_shares': 'F021N',
 }
@@ -172,16 +179,33 @@ def _connect(db_path):
     return conn
 
 
+class UnsupportedCode(Exception):
+    """接口明确表示不支持该代码（如北交所代码在巨潮公司概况接口上）。
+
+    这类是确定性失败，重试毫无意义：251 个北交所代码若各退避 3 次，
+    要白白消耗近一小时。与限流（返回拦截页）必须区别对待。
+    """
+
+
 def _get_json(url, params=None, headers=None, timeout=30):
-    """限速 + 退避；返回非 JSON（多为反爬拦截页）时重试而不是当成空数据。"""
+    """限速 + 退避。仅对疑似限流重试；接口明确拒绝的代码立即放弃。"""
     last = None
     for attempt in range(RETRIES):
         time.sleep(REQUEST_PACING)
         try:
             response = requests.get(url, params=params,
                                     headers=headers or CNINFO_HEADERS, timeout=timeout)
+            if response.status_code == 500:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {}
+                if str(body.get('msg') or '').startswith('validate fail'):
+                    raise UnsupportedCode(f"{params}: {body.get('msg')}")
             response.raise_for_status()
             return response.json()
+        except UnsupportedCode:
+            raise
         except Exception as exc:
             last = exc
             if attempt < RETRIES - 1:
@@ -267,12 +291,15 @@ def _market_symbol(code):
             'BJ' if code.startswith(('4', '8')) else 'SZ') + code
 
 
-def fetch_balance_sheet(code):
-    """东财 F10 资产负债表；companyType 依公司类型不同，逐个探测。"""
+def _fetch_em_statement(code, dates_url, detail_url, field_map):
+    """东财 F10 报表通用取数：companyType 依公司类型不同，逐个探测。
+
+    与巨潮头部数据不同，这里的 REPORT_DATE 是真正的报告期，可安全用作 period。
+    """
     symbol = _market_symbol(code)
     for company_type in (4, 3, 2, 1):
         try:
-            dates = _get_json(EASTMONEY_BALANCE_DATES,
+            dates = _get_json(dates_url,
                               {'companyType': company_type, 'reportDateType': 0,
                                'code': symbol}, headers=EASTMONEY_HEADERS)
         except Exception:
@@ -283,7 +310,7 @@ def fetch_balance_sheet(code):
         period = str(rows[0].get('REPORT_DATE') or '')[:10]
         if not period:
             continue
-        detail = _get_json(EASTMONEY_BALANCE,
+        detail = _get_json(detail_url,
                            {'companyType': company_type, 'reportDateType': 0,
                             'reportType': 1, 'dates': period, 'code': symbol},
                            headers=EASTMONEY_HEADERS)
@@ -292,14 +319,27 @@ def fetch_balance_sheet(code):
             continue
         record = records[0]
         values = {}
-        for indicator, field in (('total_assets', 'TOTAL_ASSETS'),
-                                 ('total_liabilities', 'TOTAL_LIABILITIES')):
+        for indicator, field in field_map:
             value = record.get(field)
             if isinstance(value, (int, float)):
                 values[indicator] = float(value)
         if values:
             return {'period': period, 'values': values, 'company_type': company_type}
     return None
+
+
+def fetch_balance_sheet(code):
+    return _fetch_em_statement(code, EASTMONEY_BALANCE_DATES, EASTMONEY_BALANCE,
+                               (('total_assets', 'TOTAL_ASSETS'),
+                                ('total_liabilities', 'TOTAL_LIABILITIES'),
+                                ('net_assets', 'TOTAL_PARENT_EQUITY')))
+
+
+def fetch_profit_sheet(code):
+    """净利润取归母口径，与市场惯用的"净利润"一致。"""
+    return _fetch_em_statement(code, EASTMONEY_PROFIT_DATES, EASTMONEY_PROFIT,
+                               (('revenue', 'TOTAL_OPERATE_INCOME'),
+                                ('net_profit', 'PARENT_NETPROFIT')))
 
 
 def upsert_company(conn, row, now):
@@ -356,21 +396,23 @@ def update_company_directory(db_path, limit=None, refresh=False, progress_every=
         todo = [item for item in listing if item['code'] not in done]
         if limit:
             todo = todo[:int(limit)]
-        now = datetime.now().isoformat()
-        ok, errors = 0, []
+        ok, errors, unsupported = 0, [], []
         for index, item in enumerate(todo, 1):
             try:
                 profile = fetch_profile(item['code'])
+            except UnsupportedCode:
+                unsupported.append(item['code'])
+                continue
             except Exception as exc:
                 errors.append(f"{item['code']}: {exc}")
                 continue
             if not profile:
                 errors.append(f"{item['code']}: 概况为空")
                 continue
-            upsert_company(conn, {**item, **profile}, now)
+            upsert_company(conn, {**item, **profile}, datetime.now().isoformat())
+            conn.commit()          # 绝不跨网络 I/O 持有写事务，否则服务器写入会被饿死
             ok += 1
             if index % progress_every == 0:
-                conn.commit()
                 print(f'  …{index}/{len(todo)} 已入库 {ok}，失败 {len(errors)}', flush=True)
         conn.commit()
         total = conn.execute('SELECT COUNT(*) FROM listed_companies').fetchone()[0]
@@ -381,7 +423,9 @@ def update_company_directory(db_path, limit=None, refresh=False, progress_every=
     return {'success': ok > 0 or not todo, 'listed_total': len(listing),
             'fetched': ok, 'pending_before': len(todo), 'errors': errors[:20],
             'error_count': len(errors), 'stored_total': total,
-            'with_city': with_city}
+            'with_city': with_city,
+            'unsupported_count': len(unsupported),
+            'unsupported_sample': unsupported[:10]}
 
 
 def update_market_caps(db_path):
@@ -414,7 +458,8 @@ def update_market_caps(db_path):
 
 
 def update_financials(db_path, cities=None, city_scope='office_city',
-                      limit=None, include_balance=True, progress_every=100):
+                      limit=None, include_balance=True, progress_every=50,
+                      resume=True):
     """第三步之二：目标城市公司的财务。
 
     巨潮给营收/净利/净资产（official），东财补总资产/总负债（third_party）。
@@ -432,6 +477,12 @@ def update_financials(db_path, cities=None, city_scope='office_city',
             args = list(cities)
         targets = [dict(zip(('code', 'name'), row))
                    for row in conn.execute(sql + ' ORDER BY code', args)]
+        if resume:
+            done = {row[0] for row in conn.execute(
+                '''SELECT DISTINCT code FROM listed_company_observations
+                   WHERE indicator_code='revenue' AND source_name=?''',
+                (SOURCE_EASTMONEY,))}
+            targets = [item for item in targets if item['code'] not in done]
         if limit:
             targets = targets[:int(limit)]
         now = datetime.now().isoformat()
@@ -451,20 +502,24 @@ def update_financials(db_path, cities=None, city_scope='office_city',
             except Exception as exc:
                 errors.append(f'{code} 巨潮: {exc}')
             if include_balance:
-                try:
-                    balance = fetch_balance_sheet(code)
-                    if balance:
-                        for indicator, value in balance['values'].items():
+                for fetcher, label, url in (
+                        (fetch_balance_sheet, '资产负债表', EASTMONEY_BALANCE),
+                        (fetch_profit_sheet, '利润表', EASTMONEY_PROFIT)):
+                    try:
+                        statement = fetcher(code)
+                        if not statement:
+                            continue
+                        for indicator, value in statement['values'].items():
                             upsert_observation(
-                                conn, code, name, indicator, balance['period'], value,
-                                'third_party', SOURCE_EASTMONEY, EASTMONEY_BALANCE,
-                                f"东方财富 F10 资产负债表（companyType="
-                                f"{balance['company_type']}）；商业数据商口径。", now)
+                                conn, code, name, indicator, statement['period'], value,
+                                'third_party', SOURCE_EASTMONEY, url,
+                                f"东方财富 F10 {label}（companyType="
+                                f"{statement['company_type']}）；报告期为披露口径。", now)
                             counts['eastmoney'] += 1
-                except Exception as exc:
-                    errors.append(f'{code} 东财: {exc}')
+                    except Exception as exc:
+                        errors.append(f'{code} 东财{label}: {exc}')
+            conn.commit()          # 每家一提交，写锁只在毫秒级持有
             if index % progress_every == 0:
-                conn.commit()
                 print(f'  …{index}/{len(targets)} 巨潮{counts["cninfo"]} '
                       f'东财{counts["eastmoney"]} 失败{len(errors)}', flush=True)
         conn.commit()
@@ -476,15 +531,28 @@ def update_financials(db_path, cities=None, city_scope='office_city',
 
 AGGREGATE_INDICATORS = ('market_cap', 'revenue', 'net_profit', 'net_assets',
                         'total_assets', 'total_liabilities')
+# 少数停牌/退市公司的"最新"报表停在数年前（实测有 2013、2017 年的）。
+# 金额虽小，但把 2013 年的报表和 2026 年的加进同一个合计属于口径错误，
+# 因此按报告期下限剔除，并在结果里报告剔除了多少家。
+STALE_REPORT_FLOOR = '2025-06-30'
+# 市值是行情快照，不受报告期下限约束。
+PERIOD_FLOOR_EXEMPT = ('market_cap', 'float_market_cap')
 
 
-def _latest_by_code(conn, indicator):
-    """同一公司同一指标可能有两个来源；官方优先，缺则用第三方，并记下用了谁。"""
+def _latest_by_code(conn, indicator, period_floor=STALE_REPORT_FLOOR):
+    """同一公司同一指标可能有两个来源；官方优先，缺则用第三方，并记下用了谁。
+
+    返回 (选中值, 因报告期过旧被剔除的代码集合)。
+    """
     rows = conn.execute('''SELECT code,name,period,value,data_status,source_name
         FROM listed_company_observations WHERE indicator_code=?
         ORDER BY code,period''', (indicator,)).fetchall()
-    chosen = {}
+    chosen, stale = {}, set()
+    apply_floor = period_floor and indicator not in PERIOD_FLOOR_EXEMPT
     for code, name, period, value, status, source in rows:
+        if apply_floor and period < period_floor:
+            stale.add(code)
+            continue
         current = chosen.get(code)
         better = (current is None
                   or (status == 'official' and current['data_status'] != 'official')
@@ -492,10 +560,11 @@ def _latest_by_code(conn, indicator):
         if better:
             chosen[code] = {'name': name, 'period': period, 'value': value,
                             'data_status': status, 'source_name': source}
-    return chosen
+    return chosen, stale - set(chosen)
 
 
-def build_city_listed_payload(db_path, cities=None, city_scope='office_city'):
+def build_city_listed_payload(db_path, cities=None, city_scope='office_city',
+                              period_floor=STALE_REPORT_FLOOR):
     """按城市汇总上市公司；同时给出与 GDP 的比值（证券化率、营收/GDP）。"""
     if city_scope not in ('office_city', 'register_city'):
         raise ValueError('city_scope 必须是 office_city 或 register_city')
@@ -507,7 +576,10 @@ def build_city_listed_payload(db_path, cities=None, city_scope='office_city'):
             f'SELECT code,name,{city_scope} AS city,industry,register_city,office_city '
             'FROM listed_companies').fetchall()
         by_code = {row['code']: dict(row) for row in company_rows}
-        latest = {ind: _latest_by_code(conn, ind) for ind in AGGREGATE_INDICATORS}
+        latest, stale_codes = {}, set()
+        for ind in AGGREGATE_INDICATORS:
+            latest[ind], dropped = _latest_by_code(conn, ind, period_floor)
+            stale_codes |= dropped
         gdp = {}
         try:
             for row in conn.execute('''SELECT region_name,period,value
@@ -564,6 +636,8 @@ def build_city_listed_payload(db_path, cities=None, city_scope='office_city'):
     return {
         'generated_at': datetime.now().isoformat(),
         'city_scope': city_scope,
+        'period_floor': period_floor,
+        'stale_excluded': sorted(stale_codes),
         'cities': out,
         'indicator_names': INDICATOR_NAMES,
         'caveats': [
@@ -572,8 +646,12 @@ def build_city_listed_payload(db_path, cities=None, city_scope='office_city'):
             '北上深的更普遍；只用注册地会系统性扭曲城市产业实力。',
             '营业收入、净利润、净资产来自巨潮资讯网（证监会指定披露平台），标为 official；'
             '总市值、总资产、总负债来自东方财富，标为 third_party，两者不混。',
-            '合计为最新披露期的简单加总：各公司报告期可能不同（年报/季报并存），'
-            '且母公司与子公司同时上市时存在重复计入，不做抵消。',
+            f'合计为最新披露期的简单加总，且只采用报告期不早于 {period_floor} 的报表；'
+            '停牌或退市公司若最新报表停在数年前会被剔除，避免与当期混加。'
+            '各公司报告期仍可能不同（年报与季报并存），母公司与子公司同时上市时'
+            '存在重复计入，不做抵消。',
+            '总资产与总负债含金融机构：北京、上海因银行总部集中，该两项主要由'
+            '金融资产构成，与制造业城市不可直接比较。',
             '证券化率＝上市公司总市值/该市 GDP，营收比＝上市公司营收合计/该市 GDP；'
             '两者分子是全国乃至全球经营的上市主体口径，分母是本地生产口径，只可横向'
             '对比城市间相对高低，不能解读为"本地经济由上市公司贡献的比例"。',

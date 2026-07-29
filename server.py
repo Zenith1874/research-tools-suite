@@ -81,6 +81,12 @@ from services.housing_scenario_service import (
     build_housing_scenario_payload,
     list_housing_scenario_cities,
 )
+from services.listed_company_service import (
+    build_city_listed_payload,
+    update_company_directory,
+    update_financials,
+    update_market_caps,
+)
 from services.city_nbs_service import update_city_nbs
 from services.city_fiscal_decision_service import update_city_fiscal_decisions
 from services.debt_ceiling_service import update_debt_ceiling
