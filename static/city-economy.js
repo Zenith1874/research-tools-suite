@@ -342,21 +342,59 @@ function renderListed(){
     `<small>${r.gdp_yi?'GDP '+fmt(r.gdp_yi,0)+' ('+r.gdp_period+')':'无 GDP'}</small></td>`+
     `<td>${r.derived.listed_revenue_to_gdp!=null?r.derived.listed_revenue_to_gdp.toFixed(1)+'%':'—'}</td></tr>`).join('')
     ||'<tr><td colspan="10">暂无数据，请先运行采集</td></tr>';
-  const withRate=rows.filter(r=>r.derived.securitisation_rate!=null);
-  if(withRate.length){
-    charts['listed:rate']=new Chart($('lcRateChart'),{type:'bar',
-      data:{labels:withRate.map(r=>r.city),datasets:[
-        {label:'证券化率 %',data:withRate.map(r=>r.derived.securitisation_rate),backgroundColor:'#5795ff'},
-        {label:'上市公司营收/GDP %',data:withRate.map(r=>r.derived.listed_revenue_to_gdp??null),backgroundColor:'#f5a623'}]},
-      options:{responsive:true,maintainAspectRatio:false,
-        scales:{x:{ticks:{color:'#8fa4bd'},grid:{color:'#14263a'}},
-                y:{ticks:{color:'#8fa4bd',callback:v=>v+'%'},grid:{color:'#14263a'}}},
-        plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6'}}}}});
-  }
+  renderListedCharts(rows);
   $('lcIndustry').innerHTML=rows.map(r=>`<tr><td>${r.city}</td><td>${
     (r.top_industries||[]).map(([n,c])=>`${n} <b>${c}</b>`).join('　')||'—'}</td></tr>`).join('');
   $('lcCaveats').innerHTML=lcPayload.caveats.map(x=>`<p>• ${x}</p>`).join('');
 }
+// 散点旁标城市名：10 个点用图例会挤满，直接画在点边上更好读
+const pointLabelPlugin={id:'pointLabel',afterDatasetsDraw(chart,args,opts){
+  const meta=chart.getDatasetMeta(0);if(!meta||!meta.data)return;
+  const ctx=chart.ctx;ctx.save();ctx.fillStyle='#cbd8e6';ctx.font='11px system-ui';
+  meta.data.forEach((pt,i)=>{const name=(chart.data.datasets[0].data[i]||{}).city;
+    if(name)ctx.fillText(name,pt.x+7,pt.y+4)});
+  ctx.restore();}};
+
+function renderListedCharts(rows){
+  destroy('listed:rate');destroy('listed:scatter');
+  const rate=rows.filter(r=>r.derived.securitisation_rate!=null)
+                 .sort((a,b)=>b.derived.securitisation_rate-a.derived.securitisation_rate);
+  if(!rate.length)return;
+  // 横向条形:城市名不必旋转;对数轴:38%–649% 跨 17 倍,线性轴会把中小城市压平
+  charts['listed:rate']=new Chart($('lcRateChart'),{type:'bar',
+    data:{labels:rate.map(r=>r.city),datasets:[
+      {label:'证券化率（总市值/GDP）',data:rate.map(r=>r.derived.securitisation_rate),backgroundColor:'#5795ff'},
+      {label:'上市公司营收/GDP',data:rate.map(r=>r.derived.listed_revenue_to_gdp??null),backgroundColor:'#f5a623'}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      scales:{x:{type:'logarithmic',min:1,
+                 ticks:{color:'#8fa4bd',callback:v=>[1,3,10,30,100,300,1000].includes(v)?v+'%':''},
+                 grid:{color:'#14263a'}},
+              y:{ticks:{color:'#cbd8e6'},grid:{display:false}}},
+      plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6',boxWidth:14}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.x,1)}%`}}}}});
+
+  const pts=rate.filter(r=>r.derived.listed_revenue_to_gdp!=null)
+    .map(r=>({x:r.derived.listed_revenue_to_gdp,y:r.derived.securitisation_rate,city:r.city}));
+  if(!pts.length)return;
+  charts['listed:scatter']=new Chart($('lcScatterChart'),{type:'scatter',
+    data:{datasets:[{label:'城市',data:pts,backgroundColor:'#27d3b2',pointRadius:6,pointHoverRadius:8}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      layout:{padding:{right:34}},
+      scales:{x:{type:'logarithmic',title:{display:true,text:'上市公司营收 / GDP（%，对数轴）',color:'#8fa4bd'},
+                 ticks:{color:'#8fa4bd',callback:v=>[1,3,10,30,100,300].includes(v)?v+'%':''},grid:{color:'#14263a'}},
+              y:{type:'logarithmic',title:{display:true,text:'证券化率（%，对数轴）',color:'#8fa4bd'},
+                 ticks:{color:'#8fa4bd',callback:v=>[10,30,100,300,1000].includes(v)?v+'%':''},grid:{color:'#14263a'}}},
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=>`${c.raw.city}：营收/GDP ${fmt(c.raw.x,1)}%，证券化率 ${fmt(c.raw.y,1)}%`}}}},
+    plugins:[pointLabelPlugin]});
+  const high=pts.slice().sort((a,b)=>(b.y/b.x)-(a.y/a.x))[0];
+  const low=pts.slice().sort((a,b)=>(a.y/a.x)-(b.y/b.x))[0];
+  $('lcScatterNote').textContent=
+    `左上＝市值高而营收薄（估值主导），右下＝营收厚而市值低（实业主导）。`+
+    `本组中 ${high.city} 的市值/营收倍数最高（证券化率 ${high.y.toFixed(0)}% 对营收比 ${high.x.toFixed(1)}%），`+
+    `${low.city} 最低（${low.y.toFixed(0)}% 对 ${low.x.toFixed(1)}%）。`;
+}
+
 function initListed(){
   $('lcScope').onchange=loadListed;
   $('lcSort').onchange=()=>{if(lcPayload)renderListed()};

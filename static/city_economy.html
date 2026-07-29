@@ -114,7 +114,11 @@
     <div class="card wide"><div class="row"><h3>十城上市公司汇总</h3><span class="muted">单位亿元；合计为各公司最新披露期简单加总</span></div>
       <div class="scroll"><table><thead><tr><th>城市</th><th>家数</th><th>总市值</th><th>营业收入</th><th>净利润</th><th>净资产</th><th>总资产</th><th>总负债</th><th>证券化率</th><th>营收/GDP</th></tr></thead><tbody id="lcTable"></tbody></table></div></div>
     <div class="detail-grid" style="margin-top:14px">
-      <div class="card"><h3>证券化率（总市值 / GDP）</h3><div class="chart"><canvas id="lcRateChart"></canvas></div></div>
+      <div class="card"><div class="row"><h3>证券化率与营收/GDP</h3><span class="muted">对数轴：两项跨度达 17 倍，线性轴会把中小城市压成看不出差别的细条</span></div>
+        <div class="chart" style="height:360px"><canvas id="lcRateChart"></canvas></div></div>
+      <div class="card"><div class="row"><h3>估值与营收的背离</h3><span class="muted">横轴营收/GDP、纵轴证券化率，均为对数轴</span></div>
+        <div class="chart" style="height:360px"><canvas id="lcScatterChart"></canvas></div>
+        <p class="muted" id="lcScatterNote" style="font-size:11px"></p></div>
       <div class="card"><h3>主导行业（按公司家数）</h3><div class="scroll"><table><thead><tr><th>城市</th><th>行业构成</th></tr></thead><tbody id="lcIndustry"></tbody></table></div></div>
     </div>
     <div class="card wide" style="margin-top:14px"><h3>口径与边界</h3><div id="lcCaveats" class="muted"></div></div>
