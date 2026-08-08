@@ -4,8 +4,12 @@ import sqlite3
 import tempfile
 import unittest
 import os
+from unittest.mock import patch
 
-from services.debt_ceiling_service import parse_budget_report, build_ceiling_payload
+from services.debt_ceiling_service import (
+    parse_budget_report, build_ceiling_payload, update_debt_ceiling,
+)
+from services.fiscal_debt_service import ensure_fiscal_tables
 
 REPORT_2026 = (
     '2025年年末，国债余额412317.68亿元，控制在全国人大批准的国债限额418608.35亿元以内；'
@@ -118,6 +122,83 @@ class HeadroomGuardTests(unittest.TestCase):
         year = build_ceiling_payload(self.db_path)['years'][0]
         self.assertEqual(year['treasury_limit_status'], 'incomplete')
         self.assertIsNone(year['treasury_headroom'])
+
+
+class UpdateRetentionTests(unittest.TestCase):
+    """网络或解析失败不得清掉上一轮已经核验的官方值。"""
+
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        self.db_path = handle.name
+        handle.close()
+        conn = sqlite3.connect(self.db_path)
+        ensure_fiscal_tables(conn)
+        conn.execute('''INSERT INTO fiscal_debt_observations
+          (indicator_code,indicator_name,value,period,source_type,source_url,
+           data_status,module_code)
+          VALUES ('treasury_debt_limit','国债限额',418608.35,'2025',
+                  'mof_budget_report','https://example.test/verified',
+                  'official','debt_ceiling')''')
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        os.unlink(self.db_path)
+
+    @patch('services.debt_ceiling_service.LIMIT_AMENDMENTS', ())
+    @patch('services.debt_ceiling_service.BUDGET_REPORTS', ({
+        'execution_year': '2025', 'budget_year': '2026',
+        'url': 'https://example.test/fails', 'title': '失败样本报告'},))
+    @patch('services.debt_ceiling_service.fetch', side_effect=RuntimeError('network down'))
+    def test_failed_refresh_keeps_verified_rows(self, _fetch):
+        result = update_debt_ceiling(self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        row = conn.execute('''SELECT value,source_url FROM fiscal_debt_observations
+                              WHERE indicator_code='treasury_debt_limit'
+                                AND period='2025' ''').fetchone()
+        conn.close()
+        self.assertEqual(row, (418608.35, 'https://example.test/verified'))
+        self.assertFalse(result['success'])
+        self.assertTrue(result['retained_existing_on_failure'])
+        self.assertIn('network down', result['errors'][0])
+
+
+class DebtResolutionPackageTests(unittest.TestCase):
+    """化债方案三段性质不同，不能相加成一个"12万亿"就完事。"""
+
+    def test_package_components_are_stored_separately(self):
+        from services.debt_ceiling_service import DEBT_RESOLUTION_PACKAGE
+        by_code = {row['indicator_code']: row for row in DEBT_RESOLUTION_PACKAGE}
+        self.assertEqual(by_code['debt_swap_new_limit']['value'], 60000.0)
+        self.assertEqual(by_code['debt_swap_special_bond_allocation']['value'], 40000.0)
+        # 官方表述的"直接增加化债资源"是前两段之和，不含棚改那 2 万亿
+        self.assertEqual(by_code['debt_resolution_direct_resources']['value'], 100000.0)
+        self.assertEqual(
+            by_code['debt_swap_new_limit']['value']
+            + by_code['debt_swap_special_bond_allocation']['value'],
+            by_code['debt_resolution_direct_resources']['value'])
+        self.assertIn('棚改', by_code['debt_resolution_direct_resources']['note'])
+
+    def test_hidden_debt_disclosure_reconciles_with_official_debt_ratio(self):
+        """法定债务＋隐性债务再除以 GDP，须复现财政部披露的 67.5%。
+
+        这是对三个独立抽取值（国债余额、地方债余额、隐性债务余额）的交叉验证：
+        任何一个抽错，这个等式都不会成立。
+        """
+        from services.debt_ceiling_service import HIDDEN_DEBT_DISCLOSURES
+        by_code = {row['indicator_code']: row for row in HIDDEN_DEBT_DISCLOSURES}
+        hidden = by_code['hidden_debt_balance']['value']
+        ratio = by_code['government_debt_to_gdp_incl_hidden']['value']
+        treasury_2023 = 300325.5      # 2024 年预算报告原文
+        local_2023 = 407372.9         # 同上
+        gdp_2023 = 1260600.0          # 议案说明原文：126.06 万亿元
+        computed = (treasury_2023 + local_2023 + hidden) / gdp_2023 * 100
+        self.assertAlmostEqual(computed, ratio, places=1)
+
+    def test_percent_indicator_is_not_stored_as_yuan(self):
+        from services.debt_ceiling_service import PERCENT_INDICATORS
+        self.assertIn('government_debt_to_gdp_incl_hidden', PERCENT_INDICATORS)
+        self.assertNotIn('hidden_debt_balance', PERCENT_INDICATORS)
 
 
 if __name__ == '__main__':
