@@ -70,6 +70,23 @@ def collect_private_files(
     return files
 
 
+def exclude_manifest_paths(
+    files: dict[str, set[str]],
+    manifest_path: Path,
+) -> dict[str, set[str]]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    covered = {
+        entry.get("path")
+        for entry in manifest.get("files", [])
+        if isinstance(entry, dict) and entry.get("path")
+    }
+    return {
+        path: categories
+        for path, categories in files.items()
+        if path not in covered
+    }
+
+
 def human_bytes(value: int) -> str:
     units = ("B", "KiB", "MiB", "GiB", "TiB")
     size = float(value)
@@ -239,6 +256,8 @@ def create_snapshot(
     snapshot_name: str,
     registry: dict,
     include_temporary: bool = False,
+    selected_files: dict[str, set[str]] | None = None,
+    supplement_manifest: Path | None = None,
 ) -> Path:
     repo_resolved = repo_root.resolve()
     destination_resolved = destination_root.resolve()
@@ -247,9 +266,11 @@ def create_snapshot(
     if not SNAPSHOT_NAME.fullmatch(snapshot_name):
         raise ValueError("snapshot name may contain only letters, numbers, dot, dash, underscore")
 
-    files = collect_private_files(
-        repo_root, registry, include_temporary=include_temporary
-    )
+    files = selected_files
+    if files is None:
+        files = collect_private_files(
+            repo_root, registry, include_temporary=include_temporary
+        )
     final_root = destination_resolved / snapshot_name
     partial_root = destination_resolved / f"{snapshot_name}.partial"
     if final_root.exists():
@@ -352,6 +373,9 @@ def create_snapshot(
         "snapshot": {
             "name": snapshot_name,
             "include_temporary": include_temporary,
+            "supplement_manifest": (
+                str(supplement_manifest) if supplement_manifest else None
+            ),
             "file_entry_count": len(entries),
             "source_bytes": total_source_bytes,
             "snapshot_bytes": copied_bytes,
@@ -378,6 +402,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--include-temporary", action="store_true")
     parser.add_argument(
+        "--supplement-manifest",
+        type=Path,
+        help=(
+            "copy only currently registered private paths absent from an "
+            "earlier snapshot manifest; intended for a coverage supplement, "
+            "not for detecting changed files"
+        ),
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="copy data; without this flag only print the planned scope",
@@ -391,6 +424,10 @@ def main(argv: list[str] | None = None) -> int:
     files = collect_private_files(
         ROOT, registry, include_temporary=args.include_temporary
     )
+    supplement_manifest = args.supplement_manifest
+    if supplement_manifest:
+        supplement_manifest = supplement_manifest.expanduser().resolve()
+        files = exclude_manifest_paths(files, supplement_manifest)
     total_bytes = sum(
         (ROOT / rel_path).stat().st_size
         for rel_path in files
@@ -410,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
         args.snapshot_name,
         registry,
         include_temporary=args.include_temporary,
+        selected_files=files,
+        supplement_manifest=supplement_manifest,
     )
     return 0
 

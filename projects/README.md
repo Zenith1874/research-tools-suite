@@ -45,6 +45,16 @@
 
 快照使用 SQLite online backup 生成一致数据库副本；普通文件通过 .part 断点文件复制，并在私有 manifest 中记录 SHA-256。默认不包括 tmp/；只有明确需要保存临时取证或中间产物时才增加 --include-temporary。
 
+如果项目边界审计后来发现新的私有路径，可在不改动已完成主快照的情况下生成覆盖补充：
+
+    python scripts/create_private_migration_snapshot.py \
+      --destination <external-private-backup-root> \
+      --snapshot-name research-tools-private-supplement-YYYYMMDD \
+      --supplement-manifest <earlier-snapshot>/migration-manifest.json \
+      --execute
+
+补充模式只选择旧 manifest 中尚未出现的已注册私有路径；它用于补齐覆盖，不用于判断旧路径内容是否后来发生变化。
+
 ## 以后如何提交
 
 每次任务建立短期分支，仅暂存本次实际修改：

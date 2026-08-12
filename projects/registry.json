@@ -27,6 +27,10 @@
       ".secrets",
       ".env",
       ".env.*",
+      ".agents/**",
+      ".claude/**",
+      ".codex/**",
+      ".playwright-cli/**",
       "*.db",
       "*.db-wal",
       "*.db-shm",
@@ -34,11 +38,26 @@
       "*.bak-*",
       "*.log",
       "backups/**",
+      "data/classify_batch.json",
+      "data/classify_results.json",
+      "logs/**",
       "output/**",
       "outputs/*.db",
       "outputs/*.jsonl",
       "outputs/*.log",
+      "outputs/research-navigation-qa/**",
+      "pbc_found_links.json",
+      "pbc_search_found.json",
+      "static/*.bak-*",
       "tmp/**"
+    ],
+    "disposable_globs": [
+      "**/__pycache__/**",
+      "**/*.pyc",
+      "NUL",
+      "claudetmp*",
+      "tmp*.json",
+      "tmp*.txt"
     ]
   },
   "projects": [

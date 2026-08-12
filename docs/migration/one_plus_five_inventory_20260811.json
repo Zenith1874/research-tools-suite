@@ -1,16 +1,15 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-12T01:38:26.344725+00:00",
+  "generated_at": "2026-08-12T01:56:45.107093+00:00",
   "layout": "one_plus_five",
   "git": {
     "branch": "codex/one-plus-five-migration",
-    "commit": "pending_current_migration_commit",
+    "commit": "bf2ec3ce53d7eadc9e2fbb6e65b8133ec20ffca0",
     "origin": "https://github.com/Zenith1874/research-tools-suite.git",
-    "tracked_file_count": 150,
-    "changed_tracked_file_count": 53,
-    "untracked_file_count": 107,
-    "ignored_file_count": 4732,
-    "commit_at_inventory": "5783bde1a405cb746fa336cf0afda36f55579a4f"
+    "tracked_file_count": 258,
+    "changed_tracked_file_count": 7,
+    "untracked_file_count": 0,
+    "ignored_file_count": 4730
   },
   "projects": [
     {
@@ -29,7 +28,7 @@
         "/housing-scenario"
       ],
       "source_file_count": 65,
-      "source_bytes": 1720797
+      "source_bytes": 1720582
     },
     {
       "id": "us_macro",
@@ -58,7 +57,7 @@
         "/audio-transcription"
       ],
       "source_file_count": 19,
-      "source_bytes": 392934
+      "source_bytes": 392933
     },
     {
       "id": "personal_tools",
@@ -68,14 +67,20 @@
         "/cardcookie-monitor"
       ],
       "source_file_count": 9,
-      "source_bytes": 169643
+      "source_bytes": 169641
     }
   ],
   "private_boundary": {
-    "matched_file_count": 4239,
-    "matched_bytes": 9631310785,
+    "matched_file_count": 4592,
+    "matched_bytes": 9647936884,
     "tracked_private_files": [],
     "unignored_private_file_count": 0
+  },
+  "ignored_policy": {
+    "ignored_file_count": 4730,
+    "registered_private_file_count": 4592,
+    "disposable_only_file_count": 138,
+    "unexplained_file_count": 0
   },
   "public_boundary": {
     "max_file_bytes": 20971520,

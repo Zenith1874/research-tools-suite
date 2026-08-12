@@ -141,6 +141,23 @@ class PrivateSnapshotTests(unittest.TestCase):
                     self._registry(),
                 )
 
+    def test_supplement_filter_keeps_only_newly_covered_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "baseline.json"
+            manifest.write_text(
+                json.dumps({"files": [{"path": "data/already.bin"}]}),
+                encoding="utf-8",
+            )
+            files = {
+                "data/already.bin": {"shared"},
+                "logs/new.log": {"shared"},
+            }
+            self.assertEqual(
+                {"logs/new.log": {"shared"}},
+                snapshot.exclude_manifest_paths(files, manifest),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

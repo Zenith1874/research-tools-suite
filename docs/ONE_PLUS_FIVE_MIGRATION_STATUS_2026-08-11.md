@@ -60,7 +60,10 @@ Git 保存源码、页面、测试、文档、依赖和小型可复现输入。�
 - 运行服务：Windows PID 72852；/api/health 和五个项目域的 17 个页面全部 HTTP 200；
 - 私有快照：仓库外的 Windows Documents/research-tools-private-backups/research-tools-private-20260811；
 - 私有快照 manifest：2,007 个条目，约 7.6 GiB，默认排除 tmp/；
+- 补充私有快照：research-tools-private-supplement-20260811，355 个条目、15.9 MiB；保存本机工具设置、Playwright/导航 QA 证据、运行日志、分类中间文件和旧 HTML 备份；
 - 快照复核：1,999 个实际快照文件均存在且大小匹配，6 个 SQLite 快照 quick_check=ok；
-- Windows ACL：快照根目录仅当前用户、SYSTEM 和 Administrators 具有权限。
+- 两个 manifest 合计覆盖 2,362 个私有路径、2,354 个实际文件，0 缺失、0 大小不符；
+- 与 Git ignored 文件做差后，除 tmp/、Python 缓存、NUL 和三个明确的临时重复文件外，未留下无法解释的未备份路径；
+- Windows ACL：两个快照根目录均仅当前用户、SYSTEM 和 Administrators 具有权限。
 
 Git commit、远端分支和草稿 PR 在发布完成后记录于 PR。

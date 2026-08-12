@@ -187,6 +187,9 @@ def build_report(repo_root: Path, registry: dict) -> dict:
     for project in registry["projects"]:
         private_patterns.extend(project.get("private_data_globs") or [])
     private_matches = collect_matches(repo_root, private_patterns)
+    disposable_matches = collect_matches(
+        repo_root, shared.get("disposable_globs") or []
+    )
 
     tracked_private = sorted(tracked & private_matches)
     if tracked_private:
@@ -206,6 +209,20 @@ def build_report(repo_root: Path, registry: dict) -> dict:
         if len(unignored_private) > 100:
             errors.append(
                 f"{len(unignored_private) - 100} additional private paths are not ignored"
+            )
+
+    unexplained_ignored = sorted(
+        ignored - private_matches - disposable_matches
+    )
+    if unexplained_ignored:
+        errors.extend(
+            f"ignored path has no migration policy: {path}"
+            for path in unexplained_ignored[:100]
+        )
+        if len(unexplained_ignored) > 100:
+            errors.append(
+                f"{len(unexplained_ignored) - 100} additional ignored paths "
+                "have no migration policy"
             )
 
     max_public_bytes = int(
@@ -280,6 +297,14 @@ def build_report(repo_root: Path, registry: dict) -> dict:
             "matched_bytes": private_bytes,
             "tracked_private_files": tracked_private,
             "unignored_private_file_count": len(unignored_private),
+        },
+        "ignored_policy": {
+            "ignored_file_count": len(ignored),
+            "registered_private_file_count": len(ignored & private_matches),
+            "disposable_only_file_count": len(
+                (ignored - private_matches) & disposable_matches
+            ),
+            "unexplained_file_count": len(unexplained_ignored),
         },
         "public_boundary": {
             "max_file_bytes": max_public_bytes,
