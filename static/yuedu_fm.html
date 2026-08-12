@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>悦读FM · 本地听</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <script src="/research-nav.js" defer></script>
+  <style>
+    :root{--ink:#ece7dc;--muted:#aaa69d;--paper:#151515;--card:#1d1d1d;--line:#34322e;--accent:#dc8a5b;--accent2:#8ab0a2;--danger:#d36f64}
+    *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+    button,input,select{font:inherit}.shell{max-width:1240px;margin:auto;padding:32px 24px 140px}.hero{display:grid;grid-template-columns:1fr auto;gap:28px;align-items:end;padding:36px 0 28px;border-bottom:1px solid var(--line)}
+    .eyebrow{color:var(--accent);letter-spacing:.14em;text-transform:uppercase;font-size:12px}.hero h1{font:500 clamp(38px,6vw,76px)/1.02 Georgia,"Noto Serif SC",serif;margin:8px 0 14px}.hero p{max-width:720px;color:var(--muted);margin:0}.source{color:var(--muted);font-size:13px}.source a{color:var(--accent2)}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.btn{border:1px solid var(--line);background:#242321;color:var(--ink);border-radius:999px;padding:10px 17px;cursor:pointer}.btn.primary{background:var(--accent);border-color:var(--accent);color:#21130d;font-weight:700}.btn:disabled{opacity:.45;cursor:not-allowed}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin:24px 0}.stat{background:var(--card);padding:18px}.stat b{display:block;font:500 25px/1.1 Georgia,serif}.stat span{color:var(--muted);font-size:12px}.sync{border:1px solid var(--line);background:#191919;padding:15px 18px;margin-bottom:24px}.sync-line{display:flex;justify-content:space-between;gap:18px}.sync small{color:var(--muted)}.bar{height:4px;background:#2d2b28;margin-top:12px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--accent2);transition:width .25s}
+    .toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:10px;position:sticky;top:8px;z-index:5;background:rgba(21,21,21,.94);backdrop-filter:blur(12px);padding:10px 0}.toolbar input,.toolbar select{width:100%;border:1px solid var(--line);background:#1c1c1c;color:var(--ink);border-radius:9px;padding:10px 12px}
+    .count{color:var(--muted);margin:12px 0 18px}.episodes{display:grid;gap:12px}.episode{display:grid;grid-template-columns:92px 1fr auto;gap:18px;border-top:1px solid var(--line);padding:18px 0}.cover{width:92px;height:92px;background:linear-gradient(145deg,#6c4432,#233b35);object-fit:cover;border-radius:5px}.episode h2{font:500 20px/1.3 Georgia,"Noto Serif SC",serif;margin:0 0 4px}.meta{color:var(--muted);font-size:12px}.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 7px;margin-right:6px;color:var(--accent2)}.desc{white-space:pre-wrap;color:#c8c2b8;margin:12px 0 0;max-height:4.8em;overflow:hidden}.episode.open .desc{max-height:none}.episode-actions{display:flex;align-items:center;gap:8px}.play{width:44px;height:44px;border-radius:50%;border:1px solid var(--accent);color:var(--accent);background:transparent;cursor:pointer}.play:disabled{border-color:var(--line);color:#666}.more{border:0;background:none;color:var(--accent2);cursor:pointer;padding:6px 0}
+    .empty{padding:70px 20px;text-align:center;color:var(--muted);border:1px dashed var(--line)}.player{position:fixed;z-index:20;left:0;right:0;bottom:0;background:rgba(20,20,20,.97);border-top:1px solid var(--line);padding:13px 24px}.player-inner{max-width:1240px;margin:auto;display:grid;grid-template-columns:minmax(180px,340px) 1fr;align-items:center;gap:22px}.now{overflow:hidden}.now b,.now span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.now span{color:var(--muted);font-size:12px}.player audio{width:100%;height:42px}
+    @media(max-width:760px){.shell{padding:20px 15px 150px}.hero{grid-template-columns:1fr}.actions{justify-content:flex-start}.stats{grid-template-columns:1fr 1fr}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.episode{grid-template-columns:68px 1fr}.cover{width:68px;height:68px}.episode-actions{grid-column:2}.player-inner{grid-template-columns:1fr}.now{display:none}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <section class="hero">
+    <div><div class="eyebrow">Entertainment · Offline archive</div><h1>悦读FM</h1><p id="channel-summary">倾听文字的声音。标题、节目文字、封面与音频保存在本机，断网后仍可播放。</p><div class="source">来源：<a id="source-link" href="https://redcircle.com/shows/yuedu-fm" target="_blank" rel="noopener">RedCircle 公开 RSS</a> + 可公开访问的微信公众号文章 · 版权归原作者/节目方所有，仅作个人本地收听。</div></div>
+    <div class="actions"><button class="btn" id="metadata-sync">同步目录与封面</button><button class="btn primary" id="full-sync">同步全部到本地</button></div>
+  </section>
+
+  <section class="stats" aria-label="本地资料统计">
+    <div class="stat"><b id="episode-total">—</b><span>合并单集总数</span></div>
+    <div class="stat"><b id="audio-local">—</b><span>本地音频</span></div>
+    <div class="stat"><b id="image-local">—</b><span>本地封面</span></div>
+    <div class="stat"><b id="storage-total">—</b><span>本地音频容量</span></div>
+  </section>
+
+  <section class="sync" id="sync-box" aria-live="polite">
+    <div class="sync-line"><span id="sync-message">正在读取本地目录…</span><small id="sync-detail"></small></div>
+    <div class="bar"><i id="sync-progress"></i></div>
+  </section>
+
+  <section class="toolbar">
+    <input id="search" type="search" placeholder="搜索标题、作者或节目文字" autocomplete="off">
+    <select id="availability" aria-label="下载状态"><option value="all">全部单集</option><option value="local">仅本地可听</option><option value="missing">尚未下载</option></select>
+    <select id="sort" aria-label="排序"><option value="feed">RSS 顺序</option><option value="newest">日期较新</option><option value="oldest">日期较早</option><option value="title">标题</option></select>
+  </section>
+  <div class="count" id="result-count"></div>
+  <section class="episodes" id="episodes"><div class="empty">正在载入…</div></section>
+</main>
+
+<aside class="player" aria-label="本地播放器">
+  <div class="player-inner"><div class="now"><b id="now-title">尚未播放</b><span id="now-meta">选择一集已下载音频</span></div><audio id="audio-player" controls preload="metadata"></audio></div>
+</aside>
+
+<script>
+(function(){
+  'use strict';
+  const state={library:null,episodes:[],status:null,poll:null};
+  const $=id=>document.getElementById(id);
+  const esc=value=>String(value||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const bytes=value=>{const n=Number(value||0);if(!n)return '0 B';const u=['B','KiB','MiB','GiB'];const i=Math.min(u.length-1,Math.floor(Math.log(n)/Math.log(1024)));return (n/Math.pow(1024,i)).toFixed(i>1?2:0)+' '+u[i]};
+  const duration=value=>{let s=Number(value||0);const h=Math.floor(s/3600);s%=3600;const m=Math.floor(s/60);s=Math.floor(s%60);return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`};
+  const date=value=>value?new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'short',day:'numeric'}).format(new Date(value)):'日期未知';
+
+  async function api(url,options){const response=await fetch(url,Object.assign({cache:'no-store'},options||{}));let data={};try{data=await response.json()}catch(error){}if(!response.ok)throw new Error(data.error||('HTTP '+response.status));return data}
+
+  async function load(){
+    try{
+      const [library,status]=await Promise.all([api('/api/yuedu-fm/library'),api('/api/yuedu-fm/status')]);
+      state.library=library;state.episodes=library.episodes||[];state.status=status;paintSummary();paintStatus();render();
+      if(status.state==='running')startPolling();
+    }catch(error){$('episodes').innerHTML='<div class="empty">'+esc(error.message)+'</div>';$('sync-message').textContent='本地资料暂时不可用'}
+  }
+
+  function paintSummary(){
+    const lib=state.library||{},s=lib.stats||{},c=lib.channel||{};
+    $('episode-total').textContent=Number(s.episode_count||0).toLocaleString();
+    $('audio-local').textContent=(s.downloaded_audio_count||0)+' / '+(s.episode_count||0);
+    $('image-local').textContent=(s.downloaded_image_count||0)+' / '+(s.episode_count||0);
+    $('storage-total').textContent=bytes(s.downloaded_audio_bytes||0);
+    if(s.wechat_imported_episode_count)$('channel-summary').textContent='已合并 RedCircle '+(s.redcircle_episode_count||0)+' 集与微信公众号 '+s.wechat_imported_episode_count+' 集；标题、文字、封面与音频均保存在本机。';
+    else if(c.summary||c.description_text)$('channel-summary').textContent=c.summary||c.description_text;
+    if(c.link)$('source-link').href=c.link;
+  }
+
+  function paintStatus(){
+    const s=state.status||{},total=Number(s.episode_total||0),done=Number(s.episode_processed||0);
+    $('sync-message').textContent=s.message||'尚未同步';
+    const sourceWarnings=Number((((state.library||{}).stats||{}).signature_invalid_audio_count)||0);
+    $('sync-detail').textContent=s.state==='running'?(done+' / '+total+' · 本轮 '+bytes(s.bytes_downloaded)):((s.errors||[]).length?((s.errors||[]).length+' 项失败'):(sourceWarnings?(sourceWarnings+' 项源文件格式警告'):''));
+    $('sync-progress').style.width=(total?Math.min(100,done/total*100):(s.state==='completed'?100:0))+'%';
+    const running=s.state==='running';$('metadata-sync').disabled=running;$('full-sync').disabled=running;
+  }
+
+  function filtered(){
+    const q=$('search').value.trim().toLocaleLowerCase(),mode=$('availability').value;
+    const rows=state.episodes.filter(e=>{
+      if(mode==='local'&&!e.audio.downloaded)return false;if(mode==='missing'&&e.audio.downloaded)return false;
+      if(!q)return true;return [e.title,e.author,e.description_text].join('\n').toLocaleLowerCase().includes(q);
+    });
+    const modeSort=$('sort').value;
+    if(modeSort==='newest')rows.sort((a,b)=>String(b.published_at).localeCompare(String(a.published_at)));
+    if(modeSort==='oldest')rows.sort((a,b)=>String(a.published_at).localeCompare(String(b.published_at)));
+    if(modeSort==='title')rows.sort((a,b)=>String(a.title).localeCompare(String(b.title),'zh-CN'));
+    return rows;
+  }
+
+  function render(){
+    const rows=filtered();$('result-count').textContent='显示 '+rows.length+' / '+state.episodes.length+' 集';
+    if(!rows.length){$('episodes').innerHTML='<div class="empty">没有匹配的单集。若尚未同步，请先同步目录。</div>';return}
+    $('episodes').innerHTML=rows.map(e=>{
+      const image=e.image.downloaded?'/api/yuedu-fm/episodes/'+e.episode_id+'/image':'';
+      const source=e.source==='wechat'?'微信':'RSS';
+      return '<article class="episode" data-id="'+e.episode_id+'">'+
+        (image?'<img class="cover" src="'+image+'" alt="" loading="lazy">':'<div class="cover"></div>')+
+        '<div><h2>'+esc(e.title||'未命名单集')+'</h2><div class="meta"><span class="badge">'+source+'</span>'+esc(date(e.published_at))+' · '+esc(duration(e.duration_seconds))+' · '+esc(e.author||'悦读FM')+' · '+(e.audio.downloaded?(e.audio.signature_valid===false?'本地文件 · 源文件格式异常':'本地可听'):('待下载 '+bytes(e.audio.declared_bytes)))+'</div>'+
+        '<div class="desc">'+esc(e.description_text||'暂无节目文字')+'</div><button class="more" type="button">展开文字</button></div>'+
+        '<div class="episode-actions"><button class="play" type="button" '+(e.audio.downloaded?'':'disabled title="音频尚未下载"')+' aria-label="播放 '+esc(e.title)+'">▶</button></div></article>';
+    }).join('');
+  }
+
+  function play(id){const e=state.episodes.find(row=>row.episode_id===id);if(!e||!e.audio.downloaded)return;const player=$('audio-player');player.src='/api/yuedu-fm/episodes/'+id+'/audio';$('now-title').textContent=e.title||'未命名单集';$('now-meta').textContent=date(e.published_at)+' · '+duration(e.duration_seconds);player.play().catch(()=>{})}
+
+  async function sync(downloadAudio){
+    const message=downloadAudio?'将按顺序下载全部音频（RSS 当前约 4.3 GiB），可中断后续传。继续吗？':'将同步完整目录、节目文字和全部封面，不下载音频。继续吗？';
+    if(!window.confirm(message))return;
+    try{state.status=await api('/api/yuedu-fm/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({download_audio:downloadAudio})});paintStatus();startPolling()}catch(error){$('sync-message').textContent=error.message}
+  }
+
+  function startPolling(){if(state.poll)return;state.poll=setInterval(async()=>{try{state.status=await api('/api/yuedu-fm/status');paintStatus();if(state.status.state!=='running'){clearInterval(state.poll);state.poll=null;const library=await api('/api/yuedu-fm/library');state.library=library;state.episodes=library.episodes||[];paintSummary();render()}}catch(error){}},1500)}
+
+  $('episodes').addEventListener('click',event=>{const article=event.target.closest('.episode');if(!article)return;if(event.target.closest('.play'))play(article.dataset.id);if(event.target.closest('.more')){article.classList.toggle('open');event.target.textContent=article.classList.contains('open')?'收起文字':'展开文字'}});
+  ['search','availability','sort'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));
+  $('metadata-sync').addEventListener('click',()=>sync(false));$('full-sync').addEventListener('click',()=>sync(true));load();
+})();
+</script>
+</body>
+</html>

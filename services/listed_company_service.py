@@ -3,15 +3,15 @@
 
 两套来源分开标注，绝不混为一谈：
   官方   巨潮资讯网（中国证监会指定信息披露平台）——公司概况、注册地/办公地、
-         营业收入、净利润、净资产、股本。
-  第三方 东方财富——总市值、总资产、总负债。巨潮公开接口不提供这三项，
-         其完整数据 API 需要授权 token，本项目不绕过。
+         行业、上市日期与股本。
+  第三方 东方财富——总市值及带真实报告期的利润表、资产负债表。巨潮公开的
+         头部数据接口不提供可可靠识别报告期的完整三表，本项目不猜字段。
 
 城市归属存双口径：注册地与办公地。两者常常不同（茅台注册仁怀、格力注册珠海，
 更极端的是为税收优惠注册在霍尔果斯/西藏而总部在北上深），只用注册地会系统性
 扭曲城市产业实力，因此都存下来由使用方选择。
 
-营业收入与净利润两边都有，正好互为校验；差异超过容差的记入 data_source_conflicts。
+营业收入与净利润只用最新完整年度，避免把一季度累计流量与全年 GDP 相除。
 """
 import re
 import sqlite3
@@ -163,6 +163,12 @@ def ensure_tables(conn):
                     ON listed_company_observations(indicator_code, period)''')
     conn.execute('''CREATE INDEX IF NOT EXISTS idx_listed_companies_city
                     ON listed_companies(office_city, register_city)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS listed_company_fetch_status (
+      code TEXT NOT NULL, fetch_kind TEXT NOT NULL,
+      start_period TEXT NOT NULL, end_period TEXT NOT NULL,
+      status TEXT NOT NULL, records_stored INTEGER NOT NULL DEFAULT 0,
+      error TEXT, updated_at TEXT NOT NULL,
+      PRIMARY KEY(code,fetch_kind,start_period,end_period))''')
     conn.commit()
 
 
@@ -287,27 +293,43 @@ def fetch_market_caps(page_size=100):
 
 
 def _market_symbol(code):
-    return ('SH' if code.startswith(('6', '9')) else
-            'BJ' if code.startswith(('4', '8')) else 'SZ') + code
+    # 北交所 2024 年起启用 920-929 新号段；必须先于上海 B 股的 9xx 判断，
+    # 否则 92xxxx 会被错误拼成 SH92xxxx，东财 F10 只能返回空数据。
+    return ('BJ' if code.startswith(('4', '8', '92')) else
+            'SH' if code.startswith(('6', '9')) else 'SZ') + code
 
 
-def _fetch_em_statement(code, dates_url, detail_url, field_map):
+def _select_report_period(rows, annual_only=False):
+    """从东财报告期清单选择可比期间；年度流量只取 12 月 31 日。"""
+    periods = []
+    for row in rows or []:
+        period = str(row.get('REPORT_DATE') or '')[:10]
+        if not period or (annual_only and not period.endswith('-12-31')):
+            continue
+        periods.append(period)
+    return max(periods) if periods else None
+
+
+def _fetch_em_statement(code, dates_url, detail_url, field_map, annual_only=False,
+                        preferred_period=None):
     """东财 F10 报表通用取数：companyType 依公司类型不同，逐个探测。
 
     与巨潮头部数据不同，这里的 REPORT_DATE 是真正的报告期，可安全用作 period。
     """
     symbol = _market_symbol(code)
     for company_type in (4, 3, 2, 1):
-        try:
-            dates = _get_json(dates_url,
-                              {'companyType': company_type, 'reportDateType': 0,
-                               'code': symbol}, headers=EASTMONEY_HEADERS)
-        except Exception:
-            continue
-        rows = dates.get('data') or []
-        if not rows:
-            continue
-        period = str(rows[0].get('REPORT_DATE') or '')[:10]
+        period = preferred_period
+        if not period:
+            try:
+                dates = _get_json(dates_url,
+                                  {'companyType': company_type, 'reportDateType': 0,
+                                   'code': symbol}, headers=EASTMONEY_HEADERS)
+            except Exception:
+                continue
+            rows = dates.get('data') or []
+            if not rows:
+                continue
+            period = _select_report_period(rows, annual_only=annual_only)
         if not period:
             continue
         detail = _get_json(detail_url,
@@ -335,11 +357,50 @@ def fetch_balance_sheet(code):
                                 ('net_assets', 'TOTAL_PARENT_EQUITY')))
 
 
-def fetch_profit_sheet(code):
-    """净利润取归母口径，与市场惯用的"净利润"一致。"""
+def fetch_profit_sheet(code, annual_period=None):
+    """取最新完整年度利润表；净利润使用归母口径。"""
     return _fetch_em_statement(code, EASTMONEY_PROFIT_DATES, EASTMONEY_PROFIT,
                                (('revenue', 'TOTAL_OPERATE_INCOME'),
-                                ('net_profit', 'PARENT_NETPROFIT')))
+                                ('net_profit', 'PARENT_NETPROFIT')),
+                               annual_only=True, preferred_period=annual_period)
+
+
+def _parse_profit_history_records(records, company_type=None):
+    """把东财多年度利润表响应转为按报告期排列的标准记录。"""
+    out = []
+    for record in records or []:
+        period = str(record.get('REPORT_DATE') or '')[:10]
+        if not period.endswith('-12-31'):
+            continue
+        values = {}
+        for indicator, field in (('revenue', 'TOTAL_OPERATE_INCOME'),
+                                 ('net_profit', 'PARENT_NETPROFIT')):
+            value = record.get(field)
+            if isinstance(value, (int, float)):
+                values[indicator] = float(value)
+        if values:
+            out.append({'period': period, 'values': values,
+                        'company_type': company_type})
+    return sorted(out, key=lambda item: item['period'])
+
+
+def fetch_profit_history(code, start_year=2021, end_year=2025):
+    """一次请求读取多期完整年度利润表，避免逐年重复访问。"""
+    if int(start_year) > int(end_year):
+        raise ValueError('start_year 不能晚于 end_year')
+    dates = ','.join(f'{year}-12-31'
+                     for year in range(int(start_year), int(end_year) + 1))
+    symbol = _market_symbol(code)
+    for company_type in (4, 3, 2, 1):
+        payload = _get_json(
+            EASTMONEY_PROFIT,
+            {'companyType': company_type, 'reportDateType': 0,
+             'reportType': 1, 'dates': dates, 'code': symbol},
+            headers=EASTMONEY_HEADERS)
+        parsed = _parse_profit_history_records(payload.get('data') or [], company_type)
+        if parsed:
+            return parsed
+    return []
 
 
 def upsert_company(conn, row, now):
@@ -459,11 +520,11 @@ def update_market_caps(db_path):
 
 def update_financials(db_path, cities=None, city_scope='office_city',
                       limit=None, include_balance=True, progress_every=50,
-                      resume=True):
+                      resume=True, include_headstrip=True, annual_period=None):
     """第三步之二：目标城市公司的财务。
 
-    巨潮给营收/净利/净资产（official），东财补总资产/总负债（third_party）。
-    只跑目标城市的公司，避免为十城分析拉全市场资产负债表。
+    巨潮只给经核实的股本；东财提供最新完整年度利润表和最新资产负债表，均标
+    third_party。只跑目标城市的公司，避免为十城分析拉全市场财务报表。
     """
     if city_scope not in ('office_city', 'register_city'):
         raise ValueError('city_scope 必须是 office_city 或 register_city')
@@ -478,10 +539,17 @@ def update_financials(db_path, cities=None, city_scope='office_city',
         targets = [dict(zip(('code', 'name'), row))
                    for row in conn.execute(sql + ' ORDER BY code', args)]
         if resume:
-            done = {row[0] for row in conn.execute(
-                '''SELECT DISTINCT code FROM listed_company_observations
-                   WHERE indicator_code='revenue' AND source_name=?''',
-                (SOURCE_EASTMONEY,))}
+            if annual_period:
+                done_rows = conn.execute(
+                    '''SELECT DISTINCT code FROM listed_company_observations
+                       WHERE indicator_code='revenue' AND source_name=? AND period=?''',
+                    (SOURCE_EASTMONEY, annual_period))
+            else:
+                done_rows = conn.execute(
+                    '''SELECT DISTINCT code FROM listed_company_observations
+                       WHERE indicator_code='revenue' AND source_name=?
+                       AND period LIKE '%-12-31' ''', (SOURCE_EASTMONEY,))
+            done = {row[0] for row in done_rows}
             targets = [item for item in targets if item['code'] not in done]
         if limit:
             targets = targets[:int(limit)]
@@ -490,34 +558,37 @@ def update_financials(db_path, cities=None, city_scope='office_city',
         errors = []
         for index, item in enumerate(targets, 1):
             code, name = item['code'], item['name']
-            try:
-                head = fetch_headstrip(code)
-                if head:
-                    for indicator, value in head['values'].items():
-                        upsert_observation(
-                            conn, code, name, indicator, head['period'], value,
-                            'official', SOURCE_CNINFO, CNINFO_HEADSTRIP,
-                            '巨潮头部数据接口直接值；最新披露期。', now)
-                        counts['cninfo'] += 1
-            except Exception as exc:
-                errors.append(f'{code} 巨潮: {exc}')
-            if include_balance:
-                for fetcher, label, url in (
-                        (fetch_balance_sheet, '资产负债表', EASTMONEY_BALANCE),
-                        (fetch_profit_sheet, '利润表', EASTMONEY_PROFIT)):
-                    try:
-                        statement = fetcher(code)
-                        if not statement:
-                            continue
-                        for indicator, value in statement['values'].items():
+            if include_headstrip:
+                try:
+                    head = fetch_headstrip(code)
+                    if head:
+                        for indicator, value in head['values'].items():
                             upsert_observation(
-                                conn, code, name, indicator, statement['period'], value,
-                                'third_party', SOURCE_EASTMONEY, url,
-                                f"东方财富 F10 {label}（companyType="
-                                f"{statement['company_type']}）；报告期为披露口径。", now)
-                            counts['eastmoney'] += 1
-                    except Exception as exc:
-                        errors.append(f'{code} 东财{label}: {exc}')
+                                conn, code, name, indicator, head['period'], value,
+                                'official', SOURCE_CNINFO, CNINFO_HEADSTRIP,
+                                '巨潮头部数据接口直接值；最新披露期。', now)
+                            counts['cninfo'] += 1
+                except Exception as exc:
+                    errors.append(f'{code} 巨潮: {exc}')
+            profit_fetcher = lambda target_code: fetch_profit_sheet(
+                target_code, annual_period=annual_period)
+            fetchers = [(profit_fetcher, '年度利润表', EASTMONEY_PROFIT)]
+            if include_balance:
+                fetchers.insert(0, (fetch_balance_sheet, '资产负债表', EASTMONEY_BALANCE))
+            for fetcher, label, url in fetchers:
+                try:
+                    statement = fetcher(code)
+                    if not statement:
+                        continue
+                    for indicator, value in statement['values'].items():
+                        upsert_observation(
+                            conn, code, name, indicator, statement['period'], value,
+                            'third_party', SOURCE_EASTMONEY, url,
+                            f"东方财富 F10 {label}（companyType="
+                            f"{statement['company_type']}）；报告期为披露口径。", now)
+                        counts['eastmoney'] += 1
+                except Exception as exc:
+                    errors.append(f'{code} 东财{label}: {exc}')
             conn.commit()          # 每家一提交，写锁只在毫秒级持有
             if index % progress_every == 0:
                 print(f'  …{index}/{len(targets)} 巨潮{counts["cninfo"]} '
@@ -529,8 +600,97 @@ def update_financials(db_path, cities=None, city_scope='office_city',
             'records': counts, 'error_count': len(errors), 'errors': errors[:20]}
 
 
+def _upsert_fetch_status(conn, code, fetch_kind, start_period, end_period,
+                         status, records_stored, error, now):
+    conn.execute('''INSERT INTO listed_company_fetch_status
+      (code,fetch_kind,start_period,end_period,status,records_stored,error,updated_at)
+      VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(code,fetch_kind,start_period,end_period) DO UPDATE SET
+        status=excluded.status,records_stored=excluded.records_stored,
+        error=excluded.error,updated_at=excluded.updated_at''',
+      (code, fetch_kind, start_period, end_period, status,
+       int(records_stored or 0), error, now))
+
+
+def update_financial_history(db_path, cities=None, city_scope='office_city',
+                             start_year=2021, end_year=2025, limit=None,
+                             resume=True, retry_missing=False,
+                             progress_every=50):
+    """回填目标城市公司完整年度营收/归母净利润；每家公司一次多期请求。"""
+    if city_scope not in ('office_city', 'register_city'):
+        raise ValueError('city_scope 必须是 office_city 或 register_city')
+    start_year, end_year = int(start_year), int(end_year)
+    if start_year > end_year:
+        raise ValueError('start_year 不能晚于 end_year')
+    start_period, end_period = f'{start_year}-12-31', f'{end_year}-12-31'
+    fetch_kind = 'profit_history'
+    conn = _connect(db_path)
+    try:
+        ensure_tables(conn)
+        sql = f'SELECT code,name FROM listed_companies WHERE {city_scope} IS NOT NULL'
+        args = []
+        if cities:
+            sql += f" AND {city_scope} IN ({','.join('?' for _ in cities)})"
+            args = list(cities)
+        targets = [dict(zip(('code', 'name'), row))
+                   for row in conn.execute(sql + ' ORDER BY code', args)]
+        if resume:
+            terminal_statuses = ('ok',) if retry_missing else ('ok', 'missing')
+            done = {row[0] for row in conn.execute(
+                f'''SELECT code FROM listed_company_fetch_status
+                    WHERE fetch_kind=? AND start_period=? AND end_period=?
+                    AND status IN ({','.join('?' for _ in terminal_statuses)})''',
+                (fetch_kind, start_period, end_period, *terminal_statuses))}
+            targets = [item for item in targets if item['code'] not in done]
+        if limit:
+            targets = targets[:int(limit)]
+        stored, companies_ok, missing, errors = 0, 0, 0, []
+        for index, item in enumerate(targets, 1):
+            code, name = item['code'], item['name']
+            now = datetime.now().isoformat()
+            try:
+                records = fetch_profit_history(code, start_year, end_year)
+                company_stored = 0
+                for statement in records:
+                    for indicator, value in statement['values'].items():
+                        upsert_observation(
+                            conn, code, name, indicator, statement['period'], value,
+                            'third_party', SOURCE_EASTMONEY, EASTMONEY_PROFIT,
+                            f"东方财富 F10 多年度利润表（companyType="
+                            f"{statement['company_type']}）；完整年度累计值。", now)
+                        company_stored += 1
+                status = 'ok' if company_stored else 'missing'
+                _upsert_fetch_status(
+                    conn, code, fetch_kind, start_period, end_period,
+                    status, company_stored, None, now)
+                stored += company_stored
+                companies_ok += bool(company_stored)
+                missing += not company_stored
+            except Exception as exc:
+                message = str(exc)
+                _upsert_fetch_status(
+                    conn, code, fetch_kind, start_period, end_period,
+                    'error', 0, message[:1000], now)
+                errors.append(f'{code}: {message}')
+            conn.commit()
+            if index % progress_every == 0:
+                print(f'  …{index}/{len(targets)} 公司有值{companies_ok} '
+                      f'缺失{missing} 记录{stored} 失败{len(errors)}', flush=True)
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        'success': stored > 0 or (not targets and resume),
+        'targets': len(targets), 'companies_with_data': companies_ok,
+        'missing': missing, 'records': stored,
+        'start_period': start_period, 'end_period': end_period,
+        'error_count': len(errors), 'errors': errors[:20],
+    }
+
+
 AGGREGATE_INDICATORS = ('market_cap', 'revenue', 'net_profit', 'net_assets',
                         'total_assets', 'total_liabilities')
+ANNUAL_FLOW_INDICATORS = ('revenue', 'net_profit')
 # 少数停牌/退市公司的"最新"报表停在数年前（实测有 2013、2017 年的）。
 # 金额虽小，但把 2013 年的报表和 2026 年的加进同一个合计属于口径错误，
 # 因此按报告期下限剔除，并在结果里报告剔除了多少家。
@@ -550,6 +710,8 @@ def _latest_by_code(conn, indicator, period_floor=STALE_REPORT_FLOOR):
     chosen, stale = {}, set()
     apply_floor = period_floor and indicator not in PERIOD_FLOOR_EXEMPT
     for code, name, period, value, status, source in rows:
+        if indicator in ANNUAL_FLOW_INDICATORS and not period.endswith('-12-31'):
+            continue
         if apply_floor and period < period_floor:
             stale.add(code)
             continue
@@ -563,6 +725,103 @@ def _latest_by_code(conn, indicator, period_floor=STALE_REPORT_FLOOR):
     return chosen, stale - set(chosen)
 
 
+def _concentration_summary(entries, company_count, top_n=10):
+    """城市聚合的头部贡献与 HHI；只在该指标有正值的公司中计算。"""
+    valid = [dict(item) for item in entries if item.get('value', 0) > 0]
+    valid.sort(key=lambda item: -item['value'])
+    total = sum(item['value'] for item in valid)
+    if not total:
+        return {
+            'n_obs': 0, 'company_count': company_count, 'coverage_pct': 0.0,
+            'top1_share_pct': None, 'top5_share_pct': None, 'hhi': None,
+            'top_companies': [],
+        }
+    shares = [item['value'] / total for item in valid]
+    top_companies = []
+    for item, share in zip(valid[:top_n], shares[:top_n]):
+        top_companies.append({
+            'code': item.get('code'), 'name': item.get('name'),
+            'industry': item.get('industry'), 'category': item.get('category'),
+            'office_city': item.get('office_city'),
+            'register_city': item.get('register_city'),
+            'period': item.get('period'), 'data_status': item.get('data_status'),
+            'value_yi': round(item['value'] / 1e8, 4),
+            'share_pct': round(share * 100, 2),
+        })
+    return {
+        'n_obs': len(valid), 'company_count': company_count,
+        'coverage_pct': round(len(valid) / company_count * 100, 2)
+        if company_count else 0.0,
+        'top1_share_pct': round(shares[0] * 100, 2),
+        'top5_share_pct': round(sum(shares[:5]) * 100, 2),
+        'hhi': round(sum(share * share for share in shares) * 10000, 2),
+        'top_companies': top_companies,
+        'method': 'HHI=各公司占该城市已覆盖公司指标合计的份额平方和×10000。',
+    }
+
+
+def _annual_values_by_code(conn, indicator, start_year=2021):
+    """年度流量按公司/年份选一条；同年仍坚持 official 优先。"""
+    rows = conn.execute('''SELECT code,name,period,value,data_status,source_name
+        FROM listed_company_observations
+        WHERE indicator_code=? AND period LIKE '%-12-31' AND period>=?
+        ORDER BY code,period''', (indicator, f'{int(start_year)}-12-31')).fetchall()
+    chosen = {}
+    for code, name, period, value, status, source in rows:
+        year = period[:4]
+        current = chosen.setdefault(code, {}).get(year)
+        better = (current is None
+                  or (status == 'official' and current['data_status'] != 'official'))
+        if better:
+            chosen[code][year] = {
+                'name': name, 'period': period, 'value': value,
+                'data_status': status, 'source_name': source,
+            }
+    return chosen
+
+
+def _build_city_annual_history(codes, annual_values, periods):
+    """输出可变覆盖样本和平衡样本两套城市年度聚合，利润率只用同公司交集。"""
+    codes = set(codes)
+    revenue = annual_values.get('revenue') or {}
+    profit = annual_values.get('net_profit') or {}
+
+    def row_for(period, eligible_codes=None):
+        pool = codes if eligible_codes is None else codes & set(eligible_codes)
+        revenue_codes = {code for code in pool if period in revenue.get(code, {})}
+        profit_codes = {code for code in pool if period in profit.get(code, {})}
+        matched = revenue_codes & profit_codes
+        revenue_total = sum(revenue[code][period]['value'] for code in revenue_codes)
+        profit_total = sum(profit[code][period]['value'] for code in profit_codes)
+        matched_revenue = sum(revenue[code][period]['value'] for code in matched)
+        matched_profit = sum(profit[code][period]['value'] for code in matched)
+        return {
+            'period': period,
+            'revenue_yi': round(revenue_total / 1e8, 4) if revenue_codes else None,
+            'net_profit_yi': round(profit_total / 1e8, 4) if profit_codes else None,
+            'profit_margin_pct': round(matched_profit / matched_revenue * 100, 2)
+            if matched_revenue else None,
+            'revenue_coverage': len(revenue_codes),
+            'net_profit_coverage': len(profit_codes),
+            'matched_coverage': len(matched),
+        }
+
+    balanced = {
+        code for code in codes
+        if all(period in revenue.get(code, {}) and period in profit.get(code, {})
+               for period in periods)
+    }
+    return {
+        'periods': list(periods),
+        'available': [row_for(period) for period in periods],
+        'balanced': [row_for(period, balanced) for period in periods],
+        'balanced_company_count': len(balanced),
+        'company_count': len(codes),
+        'method': ('available 为各年已有值的当前公司样本；balanced 只保留所有年份均有'
+                   '营收和净利润的当前公司。利润率在同公司交集上计算。'),
+    }
+
+
 def build_city_listed_payload(db_path, cities=None, city_scope='office_city',
                               period_floor=STALE_REPORT_FLOOR):
     """按城市汇总上市公司；同时给出与 GDP 的比值（证券化率、营收/GDP）。"""
@@ -573,13 +832,23 @@ def build_city_listed_payload(db_path, cities=None, city_scope='office_city',
     try:
         ensure_tables(conn)
         company_rows = conn.execute(
-            f'SELECT code,name,{city_scope} AS city,industry,register_city,office_city '
+            f'SELECT code,name,{city_scope} AS city,industry,category,listed_date,'
+            'register_city,office_city '
             'FROM listed_companies').fetchall()
         by_code = {row['code']: dict(row) for row in company_rows}
         latest, stale_codes = {}, set()
         for ind in AGGREGATE_INDICATORS:
             latest[ind], dropped = _latest_by_code(conn, ind, period_floor)
             stale_codes |= dropped
+        annual_values = {
+            indicator: _annual_values_by_code(conn, indicator, start_year=2021)
+            for indicator in ('revenue', 'net_profit')
+        }
+        annual_periods = sorted({
+            period for indicator_values in annual_values.values()
+            for code_values in indicator_values.values()
+            for period in code_values
+        })
         gdp = {}
         try:
             for row in conn.execute('''SELECT region_name,period,value
@@ -598,8 +867,10 @@ def build_city_listed_payload(db_path, cities=None, city_scope='office_city',
             continue
         bucket = buckets.setdefault(city, {
             'city': city, 'company_count': 0, 'with_value': {},
-            'totals': {}, 'sources': {}, 'industries': {}})
+            'totals': {}, 'sources': {}, 'periods': {}, 'industries': {},
+            'company_values': {}, 'codes': []})
         bucket['company_count'] += 1
+        bucket['codes'].append(code)
         if company.get('industry'):
             bucket['industries'][company['industry']] = \
                 bucket['industries'].get(company['industry'], 0) + 1
@@ -610,50 +881,113 @@ def build_city_listed_payload(db_path, cities=None, city_scope='office_city',
             bucket['totals'][indicator] = bucket['totals'].get(indicator, 0.0) + hit['value']
             bucket['with_value'][indicator] = bucket['with_value'].get(indicator, 0) + 1
             bucket['sources'].setdefault(indicator, set()).add(hit['data_status'])
+            period_counts = bucket['periods'].setdefault(indicator, {})
+            period_counts[hit['period']] = period_counts.get(hit['period'], 0) + 1
+            bucket['company_values'].setdefault(indicator, []).append({
+                'code': code, 'name': company.get('name') or hit.get('name'),
+                'industry': company.get('industry'), 'category': company.get('category'),
+                'office_city': company.get('office_city'),
+                'register_city': company.get('register_city'),
+                'period': hit.get('period'), 'data_status': hit.get('data_status'),
+                'value': hit.get('value'),
+            })
 
     out = []
     for city, bucket in buckets.items():
         # 上市公司数据单位为元，城市 GDP 为亿元；比值前先统一到亿元。
         city_gdp = gdp.get(city)
         totals_yi = {k: round(v / 1e8, 4) for k, v in bucket['totals'].items()}
+        report_periods = {}
+        for indicator, counts in bucket['periods'].items():
+            periods = sorted(counts)
+            report_periods[indicator] = {
+                'start': periods[0], 'end': periods[-1],
+                'n_periods': len(periods), 'counts': counts,
+            }
         derived = {}
         if city_gdp and city_gdp['value']:
-            for indicator, label in (('market_cap', 'securitisation_rate'),
-                                     ('revenue', 'listed_revenue_to_gdp')):
-                if indicator in totals_yi:
-                    derived[label] = round(totals_yi[indicator] / city_gdp['value'] * 100, 2)
+            if 'market_cap' in totals_yi:
+                derived['securitisation_rate'] = round(
+                    totals_yi['market_cap'] / city_gdp['value'] * 100, 2)
+            revenue_period = report_periods.get('revenue') or {}
+            same_annual_period = (
+                revenue_period.get('start') == revenue_period.get('end')
+                and str(revenue_period.get('end') or '').startswith(
+                    str(city_gdp['period'])[:4] + '-')
+                and str(revenue_period.get('end') or '').endswith('-12-31')
+            )
+            if 'revenue' in totals_yi and same_annual_period:
+                derived['listed_revenue_to_gdp'] = round(
+                    totals_yi['revenue'] / city_gdp['value'] * 100, 2)
         out.append({
             'city': city, 'company_count': bucket['company_count'],
             'totals_yi': totals_yi, 'coverage': bucket['with_value'],
+            'report_periods': report_periods,
             'data_statuses': {k: sorted(v) for k, v in bucket['sources'].items()},
             'top_industries': sorted(bucket['industries'].items(),
                                      key=lambda kv: -kv[1])[:5],
             'gdp_yi': city_gdp['value'] if city_gdp else None,
             'gdp_period': city_gdp['period'] if city_gdp else None,
             'derived': derived,
+            'concentration': {
+                indicator: _concentration_summary(
+                    bucket['company_values'].get(indicator, []),
+                    bucket['company_count'])
+                for indicator in ('market_cap', 'revenue')
+            },
+            'annual_history': _build_city_annual_history(
+                bucket['codes'], annual_values, annual_periods),
         })
     out.sort(key=lambda item: -(item['totals_yi'].get('market_cap') or 0))
+    comparison_cities = list(cities) if cities else sorted({
+        company.get('office_city') or company.get('register_city')
+        for company in by_code.values()
+        if company.get('office_city') or company.get('register_city')
+    })
+    scope_comparison = []
+    for city in comparison_cities:
+        office_count = sum(item.get('office_city') == city for item in by_code.values())
+        register_count = sum(item.get('register_city') == city for item in by_code.values())
+        known_both = [item for item in by_code.values()
+                      if item.get('office_city') and item.get('register_city')]
+        scope_comparison.append({
+            'city': city, 'office_count': office_count,
+            'register_count': register_count, 'delta': office_count - register_count,
+            'office_gain_from_elsewhere': sum(
+                item.get('office_city') == city and item.get('register_city') != city
+                for item in known_both),
+            'register_loss_to_elsewhere': sum(
+                item.get('register_city') == city and item.get('office_city') != city
+                for item in known_both),
+        })
     return {
         'generated_at': datetime.now().isoformat(),
         'city_scope': city_scope,
         'period_floor': period_floor,
         'stale_excluded': sorted(stale_codes),
         'cities': out,
+        'scope_comparison': scope_comparison,
         'indicator_names': INDICATOR_NAMES,
         'caveats': [
             '公司归属按地址解析：默认办公地，可切换注册地。两者常不同——'
             '茅台注册仁怀、格力注册珠海，为税收优惠注册在霍尔果斯/西藏而总部在'
             '北上深的更普遍；只用注册地会系统性扭曲城市产业实力。',
-            '营业收入、净利润、净资产来自巨潮资讯网（证监会指定披露平台），标为 official；'
-            '总市值、总资产、总负债来自东方财富，标为 third_party，两者不混。',
+            '公司地址、行业、上市日期与股本来自巨潮资讯网（证监会指定披露平台），'
+            '标为 official；总市值和财务三表来自东方财富，标为 third_party，两者不混。',
+            '营业收入与净利润只采用各公司最新完整年度（12 月 31 日）累计值，并且只在'
+            '该年度与 GDP 年份一致时计算营收/GDP；净资产、总资产、总负债采用最新报告期。',
             f'合计为最新披露期的简单加总，且只采用报告期不早于 {period_floor} 的报表；'
             '停牌或退市公司若最新报表停在数年前会被剔除，避免与当期混加。'
-            '各公司报告期仍可能不同（年报与季报并存），母公司与子公司同时上市时'
+            '资产负债表的报告期仍可能因公司披露进度不同；母公司与子公司同时上市时'
             '存在重复计入，不做抵消。',
             '总资产与总负债含金融机构：北京、上海因银行总部集中，该两项主要由'
             '金融资产构成，与制造业城市不可直接比较。',
             '证券化率＝上市公司总市值/该市 GDP，营收比＝上市公司营收合计/该市 GDP；'
             '两者分子是全国乃至全球经营的上市主体口径，分母是本地生产口径，只可横向'
             '对比城市间相对高低，不能解读为"本地经济由上市公司贡献的比例"。',
+            'Top1、Top5 与 HHI 均以该城市该指标已有值的公司合计为分母；覆盖不足时会'
+            '单列覆盖率。办公地/注册地差异只使用两类地址均成功解析的公司解释迁移方向。',
+            '历史趋势按当前仍在名录中的公司回看，存在存续者偏差，也沿用当前办公地/注册地'
+            '归属；available 样本会随年份变化，balanced 样本保持同一批五年都有值的公司。',
         ],
     }

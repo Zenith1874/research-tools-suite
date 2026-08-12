@@ -8,29 +8,37 @@
   <script src="/vendor/chart.umd.min.js"></script>
   <style>
     :root{color-scheme:dark;--bg:#07111f;--panel:#0b1829;--panel2:#0e2035;--bd:#213751;--text:#dce8f6;--muted:#8fa4bd;--blue:#5795ff;--green:#27d3b2;--yellow:#f5a623;--red:#ff6b7d;--purple:#a78bfa}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui}.wrap{max-width:1500px;margin:auto;padding:28px 22px 70px}h1{font-size:29px;margin:0 0 7px}h2{font-size:18px;margin:0}h3{font-size:14px;margin:0}.sub,.muted{color:var(--muted);line-height:1.65}.head,.row,.controls,.quick,.chips{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.actions{display:flex;gap:8px;flex-wrap:wrap}.actions a,.button,button,select,input{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;text-decoration:none;font:inherit}.button,button{cursor:pointer}.primary{background:#1666d8;border-color:#4a94ff}.card,.picker{min-width:0;background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px}.picker{margin:18px 0}.picker-line+.picker-line{border-top:1px solid #1b3048;margin-top:13px;padding-top:13px}.picker-title{font-size:12px;color:#b8c9dc;margin-bottom:9px}.chip{cursor:pointer;border:1px solid #2b415b;background:var(--panel2);color:var(--muted);border-radius:18px;padding:6px 10px}.chip.active{color:var(--text);border-color:var(--blue);box-shadow:inset 0 0 0 1px rgba(87,149,255,.28)}.chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--blue)}.controls{justify-content:flex-start;align-items:end;margin:12px 0}.controls label{display:grid;gap:4px;font-size:11px;color:var(--muted)}.controls input{width:92px}.notice{border:1px solid #80611d;background:#29230f;color:#f3d47c;border-radius:9px;padding:11px 13px;line-height:1.65;margin:12px 0}.error{border-color:#7e3340;background:#2b1118;color:#ff9baa}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid>*{min-width:0}.wide{grid-column:1/-1}.section{margin-top:15px}.chart{position:relative;width:100%;min-width:0;height:340px;overflow:hidden}.chart canvas{max-width:100%!important}.chart.tall{height:430px}.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:14px 0}.kpi{background:var(--panel2);border-radius:9px;padding:12px;min-height:105px}.kpi b{font-size:21px;display:block;margin:6px 0;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted);line-height:1.45}.badge{display:inline-flex;border:1px solid #38516d;border-radius:999px;padding:3px 8px;font-size:11px;color:#b9cae0}.badge.scenario{border-color:#8a661c;color:#ffd36e}.badge.official{border-color:#247c68;color:#62e4c5}.badge.listing{border-color:#7652a6;color:#c5a2ff}.scroll{overflow:auto;max-height:590px}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:9px;border-bottom:1px solid #1b3048;text-align:right}th:first-child,td:first-child{text-align:left}th{position:sticky;top:0;background:var(--panel);z-index:1}td small{display:block;color:var(--muted);margin-top:3px}.scenario-opt{color:var(--green)}.scenario-base{color:var(--yellow)}.scenario-stress{color:var(--red)}.source a{color:#79afff}.method p{margin:8px 0}.loading{opacity:.65}.hidden{display:none!important}.search{min-width:220px}.count{font-variant-numeric:tabular-nums}.hint{font-size:11px;color:var(--muted)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui}.wrap{max-width:1500px;margin:auto;padding:28px 22px 70px}h1{font-size:29px;margin:0 0 7px}h2{font-size:18px;margin:0}h3{font-size:14px;margin:0}.sub,.muted{color:var(--muted);line-height:1.65}.head,.row,.controls,.quick,.chips{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.actions{display:flex;gap:8px;flex-wrap:wrap}.actions a,.button,button,select,input{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;text-decoration:none;font:inherit}.button,button{cursor:pointer}.primary{background:#1666d8;border-color:#4a94ff}.card,.picker{min-width:0;background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px}.picker{margin:18px 0}.picker-line+.picker-line{border-top:1px solid #1b3048;margin-top:13px;padding-top:13px}.picker-title{font-size:12px;color:#b8c9dc;margin-bottom:9px}.chip{cursor:pointer;border:1px solid #2b415b;background:var(--panel2);color:var(--muted);border-radius:18px;padding:6px 10px}.chip.active{color:var(--text);border-color:var(--blue);box-shadow:inset 0 0 0 1px rgba(87,149,255,.28)}.chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--blue)}.chip.missing{border-style:dashed;opacity:.72}.chip.missing small{margin-left:5px;color:#f3d47c}.controls{justify-content:flex-start;align-items:end;margin:12px 0}.controls label{display:grid;gap:4px;font-size:11px;color:var(--muted)}.controls input{width:92px}.notice{border:1px solid #80611d;background:#29230f;color:#f3d47c;border-radius:9px;padding:11px 13px;line-height:1.65;margin:12px 0}.error{border-color:#7e3340;background:#2b1118;color:#ff9baa}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid>*{min-width:0}.wide{grid-column:1/-1}.section{margin-top:15px}.chart{position:relative;width:100%;min-width:0;height:340px;overflow:hidden}.chart canvas{max-width:100%!important}.chart.tall{height:430px}.chart.driver{height:300px}.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:14px 0}.kpi{background:var(--panel2);border-radius:9px;padding:12px;min-height:105px}.kpi b{font-size:21px;display:block;margin:6px 0;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted);line-height:1.45}.badge{display:inline-flex;border:1px solid #38516d;border-radius:999px;padding:3px 8px;font-size:11px;color:#b9cae0}.badge.scenario{border-color:#8a661c;color:#ffd36e}.badge.official{border-color:#247c68;color:#62e4c5}.badge.listing{border-color:#7652a6;color:#c5a2ff}.source-tabs{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}.source-tabs button{font-weight:650;padding:10px 15px}.source-tabs button.active{background:rgba(167,139,250,.17);border-color:#8d70d4;color:#e0d4ff;box-shadow:inset 0 0 0 1px rgba(167,139,250,.22)}.scroll{overflow:auto;max-height:590px}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:9px;border-bottom:1px solid #1b3048;text-align:right}th:first-child,td:first-child{text-align:left}th{position:sticky;top:0;background:var(--panel);z-index:1}td small{display:block;color:var(--muted);margin-top:3px}.scenario-opt{color:var(--green)}.scenario-base{color:var(--yellow)}.scenario-stress{color:var(--red)}.source a{color:#79afff}.method p{margin:8px 0}.loading{opacity:.65}.hidden{display:none!important}.search{min-width:220px}.count{font-variant-numeric:tabular-nums}.hint{font-size:11px;color:var(--muted)}.driver-table td:nth-child(2){text-align:left}.scope-city{color:var(--green)}.scope-fallback{color:var(--yellow)}.driver-summary{margin:10px 0 2px}.driver-summary b{color:var(--text)}
+    .section[id]{scroll-margin-top:120px}
     @media(max-width:980px){.grid,.kpis{grid-template-columns:1fr}.wide{grid-column:auto}.chart.tall{height:380px}}@media(max-width:600px){.wrap{padding:20px 12px 60px}.chip{padding:7px 9px}.controls label{flex:1;min-width:130px}.controls select,.controls input{width:100%}.chart{height:320px}.chart.tall{height:350px}}
   </style>
 </head>
 <body>
 <main class="wrap">
   <div class="head">
-    <div><h1>城市房价推演</h1><div class="sub">统计局官方指数 / 安居客挂牌价·参考 · 多城三情景比较 · 单城模拟与回测</div></div>
-    <div class="actions"><a href="/city-economy">城市经济</a><a href="/housing">房价完整详页</a></div>
+    <div><h1>城市房价推演</h1><div class="sub">统计局官方指数 / 安居客月度与年度 15 城目录 · 多城三情景比较</div></div>
+    <div class="actions"><a class="primary" href="#single-city-scenario">单城2030曲线</a><a href="#demographic-capacity">人口长期层</a><a href="/city-economy">城市经济</a><a href="/housing">房价完整详页</a></div>
   </div>
 
-  <div id="sourceNotice" class="notice"><b>挂牌价·参考，不是成交价。</b> 默认展示安居客挂牌均价及三档期末价格；可切换到统计局官方指数，但官方指数没有可互换的元/㎡绝对价格。</div>
+  <div id="sourceNotice" class="notice"><b>挂牌价·参考，不是成交价。</b> 15 城均进入目录；有数据才推演，缺失不代填。</div>
+  <div class="source-tabs" role="group" aria-label="房价历史来源快捷切换">
+    <button type="button" data-source-mode="anjuke">安居客月度·15城目录（元/㎡）</button>
+    <button type="button" data-source-mode="anjuke_yearly">安居客年度·15城目录</button>
+    <button type="button" data-source-mode="official">统计局 70 城官方指数</button>
+  </div>
 
   <section class="picker">
     <div class="picker-line">
-      <div class="row"><div><div class="picker-title">比较城市（可多选，最多 12 城）</div><div class="quick"><button data-group="focus" class="primary">关注城市</button><button data-group="tier1">一线城市</button><button data-group="all">目录前12城</button><button data-group="clear">清空</button></div></div><label class="muted">筛选城市<br><input id="citySearch" class="search" placeholder="输入城市名"></label></div>
+      <div class="row"><div><div class="picker-title">比较城市（可多选，最多 12 城）</div><div class="quick"><button data-group="core" class="primary">原十城</button><button data-group="added">后来五城</button><button data-group="tier1">一线城市</button><button data-group="all">目录前12城</button><button data-group="clear">清空</button></div></div><label class="muted">筛选城市<br><input id="citySearch" class="search" placeholder="输入城市名"></label></div>
       <div id="cityChips" class="chips"></div>
       <div id="selectionHint" class="hint"></div>
     </div>
     <div class="picker-line controls">
-      <label>历史来源<select id="dataSource"><option value="official" selected>统计局 70 城官方指数</option><option value="anjuke">安居客挂牌价·参考</option></select></label>
+      <label>历史来源<select id="dataSource"><option value="anjuke" selected>安居客月度·15城目录</option><option value="anjuke_yearly">安居客年度·15城目录</option><option value="official">统计局 70 城官方指数</option></select></label>
       <label>房价口径<select id="kind"><option value="second">二手住宅</option><option value="new">新建商品住宅</option></select></label>
-      <label>推演期间<select id="horizon"><option value="12">12个月</option><option value="24" selected>24个月</option><option value="36">36个月</option><option value="60">60个月</option></select></label>
+      <label>推演期间<select id="horizon"><option value="12">12个月</option><option value="24">24个月</option><option value="36">36个月</option><option value="2030" selected>到2030年末（按各城最新期）</option><option value="60">60个月</option></select></label>
+      <label>推演模型<select id="forecastMode"><option value="structural" selected>结构驱动修正</option><option value="momentum">纯价格动能</option></select></label>
+      <label>结构修正强度 %<input id="structuralWeight" type="number" min="0" max="100" step="10" value="40"></label>
       <label>多城纵轴<select id="compareValueMode"><option value="price" selected>期末挂牌价（元/㎡）</option><option value="change">较当前变化（%）</option></select></label>
       <button id="compareRun" class="primary">更新多城比较</button>
       <button id="downloadCsv">导出比较 CSV</button>
@@ -42,13 +50,39 @@
     <div class="row"><h2>多城情景终值</h2><span class="badge scenario">scenario</span></div>
     <div id="compareError" class="notice error hidden"></div>
     <div class="card section"><div class="chart"><canvas id="compareChart"></canvas></div></div>
-    <div class="card section"><div class="scroll"><table><thead><tr><th>城市</th><th>最新期</th><th>当前价格 / 较峰值</th><th>近6月</th><th>近12月</th><th>近36月</th><th class="scenario-opt">乐观期末</th><th class="scenario-base">基准期末</th><th class="scenario-stress">压力期末</th></tr></thead><tbody id="compareTable"></tbody></table></div></div>
+    <div class="card section"><div class="scroll"><table><thead><tr><th>城市</th><th>最新期</th><th>当前价格 / 较峰值</th><th id="momentumHead1">近6月</th><th id="momentumHead2">近12月</th><th id="momentumHead3">近36月</th><th class="scenario-opt">乐观期末</th><th class="scenario-base">基准期末</th><th class="scenario-stress">压力期末</th></tr></thead><tbody id="compareTable"></tbody></table></div></div>
   </section>
 
-  <section class="section card">
-    <div class="row"><div><h2>单城深挖</h2><div class="muted">历史回撤、三档路径、5,000次敏感性模拟、首付杠杆与机械回测</div></div><span id="historyBadge" class="badge official">历史 official · 未来 scenario</span></div>
+  <section class="section" id="demographic-capacity">
+    <div class="row"><div><h2>人口—家庭形成长期层</h2><div class="muted">2030 / 2040 / 2050 · 全国年龄结构与十五城人口集聚情景</div></div><span class="badge scenario">official projection + scenario</span></div>
+    <div class="notice"><b>这不是“人口跌多少，房价就跌多少”。</b> 它单独衡量20—39岁潜在家庭形成容量与固定住房存量的相对负担；不写回上方2030房价路径。</div>
+    <div class="card section">
+      <div class="controls">
+        <label>乐观：2050家庭形成倾向变化 %<input id="formationOptimistic" type="number" min="-50" max="50" step="5" value="10"></label>
+        <label>基准：2050家庭形成倾向变化 %<input id="formationBase" type="number" min="-50" max="50" step="5" value="0"></label>
+        <label>压力：2050家庭形成倾向变化 %<input id="formationStress" type="number" min="-50" max="50" step="5" value="-15"></label>
+        <label>城市图年份<select id="capacityYear"><option value="2030">2030</option><option value="2040">2040</option><option value="2050" selected>2050</option></select></label>
+        <label>城市图情景<select id="capacityScenario"><option value="optimistic">乐观</option><option value="base" selected>基准</option><option value="stress">压力</option></select></label>
+        <label>城市图范围<select id="capacityCityMode"><option value="all" selected>全部十五城</option><option value="selected">上方已选城市</option><option value="city_trend">仅本市趋势可算</option><option value="fallback">仅全国回退</option></select></label>
+        <label>城市图纵轴<select id="capacityAxisMode"><option value="zoom" selected>差异放大（自动）</option><option value="zero">从0起点</option></select></label>
+        <button id="demographicRun" class="primary">更新长期情景</button>
+        <span class="hint">约束：乐观 ≥ 基准 ≥ 压力；均为2050终点假设，2025起线性过渡。</span>
+      </div>
+      <div id="demographicError" class="notice error hidden"></div>
+      <div id="demographicKpis" class="kpis"></div>
+    </div>
+    <div class="grid section">
+      <div class="card"><div class="row"><h3>全国人口结构与家庭形成容量</h3><span class="badge official">UN WPP 2024</span></div><div class="chart"><canvas id="demographicCapacityChart"></canvas></div></div>
+      <div class="card"><div class="row"><h3 id="cityCapacityTitle">十五城基准容量</h3><span class="badge scenario">scenario</span></div><div class="chart"><canvas id="cityCapacityChart"></canvas></div><div class="muted">绿色＝使用本市常住人口趋势；黄色＝连续年点不足，回退全国路径。差异放大纵轴不从0起，请结合刻度阅读。</div></div>
+      <div class="card wide"><div class="scroll"><table><thead><tr><th>城市</th><th>人口趋势口径</th><th>本市近期增速</th><th>相对全国修正</th><th>2030基准容量</th><th>2040基准容量</th><th class="scenario-opt">2050乐观</th><th class="scenario-base">2050基准</th><th class="scenario-stress">2050压力</th><th>2050固定存量负担</th></tr></thead><tbody id="demographicTable"></tbody></table></div></div>
+      <div class="card wide source"><h3>公式、覆盖与来源</h3><div id="demographicMethod" class="muted"></div></div>
+    </div>
+  </section>
+
+  <section class="section card" id="single-city-scenario">
+    <div class="row"><div><h2>单城深挖</h2><div id="detailScopeNote" class="muted">历史回撤、结构驱动修正、5,000次敏感性模拟、首付杠杆与机械回测</div></div><span id="historyBadge" class="badge official">历史 official · 未来 scenario</span></div>
     <div class="controls">
-      <label>焦点城市<select id="focusCity"></select></label>
+      <label>焦点城市（当前来源全部目录）<select id="focusCity"></select></label>
       <label>历史显示<select id="historyWindow"><option value="60">近5年</option><option value="120" selected>近10年</option><option value="0">全部</option></select></label>
       <label>纵轴口径<select id="indexMode"><option value="peak" selected>峰值=100</option><option value="raw">定基指数</option></select></label>
       <label>纵轴范围<select id="axisMode"><option value="auto">自动</option><option value="70110">70–110</option><option value="custom">自定义</option></select></label>
@@ -66,9 +100,12 @@
     <div id="detailError" class="notice error hidden"></div>
     <div id="detailKpis" class="kpis"></div>
     <div class="grid">
-      <div class="card wide"><div class="row"><h3 id="detailChartTitle">历史与未来路径</h3><span id="momentumText" class="muted"></span></div><div class="chart tall"><canvas id="detailChart"></canvas></div></div>
+      <div class="card wide"><div class="row"><div class="actions"><h3 id="detailChartTitle">历史与未来路径</h3><span id="detailHorizonBadge" class="badge scenario">情景终点 2030-12</span></div><span id="momentumText" class="muted"></span></div><div class="chart tall"><canvas id="detailChart"></canvas></div></div>
+      <div class="card wide"><div class="row"><div><h3>结构驱动贡献：人口、收入、婚姻、量供给与融资</h3><div id="driverCoverage" class="muted driver-summary"></div></div><span class="badge scenario">transparent stress test</span></div><div class="chart driver"><canvas id="driverContributionChart"></canvas></div><div class="scroll"><table class="driver-table"><thead><tr><th>驱动</th><th>使用口径 / 覆盖</th><th>乐观假设</th><th>基准假设</th><th>压力假设</th><th>系数与上限</th></tr></thead><tbody id="driverTable"></tbody></table></div><div id="driverMethod" class="muted"></div></div>
+      <div class="card"><div class="row"><h3>全国共同结构背景</h3><span class="badge official">official / derived</span></div><div class="chart"><canvas id="nationalDriverChart"></canvas></div><div class="muted">人口、收入与结婚登记均来自国家统计局；粗结婚率由登记对数/人口派生。三条线显示年度增速，不把不同绝对单位混画。</div></div>
+      <div class="card"><div class="row"><h3>观察项：人口、就业、储蓄、投资与人才</h3><span class="badge">context only</span></div><div id="contextDriverCards" class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))"></div><div class="muted">户籍人口、就业、住户存款、房地产投资和高校学生的方向或口径均有歧义，因此只展示，不进入价格公式。</div></div>
       <div class="card"><div class="row"><h3>历史机械回测</h3><span class="badge">derived</span></div><div id="backtestKpis" class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))"></div><div id="backtestNote" class="muted"></div></div>
-      <div class="card"><h3 id="simulationTitle">模拟区间期末变化</h3><div id="simulationSummary" class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))"></div><div class="muted">P10/P50/P90 为模型敏感性分位，不是发生概率或置信区间。</div></div>
+      <div class="card"><h3 id="simulationTitle">模拟区间期末变化</h3><div id="simulationSummary" class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))"></div><div id="simulationNote" class="muted">P10/P50/P90 为模型敏感性分位，不是发生概率或置信区间。</div></div>
       <div class="card wide"><div class="row"><h3>不同买入时点的价格与自有资金变化</h3><span id="equityNote" class="muted"></span></div><div class="scroll"><table><thead><tr><th>买入时点</th><th>价格至今</th><th>自有资金至今</th><th class="scenario-opt">乐观期末</th><th class="scenario-base">基准期末</th><th class="scenario-stress">压力期末</th></tr></thead><tbody id="equityTable"></tbody></table></div></div>
       <div class="card"><h3 id="anchorTitle">估值锚：房价指数 / 工资指数</h3><div id="anchorNote" class="muted"></div><div id="anchorChartWrap" class="chart"><canvas id="anchorChart"></canvas></div></div>
       <div class="card source"><h3>来源与覆盖</h3><div id="sourceInfo" class="muted"></div></div>
@@ -78,6 +115,6 @@
   <section class="card section method"><div class="row"><h2>方法与边界</h2><span class="badge scenario">scenario / derived</span></div><div id="methodNotes" class="muted"></div></section>
 </main>
 <script src="/research-nav.js"></script>
-<script src="/housing-scenario.js"></script>
+<script src="/housing-scenario.js?v=20260810-demographic-capacity-2"></script>
 </body>
 </html>

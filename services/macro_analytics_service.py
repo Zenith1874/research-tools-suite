@@ -507,6 +507,51 @@ def build_china_analytics(db_path):
         shibor1y = _monthly_last(_rows(conn, 'china_rates_observations', 'SHIBOR_1Y'))
         fx_daily = _rows(conn, 'china_rates_observations', 'USDCNY_CENTRAL_PARITY')
         fx_monthly = _monthly_last(fx_daily)
+
+        # 国家统计局商品房销售面积已经有独立的官方抓取管线。这里把它
+        # 同时接入“中国”主视图，避免它只在“房价”页的量-价-地分析中可见。
+        # 同比优先使用新闻稿公布的可比口径，累计值直除仅作为审计补充。
+        sales_area_official = _rows(conn, 'housing_national_observations',
+                                    'sales_area_ytd_yoy_official')
+        sales_area_level = _rows(conn, 'housing_national_observations', 'sales_area_ytd')
+        sales_area_yoy, sales_area_derived, sales_area_source = preferred_official_yoy(
+            sales_area_official, sales_area_level)
+        sales_area_position = _position_item('一手商品房销售面积累计同比定位',
+                                              sales_area_yoy, transform='rate')
+        sales_area_position['method'] = (
+            '国家统计局《全国房地产开发投资和销售情况》新建商品房销售面积累计同比；'
+            '优先使用官方公布的可比口径，缺少官方同比时才以同月累计值直除补充；'
+            f'本卡当前来源={sales_area_source}')
+        sales_area_caveats = [
+            '1—2月合并发布并记为2月，不拆分或桥接1月。',
+            '累计值直除同比仅作审计补充；统计范围调整年份与官方可比口径同比可能存在偏差。',
+            '统计关联不代表因果。',
+        ]
+        area_keys, area_values = _align(sales_area_official, sales_area_derived)
+        if area_keys:
+            sales_area_caveats[1] = (
+                f'{area_keys[-1][:7]}销售面积官方同比与累计值直除同比相差 '
+                f'{area_values[0][-1] - area_values[1][-1]:+.2f} 个百分点；'
+                '统计范围调整年份与官方可比口径同比可能存在偏差。')
+        sales_area_position['caveats'] = sales_area_caveats
+        if len(sales_area_yoy) < MONTHLY_MIN_N:
+            sales_area_position.update(
+                conclusion='月频有效样本不足24期，拒绝定位判断。', value=None,
+                data_status='insufficient_sample')
+
+        sales_area_level_item = _item(
+            '一手商品房销售面积累计',
+            (f'最新 {sales_area_level[-1]["period"]} 年初以来新建商品房销售面积 '
+             f'{sales_area_level[-1]["value"]:,.0f} 万平方米。'
+             if sales_area_level else '数据缺失。'),
+            sales_area_level[-1]['value'] if sales_area_level else None,
+            sales_area_level,
+            '国家统计局新建商品房销售面积累计值；单位=万平方米；1—2月合并记为2月，'
+            '不拆分月度，也不把累计值当作单月流量。',
+            'derived' if sales_area_level else 'missing',
+            caveats=['底层观测为国家统计局官方值；累计口径不能直接与单月流量比较。',
+                     '统计关联不代表因果。'])
+
         sf_position = _position_item('社融存量同比定位', sfy, transform='rate')
         if len(sfy) < MONTHLY_MIN_N:
             sf_position.update(conclusion='月频有效样本不足24期，拒绝定位判断。', value=None,
@@ -771,9 +816,9 @@ def build_china_analytics(db_path):
         lev_item['caveats'] = ['社融口径杠杆率近似，非国家资产负债表研究中心(CNBS)官方口径；'
                                '社融存量含政府债券等，分子口径宽于私人部门债务。',
                                '统计关联不代表因果。']
-    return {'positioning': positioning + [cpi_pos, ppi_pos, pmi_pos, ip_pos, retail_pos,
+    return {'positioning': positioning + [sales_area_position, cpi_pos, ppi_pos, pmi_pos, ip_pos, retail_pos,
                                           fai_pos, gdp_pos, unemp_pos, reer_pos],
-            'analyses': [loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
+            'analyses': [sales_area_level_item, loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
                          lev_item, trade_item, scissors_item, transmission, fiscal, debt_item,
                          spread_item, vol_item]}
 
@@ -1297,6 +1342,85 @@ def build_housing_analytics(db_path):
 
     sales_price_lag = lag_item('销售与房价扩散领先滞后', area_yoy, sec_diff,
                                '销售面积官方累计同比', '70城二手扩散指数')
+    area_land_keys, area_land_values = _align(area_yoy, land_yoy)
+    area_land_series = [
+        {'period': str(period)[:7], 'value': area, 'sales_area_yoy': area,
+         'land_yoy': land}
+        for period, area, land in zip(area_land_keys, *area_land_values)]
+    area_land_status = ('derived' if len(area_land_keys) >= MONTHLY_MIN_N
+                        else 'insufficient_sample')
+    area_land_latest = area_land_series[-1] if area_land_series else None
+    area_land_compare = _item(
+        '销售面积与土地收入同比对比',
+        (f'{area_land_latest["period"]}销售面积累计同比 '
+         f'{area_land_latest["sales_area_yoy"]:+.1f}%，土地出让收入累计同比 '
+         f'{area_land_latest["land_yoy"]:+.1f}%；共同样本 {len(area_land_keys)} 期。'
+         if area_land_latest and area_land_status == 'derived'
+         else '共同月频样本不足24期，拒绝作同比对比判断。'),
+        ({'sales_area_yoy': area_land_latest['sales_area_yoy'],
+          'land_yoy': area_land_latest['land_yoy']}
+         if area_land_latest and area_land_status == 'derived' else None),
+        area_land_series,
+        '国家统计局新建商品房销售面积累计同比与财政部国有土地使用权出让收入累计同比；'
+        '官方同比优先；仅保留共同月份，缺月不插值；1—2月合并值按2月对齐。',
+        area_land_status,
+        n_obs=len(area_land_keys),
+        caveats=['两边都是累计同比，不是单月流量；共同样本随财政部历史报告可得性变化。',
+                 '统计关联不代表因果。'])
+    area_land_compare['compare_keys'] = [
+        {'key': 'sales_area_yoy', 'label': '销售面积累计同比', 'color': '#4f8fff'},
+        {'key': 'land_yoy', 'label': '土地出让收入累计同比', 'color': '#f5a623'},
+    ]
+    if area_land_keys:
+        area_land_compare.update(sample_start=area_land_keys[0][:7],
+                                 sample_end=area_land_keys[-1][:7])
+
+    # 累计值本身的单位不同（万平方米 vs 亿元），不能直接共用一条原始纵轴。
+    # 卡片结论保留原始最新值，图线改为共同首期=100的重定基指数，只比较走势。
+    level_keys, level_values = _align(sales_area_level, land_level)
+    level_series = []
+    level_base_period = level_keys[0][:7] if level_keys else None
+    if level_keys and level_values[0][0] and level_values[1][0]:
+        area_base, land_base = level_values[0][0], level_values[1][0]
+        level_series = [
+            {'period': str(period)[:7],
+             'value': round(area / area_base * 100, 4),
+             'sales_area_index': round(area / area_base * 100, 4),
+             'land_index': round(land / land_base * 100, 4),
+             'sales_area_level': area, 'land_level': land}
+            for period, area, land in zip(level_keys, *level_values)]
+    level_status = ('derived' if len(level_series) >= MONTHLY_MIN_N
+                    else 'insufficient_sample')
+    level_latest = level_series[-1] if level_series else None
+    level_compare = _item(
+        '销售面积与土地收入累计值对比',
+        (f'{level_latest["period"]}原始累计值：销售面积 '
+         f'{level_latest["sales_area_level"]:,.0f} 万平方米，土地出让收入 '
+         f'{level_latest["land_level"]:,.0f} 亿元；图线按 {level_base_period} '
+         '共同样本=100重定基。'
+         if level_latest and level_status == 'derived'
+         else '共同累计值月度样本不足24期，拒绝作走势对比。'),
+        ({'sales_area_level': level_latest['sales_area_level'],
+          'land_level': level_latest['land_level'],
+          'base_period': level_base_period}
+         if level_latest and level_status == 'derived' else None),
+        level_series,
+        '国家统计局新建商品房销售面积累计值（万平方米）与财政部国有土地使用权出让收入累计值（亿元）；'
+        '共同首期分别重定基为100后比较走势，原始值不作跨单位大小比较。',
+        level_status,
+        n_obs=len(level_series),
+        caveats=['销售面积与土地收入单位不同；图线只比较相对走势，不表示两者金额或数量可直接相加。',
+                 '1—2月合并值按2月保存，不拆分；缺月不插值。',
+                 '统计关联不代表因果。'])
+    level_compare['compare_keys'] = [
+        {'key': 'sales_area_index', 'label': '销售面积累计指数', 'color': '#4f8fff'},
+        {'key': 'land_index', 'label': '土地收入累计指数', 'color': '#f5a623'},
+    ]
+    if level_keys:
+        level_compare.update(sample_start=level_keys[0][:7], sample_end=level_keys[-1][:7])
+
+    sales_area_land_lag = lag_item('销售面积与土地收入领先滞后', area_yoy, land_yoy,
+                                   '销售面积官方累计同比', '土地出让收入官方累计同比')
     sales_land_lag = lag_item('销售与土地收入领先滞后', value_yoy, land_yoy,
                               '销售额官方累计同比', '土地出让收入官方累计同比')
 
@@ -1385,7 +1509,8 @@ def build_housing_analytics(db_path):
 
     return {'positioning': [new_pos, sec_pos, area_pos, land_pos],
             'analyses': [diverge_item, split_item, drawdown_item, dispersion_item,
-                         sales_price_lag, sales_land_lag, rolling_item, dependency_item]}
+                         area_land_compare, level_compare, sales_price_lag, sales_area_land_lag,
+                         sales_land_lag, rolling_item, dependency_item]}
 
 
 # 全景摘要选卡:(tab, 卡标题, 摘要标签, 数值后缀)
@@ -1393,6 +1518,7 @@ SUMMARY_PICKS = [
     ('china', 'GDP单季实际同比定位', '中国GDP同比', '%'),
     ('china', 'CPI 同比定位', '中国CPI', '%'),
     ('china', '制造业PMI定位', '制造业PMI', '%'),
+    ('china', '一手商品房销售面积累计同比定位', '一手商品房销售面积', '%'),
     ('china', '社融存量同比定位', '社融同比', '%'),
     ('china', '宏观杠杆率(社融口径)', '宏观杠杆率', '%'),
     ('housing', '70城二手扩散指数', '二手房扩散', '%'),

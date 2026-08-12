@@ -67,7 +67,8 @@ a:hover{text-decoration:underline}
 .card{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:16px 18px;margin-bottom:12px}
 .card-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}
 .card-title{font-size:15px;font-weight:600;line-height:1.45;color:#f1f5f9}
-.card-title a{color:#f1f5f9}
+.card-title a{color:#f1f5f9;text-decoration:none}
+.card-title a:hover{color:var(--blue);text-decoration:underline}
 .card-journal{display:inline-block;font-size:12px;font-weight:700;color:var(--yellow);background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.25);border-radius:5px;padding:2px 9px;margin-top:6px}
 .list-badge{display:inline-block;font-size:10px;font-weight:800;border-radius:4px;padding:2px 6px;margin-left:5px;letter-spacing:.3px}
 .lb-ft50{background:rgba(0,212,170,.16);color:var(--green);border:1px solid rgba(0,212,170,.35)}
@@ -233,15 +234,18 @@ async function loadStatus(){
     ];
     document.getElementById('kpis').innerHTML = kpis.map(k=>
       `<div class="kpi${k[2]?' hl':''}"><div class="kpi-v">${k[1]==null?'—':k[1]}</div><div class="kpi-l">${k[0]}</div></div>`).join('');
-    // 缺摘要说明:多为出版商不向开放元数据(OpenAlex/Crossref/S2)提供摘要,非抓取遗漏
+    // 缺摘要说明：区分“元数据 API 未返回”与“出版社页面确实不存在”。
     const naEl = document.getElementById('naNote');
     if(naEl && dbg.articles_without_abstract){
-      const conf = dbg.articles_without_abstract_confirmed_unavailable||0;
+      const checked = dbg.articles_without_abstract_checked_metadata_apis
+        || dbg.articles_without_abstract_confirmed_unavailable || 0;
+      const review = dbg.articles_without_abstract_publisher_review_pending||0;
       const tops = (dbg.articles_without_abstract_top_journals||[]).slice(0,5).map(j=>j.journal_title).join('、');
-      const pct = Math.round(conf/dbg.articles_without_abstract*100);
-      naEl.innerHTML = `缺摘要 ${dbg.articles_without_abstract} 篇中,约 ${conf}（${pct}%）已查证 OpenAlex / Crossref / Semantic Scholar / Europe PMC 均无公开摘要——`
-        + `这些出版商(如 ${tops} 等，多为 Elsevier)不向开放元数据提供摘要,摘要仅存于付费墙后,非抓取遗漏。`
-        + `本工具遵守"不抓付费全文"原则,对这些文章仅用标题与元数据(题录仍可检索、可分类)。`;
+      const pct = Math.round(checked/dbg.articles_without_abstract*100);
+      naEl.innerHTML = `缺摘要 ${dbg.articles_without_abstract} 篇中，约 ${checked}（${pct}%）已查询 OpenAlex / Crossref / Semantic Scholar，但这些 API 当时未返回摘要。`
+        + `${review?`其中 ${review} 篇属于出版社页面/授权接口待逐篇复核，不能标成“无摘要”。`:''}`
+        + `${tops?`高频期刊包括 ${tops}。`:''}`
+        + `本工具不抓付费全文；发现公开摘要页后可经来源核验补录。`;
     }
   }catch(e){
     document.getElementById('modePill').className='pill pill-err';
@@ -396,6 +400,18 @@ function gotoPage(delta){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
+function articleHref(a){
+  if(a && a.doi) return `https://doi.org/${a.doi}`;
+  return (a && (a.landing_page_url||a.url)) || '';
+}
+function articleTitleLink(a){
+  const href=articleHref(a);
+  const title=esc((a&&a.title)||'未命名文章');
+  return href
+    ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${title}</a>`
+    : title;
+}
+
 function articleCard(a){
   const cls=a.classification||{};
   const topics=(cls.research_topic||[]).map(t=>`<span class="tag tag-topic">${esc(t)}</span>`).join('');
@@ -405,14 +421,17 @@ function articleCard(a){
   const area=cls.broad_area?`<span class="tag tag-area">${esc(cls.broad_area)}</span>`:'';
   const rel=cls.relevance_score||0;
   const authors=(a.authors||[]).slice(0,5).join(', ')+((a.authors||[]).length>5?' 等':'');
+  const missingLabel = a.abstract_review_status==='publisher_page_review_pending'
+    ? '出版社页面/授权接口待复核 · 当前仅基于标题和元数据'
+    : '元数据源暂无摘要（abstract missing）· 仅基于标题和元数据';
   const absHtml = a.abstract
     ? `<div class="card-abstract">${esc(a.abstract.slice(0,600))}${a.abstract.length>600?'…':''}</div>`
-    : `<div class="card-abstract"><span class="abs-missing">无公开摘要（abstract missing）· 仅基于标题和元数据</span></div>`;
-  const doiUrl = a.doi?`https://doi.org/${esc(a.doi)}`:(a.url||'#');
+    : `<div class="card-abstract"><span class="abs-missing">${missingLabel}</span></div>`;
+  const doiUrl = articleHref(a)||'#';
   return `<div class="card" onclick="this.classList.toggle('open')">
     <div class="card-top">
       <div style="flex:1">
-        <div class="card-title">${esc(a.title)}</div>
+        <div class="card-title">${articleTitleLink(a)}</div>
         <div><span class="card-journal">${esc(a.journal_title||'未知期刊')}</span>${a.is_ft50?'<span class="list-badge lb-ft50">FT50</span>':''}${a.is_utd24?'<span class="list-badge lb-utd24">UTD24</span>':''}</div>
         <div class="card-meta">${esc(a.publication_date||'')} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}${cls.semantic_relevance!=null?' · 🧠语义 '+Math.round(cls.semantic_relevance):''}</div>
         <div class="card-authors">${esc(authors)}</div>
@@ -423,7 +442,7 @@ function articleCard(a){
     <div class="tag-row">${area}${topics}${methods}${dts}${theories}</div>
     <div class="card-foot" onclick="event.stopPropagation()">
       <span class="why">${esc(cls.classification_notes||'')}</span>
-      <a href="${doiUrl}" target="_blank">查看原文 ↗</a>
+      <a href="${esc(doiUrl)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a>
       ${a.openalex_id?`<a href="https://openalex.org/${esc(a.openalex_id)}" target="_blank">OpenAlex</a>`:''}
       <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
       <a href="#" onclick="findSimilar(${a.id});return false">🔗 找相似</a>
@@ -577,7 +596,7 @@ async function runUpdate(mode,days){
   setTimeout(loadStatus,8000);
 }
 async function reclassify(){const r=await postJSON('/api/abdc/astar/classify',{});toast(r.message||'已启动')}
-async function enrich(){toast('Semantic Scholar 补全已启动（按批进行，约 1-2 分钟）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
+async function enrich(){toast('Semantic Scholar 全量补全已启动（按批进行，只处理未查验队列）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
 async function saveArticle(id){const r=await postJSON('/api/abdc/astar/save',{article_id:id});toast(r.success?'已保存到阅读列表':'保存失败')}
 
 // ── 语义搜索 ──────────────────────────────────────────────────────────────
@@ -624,14 +643,14 @@ async function runSemantic(){
 function semanticCards(arts){
   return arts.map(a=>`<div class="card">
     <div class="card-top"><div style="flex:1">
-      <div class="card-title">${esc(a.title)}</div>
+      <div class="card-title">${articleTitleLink(a)}</div>
       <div><span class="card-journal">${esc(a.journal_title||'')}</span></div>
       <div class="card-meta">${esc(a.publication_date||'')}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
       <div class="card-authors">${esc((a.authors||[]).join(', '))}</div>
     </div><span class="relscore rel-high" title="语义相似度">${(a.similarity*100).toFixed(0)}</span></div>
     <div class="card-abstract">${esc(a.abstract||'')}${(a.abstract||'').length>=400?'…':''}</div>
     <div class="card-foot">
-      <a href="${a.doi?'https://doi.org/'+esc(a.doi):(a.url||'#')}" target="_blank">查看原文 ↗</a>
+      <a href="${esc(articleHref(a)||'#')}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a>
       <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
       <a href="#" onclick="findSimilar(${a.id});return false">🔗 找相似</a>
       <a href="#" onclick="saveArticle(${a.id});return false">保存</a>

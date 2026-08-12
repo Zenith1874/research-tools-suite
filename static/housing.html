@@ -40,6 +40,7 @@ table{width:100%;border-collapse:collapse;font-size:12px;min-width:680px}th,td{p
 th{color:var(--muted);font-weight:600;background:var(--panel);position:sticky;top:0}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 .empty{padding:16px;border:1px dashed var(--bd);border-radius:6px;color:var(--muted);font-size:12px}
+.section[id]{scroll-margin-top:120px}td small{display:block;margin-top:3px;color:var(--muted);font-size:10px;line-height:1.5}.scenario-jumps{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 @media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.grid{grid-template-columns:1fr}}
 </style>
 <link rel="stylesheet" href="/research-nav.css">
@@ -48,12 +49,15 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <body><div id="root"></div>
 <script type="text/babel">
 const {useEffect,useState}=React;
-const FOCUS_CITIES=['北京','上海','广州','深圳','厦门','南京','合肥','常州','苏州','无锡'];
-const CITY_COLORS={'北京':'#4f8fff','上海':'#ff5b6e','广州':'#f5a623','深圳':'#00d4aa','厦门':'#a974ff','南京':'#26c6da','合肥':'#ff8a50','常州':'#ec6fbe','苏州':'#9ccc65','无锡':'#8d9eff'};
-const LINE_DASHES=['','6,3','2,2','8,2,2,2','10,3','3,3','7,2,2,2','12,3','4,2','1,3'];
+const FOCUS_CITIES=['北京','上海','广州','深圳','厦门','南京','合肥','常州','苏州','无锡','武汉','长沙','成都','杭州','福州'];
+const CITY_COLORS={'北京':'#4f8fff','上海':'#ff5b6e','广州':'#f5a623','深圳':'#00d4aa','厦门':'#a974ff','南京':'#26c6da','合肥':'#ff8a50','常州':'#ec6fbe','苏州':'#9ccc65','无锡':'#8d9eff','武汉':'#ffd54f','长沙':'#ab7cff','成都':'#ff7043','杭州':'#29b6f6','福州':'#66bb6a'};
+const LINE_DASHES=['','6,3','2,2','8,2,2,2','10,3','3,3','7,2,2,2','12,3','4,2','1,3','9,3','5,2,1,2','11,2','3,1','7,4'];
 function fmt(v,d=1){if(v===null||v===undefined)return '—';return Number(v).toLocaleString('zh-CN',{minimumFractionDigits:d,maximumFractionDigits:d})}
 function Delta({v}){if(v===null||v===undefined)return null;const d=v-100;const cls=d>0?'delta-up':(d<0?'delta-down':'');return <span className={cls}>{d>0?'+':''}{d.toFixed(1)}%</span>}
 function Pct({v}){if(v===null||v===undefined)return <span>—</span>;const n=Number(v),cls=n>0?'delta-up':(n<0?'delta-down':'');return <span className={cls}>{n>0?'+':''}{n.toFixed(2)}%</span>}
+const NATIONAL_SCENARIOS=['optimistic','base','stress'];
+const NATIONAL_SCENARIO_LABELS={optimistic:'改善/修复',base:'基准',stress:'压力'};
+const NATIONAL_SCENARIO_COLORS={optimistic:'var(--green)',base:'var(--yellow)',stress:'var(--red)'};
 function mergeSeries(map){const byP={};Object.entries(map).forEach(([k,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[k]=r.value}));return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function historyMatrix(map,field,indexed=false){const byP={};Object.entries(map||{}).forEach(([city,rows])=>{const base=(rows||[]).find(r=>typeof r[field]==='number')?.[field];(rows||[]).forEach(r=>{if(typeof r[field]!=='number'||(indexed&&!base))return;(byP[r.period]=byP[r.period]||{period:r.period})[city]=indexed?Number((r[field]/base*100).toFixed(2)):r[field]})});return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function filterHistory(map,startYear){const floor=`${startYear}-01`;return Object.fromEntries(Object.entries(map||{}).map(([city,rows])=>[city,(rows||[]).filter(r=>r.period>=floor)]))}
@@ -63,11 +67,14 @@ function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false
   let chartData=data||[],displayUnit=unit,displayDigits=digits;
   if(axisMode==='indexed'){
     const bases=Object.fromEntries(activeSeries.map(s=>[s.key,chartData.find(d=>typeof d[s.key]==='number')?.[s.key]]));
-    chartData=chartData.map(d=>{const row={period:d.period};activeSeries.forEach(s=>{if(typeof d[s.key]==='number'&&bases[s.key])row[s.key]=d[s.key]/bases[s.key]*100});return row});
+    chartData=chartData.map(d=>{const row={period:d.period,label_period:d.label_period};activeSeries.forEach(s=>{if(typeof d[s.key]==='number'&&bases[s.key])row[s.key]=d[s.key]/bases[s.key]*100});return row});
     displayUnit='指数';displayDigits=1;
   }
-  const pts=chartData.filter(d=>activeSeries.some(s=>typeof d[s.key]==='number'));
-  if(pts.length<2)return <div className="empty">{title}：当前选择的数据点不足；可点“全部显示”恢复。</div>;
+  // Keep calendar rows with no value so a missing month creates a visible gap
+  // instead of silently connecting the observations on either side.
+  const pts=chartData;
+  const plottedPts=chartData.filter(d=>activeSeries.some(s=>typeof d[s.key]==='number'));
+  if(plottedPts.length<2)return <div className="empty">{title}：当前选择的数据点不足；可点“全部显示”恢复。</div>;
   const W=640,H=height,L=55,R=12,T=12,B=22;
   const scaleSeries=axisMode==='global'?series:activeSeries,vals=[];
   scaleSeries.forEach(s=>chartData.forEach(d=>{if(typeof d[s.key]==='number')vals.push(d[s.key])}));
@@ -81,7 +88,7 @@ function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false
   const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(scale(v)-scaleMin)/(scaleMax-scaleMin));
   const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
   const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const i=Math.round((x-L)/(W-L-R)*(pts.length-1));setHover(Math.max(0,Math.min(pts.length-1,i)))};
-  const hp=hover===null?null:pts[hover];
+  const hp=hover===null?null:pts[hover],periodLabel=d=>d?.label_period||d?.period||'—';
   const tipLeft=hover===null?0:Math.max(10,Math.min(90,sx(hover)/W*100));
   return <div className="chart"><div className="chart-head"><div className="chart-title">{title}</div>{axisControls&&<div className="chart-controls">{onShowAll&&<button className="chart-reset" onClick={onShowAll}>全部显示</button>}<label>Y轴<select aria-label={`${title} Y轴模式`} value={axisMode} onChange={e=>setAxisMode(e.target.value)}><option value="visible">可见城市自动缩放</option><option value="global">固定全局范围</option><option value="indexed">首期=100</option>{allowLog&&<option value="log">对数尺度</option>}<option value="custom">自定义范围</option></select></label>{axisMode==='custom'&&<><label>下限<input aria-label={`${title} Y轴下限`} type="number" step="any" value={customMin} placeholder={String(Math.floor(dataMin))} onChange={e=>setCustomMin(e.target.value)}/></label><label>上限<input aria-label={`${title} Y轴上限`} type="number" step="any" value={customMax} placeholder={String(Math.ceil(dataMax))} onChange={e=>setCustomMax(e.target.value)}/></label></>}</div>}</div>
     <div style={{position:'relative'}}>
@@ -91,10 +98,10 @@ function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false
       <g clipPath={`url(#${clipId})`}>{activeSeries.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6" strokeDasharray={s.dash||undefined}/>)}</g>
       {hp&&<g><line x1={sx(hover)} x2={sx(hover)} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
         {activeSeries.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
-      <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
-      <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{pts[pts.length-1].period}</text>
+      <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{periodLabel(pts[0])}</text>
+      <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{periodLabel(pts[pts.length-1])}</text>
     </svg>
-    {hp&&<div className="tip" style={{left:tipLeft+'%'}}><b>{hp.period}</b>{activeSeries.map(s=>typeof hp[s.key]==='number'?<div key={s.key}><i style={{background:s.color}}/>{s.label}：{fmt(hp[s.key],displayDigits)} {displayUnit}</div>:null)}</div>}
+    {hp&&<div className="tip" style={{left:tipLeft+'%'}}><b>{periodLabel(hp)}</b>{activeSeries.map(s=>typeof hp[s.key]==='number'?<div key={s.key}><i style={{background:s.color}}/>{s.label}：{fmt(hp[s.key],displayDigits)} {displayUnit}</div>:null)}</div>}
     </div>
     <div className="legend">{series.map(s=>{const on=activeSeries.some(a=>a.key===s.key);return onToggleSeries?<button key={s.key} className={on?'on':'off'} aria-pressed={on} title="单击显示/隐藏；双击只看该城市" onClick={()=>onToggleSeries(s.key)} onDoubleClick={()=>onOnlySeries&&onOnlySeries(s.key)}><i style={{background:s.color}}/>{s.label}</button>:<span key={s.key}><i style={{background:s.color}}/>{s.label}</span>})}{displayUnit&&<span className="muted">单位：{displayUnit}</span>}{onToggleSeries&&<span className="muted">单击切换 · 双击单看</span>}</div>
   </div>;
@@ -130,14 +137,15 @@ function listingCsv(rows){csvSave([['city','城市'],['period','月份'],['avg_p
 function yearlyListingCsv(map){csvSave([['city','城市'],['year','年份'],['period','快照月份'],['avg_price','挂牌均价(元/㎡)'],['source_grain','来源粒度'],['data_status','状态'],['detail_url','城市年度页'],['source_url','全国历史页']],Object.values(map||{}).flat(),'anjuke_yearly_snapshots_reference.csv')}
 function compareHistoryCsv(map){csvSave([['city','城市'],['period','月份'],['official_second_yoy_pct','官方二手同比%'],['listing_yoy_pct','挂牌同比%'],['divergence','分歧(百分点)'],['data_status','状态']],Object.values(map||{}).flat(),'housing_dual_basis_history.csv')}
 function App(){
-  const [p,setP]=useState(null),[listing,setListing]=useState(null),[compare,setCompare]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false),[listingBusy,setListingBusy]=useState(false),[historyCity,setHistoryCity]=useState('北京'),[visibleCities,setVisibleCities]=useState(null),[historyStart,setHistoryStart]=useState('2010');
+  const [p,setP]=useState(null),[listing,setListing]=useState(null),[compare,setCompare]=useState(null),[cityScenario,setCityScenario]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false),[listingBusy,setListingBusy]=useState(false),[historyCity,setHistoryCity]=useState('北京'),[visibleCities,setVisibleCities]=useState(null),[historyStart,setHistoryStart]=useState('2010');
   async function load(){
     // 官方70城为核心视图,必须独立成功;安居客/对比为辅助,失败不拖垮页面。
     const grab=async u=>{try{const r=await fetch(u);return r.ok?await r.json():null}catch(e){return null}};
-    const [a,b,c]=await Promise.all([grab('/api/housing/data'),grab('/api/housing/anjuke'),grab('/api/housing/compare')]);
+    const scenarioQuery=new URLSearchParams({source:'anjuke',cities:FOCUS_CITIES.join(','),kind:'second',horizon:'2030',structural_weight:'0.4'});
+    const [a,b,c,d]=await Promise.all([grab('/api/housing/data'),grab('/api/housing/anjuke'),grab('/api/housing/compare'),grab('/api/housing-scenario/compare?'+scenarioQuery.toString())]);
     if(a) setP(a); else {setP({error:true}); setMsg('官方房价数据加载失败,请稍后刷新');}
-    setListing(b||{}); setCompare(c||{});
-    if(a&&(!b||!c)) setMsg('部分辅助数据(挂牌/对比)暂不可用,官方70城不受影响');
+    setListing(b||{}); setCompare(c||{}); setCityScenario(d||{});
+    if(a&&(!b||!c||!d)) setMsg('部分辅助数据(挂牌/对比/城市情景)暂不可用,官方70城不受影响');
   }
   async function update(){
     setBusy(true);
@@ -156,6 +164,9 @@ function App(){
   useEffect(()=>{load()},[]);
   if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;
   const b=p.breadth;
+  const nationalScenario=p.national_scenario||{},nationalSalesScenario=nationalScenario.sales||{},nationalPriceScenario=nationalScenario.price||{};
+  const scenarioSalesSeries=(nationalSalesScenario.series||[]).filter(row=>row.period>='2007-12');
+  const cityScenarioRows=cityScenario?.rows||[],availableCityScenarioRows=cityScenarioRows.filter(row=>row.status==='ok');
   const cityYoY=mergeSeries(Object.fromEntries(Object.entries(p.city_series||{}).map(([c,rows])=>[c,rows])));
   const bis=mergeSeries({real:(p.national||{}).QCNR628BIS||[],nominal:(p.national||{}).QCNN628BIS||[]});
   const listingHistoryCities=listing?.history_cities||[];
@@ -186,6 +197,8 @@ function App(){
   const rangeYears=[2010,2015,2020,2023,2025].filter((year,i,arr)=>year<=new Date().getFullYear()&&arr.indexOf(year)===i);
   function toggleCity(city){if(!FOCUS_CITIES.includes(city))return;setVisibleCities(current=>{const base=current===null?orderedHistoryCities:current;if(base.includes(city))return base.length===1?base:base.filter(item=>item!==city);return FOCUS_CITIES.filter(item=>base.includes(item)||item===city)})}
   function showOnlyCity(city){if(!FOCUS_CITIES.includes(city))return;setVisibleCities([city]);setHistoryCity(city)}
+  function scenarioByKey(row){return Object.fromEntries(((row?.structural_scenarios?.length?row.structural_scenarios:row?.scenarios)||[]).map(item=>[item.key,item]))}
+  function cityScenarioUrl(city,source='anjuke'){return '/housing-scenario?'+new URLSearchParams({source,city,horizon:'2030',kind:'second',model:'structural',structural_weight:'40'}).toString()+'#single-city-scenario'}
   return <div className="wrap">
     <div className="top"><div><h1>中国房价</h1>
       <div className="sub">统计局 70 城商品住宅价格指数(月度,官方；逐城可比口径 2011 起) + BIS 全国住宅价格指数(季度,2005起) · 最新期：{p.latest_period||'—'} · 70城库覆盖 {p.coverage?.nbs_70city?.earliest||'—'} 至 {p.coverage?.nbs_70city?.latest||'—'}
@@ -193,6 +206,8 @@ function App(){
       <div className="actions">
         <button className="btn primary" disabled={busy} onClick={update}>{busy?'更新中…':'更新数据'}</button>
         <button className="btn" disabled={listingBusy} onClick={updateListing}>{listingBusy?'挂牌更新中…':'更新挂牌参考'}</button>
+        <a className="btn" href="#national-scenario-2030">2030全国情景</a>
+        <a className="btn" href="#city-scenario-2030">2030城市情景</a>
         <a className="btn" href="/">首页</a></div></div>
     {msg&&<div className="banner">{msg}</div>}
     {(p.warnings||[]).map((w,i)=><div key={i} className="banner">{w}</div>)}
@@ -203,6 +218,14 @@ function App(){
       <span>下跌 <b className="delta-down">{b.down}</b> 城</span>
       <span className="muted">derived · {b.formula}</span>
     </div>}
+    {nationalScenario.data_status==='scenario'&&<section className="section" id="scenario-2030-quick"><div className="section-head"><div><h2>2030 推演快览 <span className="badge">scenario</span></h2><div className="sub">全国量价与十五城挂牌价均已固定展示到 2030-12；以下是基准路径终值，不是确定性预测。</div></div><div className="scenario-jumps"><a className="btn primary" href="#national-scenario-2030">查看全国完整曲线</a><a className="btn primary" href="#city-scenario-2030">查看十五城终值</a><a className="btn primary" href={cityScenarioUrl('常州')}>打开常州单城2030曲线</a></div></div>
+      <div className="grid">
+        <div className="metric"><div className="metric-label">2030 一手销售面积 · 基准</div><div className="metric-value">{fmt(nationalSalesScenario.scenarios?.base?.end_value,0)}</div><div className="metric-meta">万平方米 · 2030-12 · scenario</div></div>
+        <div className="metric"><div className="metric-label">2030 一手房综合指数 · 基准</div><div className="metric-value">{fmt(nationalPriceScenario.components?.new?.scenarios?.base?.end_value,1)}</div><div className="metric-meta">70城等权代理 · 2030-12 · scenario</div></div>
+        <div className="metric"><div className="metric-label">2030 二手房综合指数 · 基准</div><div className="metric-value">{fmt(nationalPriceScenario.components?.second?.scenarios?.base?.end_value,1)}</div><div className="metric-meta">70城等权代理 · 2030-12 · scenario</div></div>
+        <div className="metric"><div className="metric-label">十五城挂牌路径可用</div><div className="metric-value">{availableCityScenarioRows.length}/{cityScenarioRows.length||15}</div><div className="metric-meta">安居客逐月历史 · 缺失不补造 · 结构修正 40%</div></div>
+      </div>
+    </section>}
     <div className="grid">{(p.cards||[]).map(c=><div className="metric" key={c.label}>
       <div className="metric-label">{c.label} <span className="badge">{c.data_status}</span></div>
       <div className="metric-value">{fmt(c.value)} <Delta v={c.value}/></div>
@@ -212,7 +235,13 @@ function App(){
         {c.source_url&&<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">月报原文</a>}
       </div>
     </div>)}</div>
+    <section className="section" id="city-scenario-2030"><div className="section-head"><div><h2>十五城挂牌价结构情景至2030年 <span className="badge listing">挂牌价·scenario</span></h2><div className="sub">终值快览 · 安居客逐月挂牌历史 · 结构驱动修正强度 40% · 每城结束期均为 {cityScenario?.end_period||'2030-12'}</div></div><a className="btn primary" href={cityScenarioUrl('常州')}>打开常州单城2030曲线</a></div>
+      <div className="notice">这是卖方挂牌价条件情景，不是成交价预测。乐观/基准/压力分别沿本城动能并叠加透明的收入、人口、婚姻、销售面积和利率压力测试；缺少连续逐月历史的城市保持缺失，可在完整页面切换“安居客年度”口径查看可用年度路径。</div>
+      {cityScenarioRows.length?<div className="scroll"><table><thead><tr><th>城市</th><th>当前挂牌价</th><th>2030 乐观</th><th>2030 基准</th><th>2030 压力</th><th>结构数据覆盖</th><th>完整路径</th></tr></thead><tbody>{cityScenarioRows.map(row=>{const by=scenarioByKey(row),ok=row.status==='ok';return <tr key={row.city}><td>{row.city}<small>{row.sample_start||'—'} 至 {row.sample_end||'—'}</small></td><td className="num">{ok?fmt(row.current_price,0)+' 元/㎡':'逐月历史不足'}<small>{ok?`较峰值 ${fmt(row.current_vs_peak,1)}%`:row.status}</small></td>{NATIONAL_SCENARIOS.map(key=><td className="num" key={key}>{by[key]?.end_price==null?'—':fmt(by[key].end_price,0)+' 元/㎡'}<small>{by[key]?.end_vs_now==null?'':<>较当前 <Pct v={by[key].end_vs_now}/> · 年化 <Pct v={by[key].annualised}/></>}</small></td>)}<td>{ok?`${row.driver_coverage?.model_drivers_used??0} 项驱动`:'—'}<small>{ok?`本城 ${row.driver_coverage?.city_specific_used??0} · 全国回退 ${row.driver_coverage?.national_fallback_used??0}`:'缺失不补零'}</small></td><td><a className="source-link" href={cityScenarioUrl(row.city,ok?'anjuke':'anjuke_yearly')}>{ok?'查看月度路径':'尝试年度口径'}</a></td></tr>})}</tbody></table></div>:<div className="empty">十五城情景接口暂不可用；全国官方数据仍可正常查看。</div>}
+      <div className="muted" style={{marginTop:8}}>方法：{cityScenario?.method||'每城分别计算历史动能并外推至2030-12；情景与观测严格分开。'}</div>
+    </section>
     <Chart title="BIS 中国住宅价格指数(2010=100,季度,2005 起)" data={bis} series={[{key:'real',label:'实际(剔通胀)',color:'var(--blue)'},{key:'nominal',label:'名义',color:'var(--yellow)'}]} unit=""/>
+    {p.national_composite?.data_status==='derived'?<><Chart title={`全国综合房价指数：一手与二手（70城等权代理，首个连续期=100；${p.national_composite.coverage.earliest} 起）`} data={p.national_composite.series} series={[{key:'new_home_index',label:'一手·新建商品住宅',color:'var(--blue)'},{key:'second_home_index',label:'二手住宅',color:'var(--yellow)'}]} unit="指数" digits={1} height={240}/><div className="notice">一手/二手全国综合图是70城官方环比指数的等权链式代理，不是统计局发布的全国价值加权指数；缺月不桥接，指数只比较走势。</div></>:<div className="empty">暂无足够的70城一手/二手指数，无法构建综合代理图。</div>}
     <Chart title="一线城市新房价格同比(上年同月=100,随月份累积)" data={cityYoY} series={[{key:'北京',label:'北京',color:'var(--blue)'},{key:'上海',label:'上海',color:'var(--red)'},{key:'广州',label:'广州',color:'var(--yellow)'},{key:'深圳',label:'深圳',color:'var(--green)'}]} unit=""/>
     <div className="table-title">70 城全表({p.latest_period}) <a className="source-link" style={{cursor:'pointer'}} onClick={()=>csvDownload(p.city_table||[])}>⬇ CSV</a></div>
     <div className="scroll"><table><thead><tr><th>城市</th><th>新房环比</th><th>新房同比</th><th>二手环比</th><th>二手同比</th></tr></thead>
@@ -224,20 +253,34 @@ function App(){
         <td className="num">{fmt(r.second_home_yoy_idx)} <Delta v={r.second_home_yoy_idx}/></td>
       </tr>)}</tbody></table></div>
     <div className="muted" style={{marginTop:10}}>{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
-    <section className="section"><div className="section-head"><div><h2>全国商品房销售 <span className="badge">official</span></h2><div className="sub">统计局《全国房地产开发投资和销售情况》· 累计口径 · {p.sales?.series?.[0]?.period||'—'} 至 {p.sales?.latest_period||'—'}（{(p.sales?.series||[]).length} 期）</div></div></div>
+    <section className="section"><div className="section-head"><div><h2>全国商品房销售 <span className="badge">official</span></h2><div className="sub">统计局《全国房地产开发投资和销售情况》· 月度累计 + 年度长历史 · {p.sales?.annual_history?.[0]?.label_period||p.sales?.series?.[0]?.period||'—'} 至 {p.sales?.latest_period||'—'}（月度 {(p.sales?.series||[]).length} 期；年度 {(p.sales?.annual_history||[]).length} 点）</div></div></div>
       {p.sales?.data_status==='official'?<>
         <div className="grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>{(p.sales.cards||[]).map(c=><div className="metric" key={c.label}><div className="metric-label">{c.label}</div><div className="metric-value">{c.value==null?'—':fmt(c.value,0)} <span style={{fontSize:12,fontWeight:400,color:'var(--muted)'}}>{c.unit}</span></div><div className="metric-meta">累计同比 <Pct v={c.yoy}/> · {c.period}</div></div>)}</div>
-        <Chart title={`全国商品房销售累计同比（月度累计口径，${p.sales.series[0]?.period} 起）`} data={p.sales.series} series={[{key:'area_yoy',label:'销售面积累计同比',color:'var(--blue)'},{key:'value_yoy',label:'销售额累计同比',color:'var(--yellow)'}]} unit="%" digits={1} height={240}/>
+        {(p.sales.annual_history||[]).length>=2&&<Chart title={`一手商品房销售面积长期历史（年度，${p.sales.annual_history[0]?.label_period||'—'} 起）`} data={p.sales.annual_history} series={[{key:'value',label:'年度销售面积',color:'var(--blue)'}]} unit="万平方米" digits={0} height={240}/>}
+        <Chart title={`全国商品房销售累计同比（月度累计口径，${p.sales.series[0]?.period||'—'} 起）`} data={p.sales.series} series={[{key:'area_yoy',label:'销售面积累计同比',color:'var(--blue)'},{key:'value_yoy',label:'销售额累计同比',color:'var(--yellow)'}]} unit="%" digits={1} height={240}/>
+        <Chart title={`一手商品房销售面积累计（月度累计，${p.sales.area_series?.[0]?.period||'—'} 起）`} data={p.sales.area_series||[]} series={[{key:'value',label:'月度累计销售面积',color:'var(--blue)'}]} unit="万平方米" digits={0} height={240}/>
         {(p.sales.notes||[]).map((n,i)=><div className="notice" key={i}>{n}</div>)}
       </>:<div className="empty">暂无全国销售官方数据</div>}
     </section>
-    <section className="section"><div className="section-head"><div><h2>挂牌价参考（安居客） <span className="badge listing">挂牌价·参考</span></h2><div className="sub">安居客，非官方口径 · 月度最新期：{listing?.latest_period||'—'} · 月度历史 {listing?.coverage?.earliest||'—'} 至 {listing?.coverage?.latest||'—'} · 年度快照覆盖 {yearlyHistoryCities.length}/10 城</div></div><div className="actions"><label className="history-picker">图表起点<select value={historyStart} onChange={e=>setHistoryStart(e.target.value)}>{rangeYears.map(year=><option key={year} value={String(year)}>{year}年</option>)}</select></label><label className="history-picker">单城明细<select value={activeHistoryCity||''} onChange={e=>setHistoryCity(e.target.value)}>{orderedHistoryCities.map(city=><option key={city} value={city}>{city}</option>)}</select></label><a className="btn" style={{cursor:'pointer'}} onClick={()=>yearlyListingCsv(listing?.yearly_history_by_city)}>⬇ 年度快照 CSV</a><a className="btn" style={{cursor:'pointer'}} onClick={()=>listingCsv(allListingHistory)}>⬇ 月度历史 CSV</a></div></div>
+    {nationalScenario.data_status==='scenario'?<section className="section" id="national-scenario-2030"><div className="section-head"><div><h2>全国房地产量价情景至2030年 <span className="badge">scenario</span></h2><div className="sub">官方历史观测与条件路径分开显示 · 年度实际锚点 {nationalSalesScenario.latest_period||'—'} · 最新官方累计同比 {nationalSalesScenario.latest_official_yoy_period||'—'} · 目标年末 {nationalScenario.target_year}-12</div></div><a className="btn" href="#scenario-2030-quick">返回2030快览</a></div>
+      <div className="notice"><b>这不是预测值。</b> 销售面积以最新官方累计同比为基准，改善/基准/压力分别调整 5 个百分点；一、二手价格沿用 70 城等权链式代理近 6/12/36 个月动量，固定外推至 2030 年 12 月。未来线均为 scenario，实际线仍是官方观测或 derived 代理。</div>
+      <Chart title="一手商品房销售面积：2007年水平与条件路径（年度，万平方米）" data={scenarioSalesSeries} series={[{key:'actual',label:'官方年度实际',color:'var(--blue)'},{key:'optimistic',label:'改善/修复',color:'var(--green)',dash:'6,3'},{key:'base',label:'基准',color:'var(--yellow)',dash:'6,3'},{key:'stress',label:'压力',color:'var(--red)',dash:'6,3'},{key:'target_2007',label:'2007年水平',color:'var(--muted)',dash:'2,2'}]} unit="万平方米" digits={0} height={280}/>
+      <Chart title="70城等权一手房综合指数情景（首个连续期=100，实际至今 + 2030条件路径）" data={nationalPriceScenario.series||[]} series={[{key:'new_actual',label:'一手实际代理',color:'var(--blue)'},{key:'new_optimistic',label:'改善',color:'var(--green)',dash:'6,3'},{key:'new_base',label:'基准',color:'var(--yellow)',dash:'6,3'},{key:'new_stress',label:'压力',color:'var(--red)',dash:'6,3'},{key:'target_100',label:'100线（2011-01代理）',color:'var(--muted)',dash:'2,2'}]} unit="指数" digits={1} height={280}/>
+      <Chart title="70城等权二手房综合指数情景（首个连续期=100，实际至今 + 2030条件路径）" data={nationalPriceScenario.series||[]} series={[{key:'second_actual',label:'二手实际代理',color:'var(--blue)'},{key:'second_optimistic',label:'改善',color:'var(--green)',dash:'6,3'},{key:'second_base',label:'基准',color:'var(--yellow)',dash:'6,3'},{key:'second_stress',label:'压力',color:'var(--red)',dash:'6,3'},{key:'target_100',label:'100线（2011-01代理）',color:'var(--muted)',dash:'2,2'}]} unit="指数" digits={1} height={280}/>
+      <div className="table-title">2030年条件路径摘要（不是概率区间）</div><div className="scroll"><table><thead><tr><th>指标</th><th>当前/锚点</th><th>改善/修复</th><th>基准</th><th>压力</th><th>触及历史锚点</th></tr></thead><tbody>
+        <tr><td>一手商品房销售面积</td><td className="num">{fmt(nationalSalesScenario.latest_actual,0)} 万㎡<small>官方同比 <Pct v={nationalSalesScenario.latest_official_yoy}/></small></td>{NATIONAL_SCENARIOS.map(key=><td className="num" key={key}>{fmt(nationalSalesScenario.scenarios?.[key]?.end_value,0)} 万㎡<small>{nationalSalesScenario.scenarios?.[key]?.assumption||'—'}</small></td>)}<td>{nationalSalesScenario.target_2007==null?'—':fmt(nationalSalesScenario.target_2007,0)+' 万㎡'}<small>{NATIONAL_SCENARIOS.map(key=><span key={key}>{NATIONAL_SCENARIO_LABELS[key]}：{nationalSalesScenario.scenarios?.[key]?.target_period||'2030年前未触及'}<br/></span>)}</small></td></tr>
+        <tr><td>一手房综合指数</td><td className="num">{fmt(nationalPriceScenario.components?.new?.current?.value,1)}<small>{nationalPriceScenario.components?.new?.current?.period||'—'}</small></td>{NATIONAL_SCENARIOS.map(key=><td className="num" key={key}>{fmt(nationalPriceScenario.components?.new?.scenarios?.[key]?.end_value,1)}<small>{nationalPriceScenario.components?.new?.scenarios?.[key]?.window_months||'—'}个月动量</small></td>)}<td>{NATIONAL_SCENARIOS.map(key=><span key={key}>{NATIONAL_SCENARIO_LABELS[key]}：{nationalPriceScenario.components?.new?.scenarios?.[key]?.target_period||'2030年前未触及'}<br/></span>)}</td></tr>
+        <tr><td>二手房综合指数</td><td className="num">{fmt(nationalPriceScenario.components?.second?.current?.value,1)}<small>{nationalPriceScenario.components?.second?.current?.period||'—'}</small></td>{NATIONAL_SCENARIOS.map(key=><td className="num" key={key}>{fmt(nationalPriceScenario.components?.second?.scenarios?.[key]?.end_value,1)}<small>{nationalPriceScenario.components?.second?.scenarios?.[key]?.window_months||'—'}个月动量</small></td>)}<td>{NATIONAL_SCENARIOS.map(key=><span key={key}>{NATIONAL_SCENARIO_LABELS[key]}：{nationalPriceScenario.components?.second?.scenarios?.[key]?.target_period||'2030年前未触及'}<br/></span>)}</td></tr>
+      </tbody></table></div>
+      {(nationalScenario.caveats||[]).map((note,i)=><div className="notice" key={i}>{note}</div>)}
+    </section>:<div className="empty">全国情景需要年度销售面积与最新官方销售面积同比；当前数据不足，未生成推演。</div>}
+    <section className="section"><div className="section-head"><div><h2>挂牌价参考（安居客） <span className="badge listing">挂牌价·参考</span></h2><div className="sub">安居客，非官方口径 · 月度最新期：{listing?.latest_period||'—'} · 月度历史 {listing?.coverage?.earliest||'—'} 至 {listing?.coverage?.latest||'—'} · 年度快照覆盖 {yearlyHistoryCities.length}/15 城</div></div><div className="actions"><label className="history-picker">图表起点<select value={historyStart} onChange={e=>setHistoryStart(e.target.value)}>{rangeYears.map(year=><option key={year} value={String(year)}>{year}年</option>)}</select></label><label className="history-picker">单城明细<select value={activeHistoryCity||''} onChange={e=>setHistoryCity(e.target.value)}>{orderedHistoryCities.map(city=><option key={city} value={city}>{city}</option>)}</select></label><a className="btn" style={{cursor:'pointer'}} onClick={()=>yearlyListingCsv(listing?.yearly_history_by_city)}>⬇ 年度快照 CSV</a><a className="btn" style={{cursor:'pointer'}} onClick={()=>listingCsv(allListingHistory)}>⬇ 月度历史 CSV</a></div></div>
       <div className="notice">这里分成两种频率：① 你截图中的全国历史排名页，历史年份按年末快照、当年按抓取月展示；② 深圳等城市年度页中的逐月走势。年度点绝不复制成 12 个月，也不进入“挂牌同比－官方二手同比”的月度计算。挂牌价是卖方要价，不等于成交价；数据只在本机独立库保存，不进入公开仓库。</div>
       {(listing?.warnings||[]).map((w,i)=><div className="banner" key={i}>{w}</div>)}
       <div className="grid">{(listing?.cards||[]).map(c=><div className="metric" key={c.city}><div className="metric-label">{c.city} <span className="badge listing">{c.data_status==='listing_reference'?'月度挂牌':(c.data_status==='listing_year_snapshot'?'年度快照':'missing')}</span></div><div className="metric-value">{c.avg_price==null?'—':fmt(c.avg_price,0)} <span style={{fontSize:12}}>元/㎡</span></div><div className="metric-meta">{c.data_status==='listing_reference'?<>环比 <Pct v={c.mom_pct}/> · 同比 <Pct v={c.yoy_pct}/></>:<>快照月份 {c.period||'—'} · 不参与月度同比对比</>}<br/>{c.source_url&&<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">安居客原页</a>}</div></div>)}</div>
-      <div className="table-title">点名十城历史图 · 月度已入库 {listingHistoryCities.length}/10 城 · 年度快照 {yearlyHistoryCities.length}/10 城 · 当前图表从 {historyStart}-01 起</div><div className="city-controls"><button className="city-chip all" onClick={()=>setVisibleCities(null)}>全部显示</button>{FOCUS_CITIES.map(city=>{const hasListing=listingHistoryCities.includes(city),hasYearly=yearlyHistoryCities.includes(city),hasOfficial=Boolean(compare?.official_history_by_city?.[city]?.length),active=shownCities.includes(city),coverage=coverageByCity[city],yearlyCoverage=yearlyCoverageByCity[city],points=listing?.city_history?.[city]?.length||0,yearPoints=yearlyCoverage?.records||0;return <button key={city} aria-pressed={active} title={`单击显示/隐藏；双击只看该城；月度 ${hasListing?`${coverage?.earliest||'—'} 至 ${coverage?.latest||'—'}`:'缺失'}；年度 ${hasYearly?`${yearlyCoverage?.earliest_year} 至 ${yearlyCoverage?.latest_year}`:'缺失'}；官方二手 ${hasOfficial?'有':'不在70城口径'}`} style={{'--city-color':CITY_COLORS[city]}} className={`city-chip ${active?'active':''} ${hasListing?'':'missing'}`} onClick={()=>toggleCity(city)} onDoubleClick={()=>showOnlyCity(city)}>{city} {hasListing?`${points}月`:'月缺'} / {yearPoints}年</button>})}<span className="control-help">单击显示/隐藏，双击只看该城；虚线表示该城缺少逐月挂牌序列，不代表年度快照也缺失。</span></div>
+      <div className="table-title">关注十五城历史图 · 月度已入库 {listingHistoryCities.filter(city=>FOCUS_CITIES.includes(city)).length}/15 城 · 年度快照 {yearlyHistoryCities.length}/15 城 · 当前图表从 {historyStart}-01 起</div><div className="city-controls"><button className="city-chip all" onClick={()=>setVisibleCities(null)}>全部显示</button>{FOCUS_CITIES.map(city=>{const hasListing=listingHistoryCities.includes(city),hasYearly=yearlyHistoryCities.includes(city),hasOfficial=Boolean(compare?.official_history_by_city?.[city]?.length),active=shownCities.includes(city),coverage=coverageByCity[city],yearlyCoverage=yearlyCoverageByCity[city],points=listing?.city_history?.[city]?.length||0,yearPoints=yearlyCoverage?.records||0;return <button key={city} aria-pressed={active} title={`单击显示/隐藏；双击只看该城；月度 ${hasListing?`${coverage?.earliest||'—'} 至 ${coverage?.latest||'—'}`:'缺失'}；年度 ${hasYearly?`${yearlyCoverage?.earliest_year} 至 ${yearlyCoverage?.latest_year}`:'缺失'}；官方二手 ${hasOfficial?'有':'不在70城口径'}`} style={{'--city-color':CITY_COLORS[city]}} className={`city-chip ${active?'active':''} ${hasListing?'':'missing'}`} onClick={()=>toggleCity(city)} onDoubleClick={()=>showOnlyCity(city)}>{city} {hasListing?`${points}月`:'月缺'} / {yearPoints}年</button>})}<span className="control-help">单击显示/隐藏，双击只看该城；虚线表示该城缺少逐月挂牌序列，不代表年度快照也缺失。</span></div>
       <div className="scroll"><table><thead><tr><th>城市</th><th>月度范围</th><th>月度点</th><th>可算同比点</th><th>年度范围</th><th>年度点</th><th>排名页直取</th></tr></thead><tbody>{FOCUS_CITIES.map(city=>{const c=coverageByCity[city],y=yearlyCoverageByCity[city];return <tr key={city}><td>{city}</td><td>{c?`${c.earliest} 至 ${c.latest}`:'missing'}</td><td className="num">{c?.records??0}</td><td className="num">{c?.yoy_points??0}</td><td>{y?.records?`${y.earliest_year} 至 ${y.latest_year}`:'missing'}</td><td className="num">{y?.records??0}</td><td className="num">{y?.ranking_points??0}</td></tr>})}</tbody></table></div>
-      <Chart title={`安居客十城年度低频挂牌快照（全国排名页优先，其余取逐月页年末/当前期；${historyStart} 起；当前 ${visibleYearlySeriesCount} 条线）`} data={yearlyPriceMatrix} series={yearlyCitySeries} unit="元/㎡" digits={0} height={300} axisControls allowLog visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity} onShowAll={()=>setVisibleCities(null)}/>
+      <Chart title={`安居客十五城年度低频挂牌快照（全国排名页优先，其余取逐月页年末/当前期；${historyStart} 起；当前 ${visibleYearlySeriesCount} 条线）`} data={yearlyPriceMatrix} series={yearlyCitySeries} unit="元/㎡" digits={0} height={300} axisControls allowLog visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity} onShowAll={()=>setVisibleCities(null)}/>
       <Chart title={`安居客多城市二手挂牌均价（月度，${historyStart}-01 起；当前 ${visibleCitySeriesCount} 条线）`} data={priceHistoryMatrix} series={citySeries} unit="元/㎡" digits={0} height={280} axisControls allowLog visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity} onShowAll={()=>setVisibleCities(null)}/>
       <Chart title={`安居客多城市挂牌价相对走势（月度，${historyStart}-01 起；各城市可见首期=100）`} data={priceIndexMatrix} series={citySeries} unit="指数" digits={1} height={280} visibleKeys={shownCities} onToggleSeries={toggleCity} onOnlySeries={showOnlyCity}/>
       <Chart title={`统计局官方二手住宅同比（月度，${historyStart}-01 起；当前 ${officialCitySeries.length} 条有值线）`} data={officialHistoryMatrix} series={officialCitySeries} unit="%" digits={1} height={280}/>

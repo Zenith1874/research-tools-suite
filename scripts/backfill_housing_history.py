@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--start-year', type=int)
     parser.add_argument('--end-year', type=int, default=datetime.now().year)
     parser.add_argument('--db-path', help='覆盖默认数据库路径')
-    parser.add_argument('--cities', help='安居客城市，逗号分隔；默认用户点名十城')
+    parser.add_argument('--cities', help='安居客城市，逗号分隔；默认关注十五城')
     parser.add_argument('--ranking-cache', help='安居客全国历史排名页的本地 HTML 路径')
     parser.add_argument('--no-network', action='store_true',
                         help='仅复用本地缓存，不发起网络请求')

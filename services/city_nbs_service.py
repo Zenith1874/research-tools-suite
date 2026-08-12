@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """国家统计局“主要城市年度数据”官方管线。
 
-该接口覆盖 36 个主要城市，全部纳入。本项目十城中的常州、苏州、无锡不在这
+该接口覆盖 36 个主要城市，全部纳入。本项目目标城市中的常州、苏州、无锡不在这
 36 城名单内，其数据继续走各市统计局公报那一路。统计局在线序列可能
 包含历次修订，因此写入时遵循：补空缺、替换第三方镜像，但不静默覆盖城市官网
 公报的已发布版本；冲突会随更新结果返回，便于审计。
@@ -100,9 +100,22 @@ CATEGORY_INDICATORS = {
     # （只有涨跌幅）和安居客挂牌价（商业参考）互补，本站此前没有这一项。
     '房地产': {
         '房地产开发投资额': ('real_estate_investment', '亿元', 'indicator'),
+        '房地产开发住宅投资额': ('residential_real_estate_investment', '亿元', 'indicator'),
+        '房地产开发办公楼投资额': ('office_real_estate_investment', '亿元', 'indicator'),
+        '房地产开发商业营业用房投资额': (
+            'commercial_real_estate_investment', '亿元', 'indicator'),
+        '房地产开发企业施工房屋面积': (
+            'housing_under_construction_area', '万平方米', 'indicator'),
+        '房地产开发企业竣工房屋面积': (
+            'housing_completed_area', '万平方米', 'indicator'),
+        '房地产开发企业住宅竣工房屋面积': (
+            'residential_completed_area', '万平方米', 'indicator'),
         '商品房销售面积': ('commercial_housing_sold_area', '万平方米', 'indicator'),
+        '住宅商品房销售面积': ('residential_housing_sold_area', '万平方米', 'indicator'),
+        '商品房平均销售价格': ('commercial_housing_avg_price', '元/平方米', 'indicator'),
         '住宅商品房平均销售价格': ('residential_avg_price', '元/平方米', 'indicator'),
         '房地产开发企业购置土地面积': ('land_purchased_area', '万平方米', 'indicator'),
+        '房地产开发企业土地开发面积': ('land_developed_area', '万平方米', 'indicator'),
     },
     '贸易经济': {
         '社会消费品零售总额': ('retail_sales', '亿元', 'indicator'),
@@ -112,14 +125,63 @@ CATEGORY_INDICATORS = {
         '年末户籍人口': ('registered_population', '万人', 'indicator'),
         '城镇非私营单位在岗职工平均工资': ('avg_wage', '元', 'indicator'),
     },
+    '运输和邮电': {
+        '旅客运输量': ('passenger_transport_volume', '万人', 'indicator'),
+        '货物运输量': ('freight_transport_volume', '万吨', 'indicator'),
+        '年末邮政局(所)': ('postal_outlets', '处', 'indicator'),
+        '年末固定电话用户': ('fixed_phone_subscribers', '万户', 'indicator'),
+    },
+    '教育、卫生、文化': {
+        '普通本专科在校学生数': ('college_students', '万人', 'indicator'),
+        '医院数': ('hospitals', '个', 'indicator'),
+        '执业(助理)医师数': ('physicians', '万人', 'indicator'),
+        '剧场、影剧院数': ('theaters', '个', 'indicator'),
+    },
+    # 这一组是“开发区”而非全市企业口径。落库时保留专用指标名，页面明确标注
+    # 开发区范围，绝不把它包装成全市高技术产业总量。
+    '开发区高新技术企业主要经济指标': {
+        '开发区高新技术企业数': (
+            'development_zone_high_tech_enterprises', '个', 'indicator'),
+        '开发区高新技术企业从业人员': (
+            'development_zone_high_tech_employees', '人', 'indicator'),
+        # 原表单位为万元；统一换算为亿元，factor 写在 spec 第四位。
+        '开发区高新技术企业总产值': (
+            'development_zone_high_tech_output', '亿元', 'indicator', 0.0001),
+        '开发区高新技术企业总收入': (
+            'development_zone_high_tech_revenue', '亿元', 'indicator', 0.0001),
+        # 原表万美元 -> 百万美元。
+        '开发区高新技术企业出口总额': (
+            'development_zone_high_tech_exports', '百万美元', 'indicator', 0.01),
+    },
+    '噪声监测': {
+        '道路交通等效声级': ('traffic_noise_db', 'dB(A)', 'indicator'),
+        '环境噪声等效声级': ('environmental_noise_db', 'dB(A)', 'indicator'),
+    },
 }
+
+# 扩展字段在不同历史版目录中可能不存在。它们缺席时仍抓取同分类中可识别的字段，
+# 避免一个旧目录标签变化让整类核心数据都失败；原有核心字段继续保持严格校验。
+OPTIONAL_INDICATOR_PREFIXES = frozenset({
+    prefix
+    for category, indicators in CATEGORY_INDICATORS.items()
+    for prefix in indicators
+    if category in ('运输和邮电', '教育、卫生、文化',
+                    '开发区高新技术企业主要经济指标', '噪声监测')
+    or prefix not in {
+        '地区生产总值', '第一产业增加值', '第二产业增加值', '第三产业增加值',
+        '地方一般公共预算收入', '地方一般公共预算支出', '住户存款余额',
+        '房地产开发投资额', '商品房销售面积', '住宅商品房平均销售价格',
+        '房地产开发企业购置土地面积', '社会消费品零售总额',
+        '货物进出口总额', '年末户籍人口', '城镇非私营单位在岗职工平均工资',
+    }
+})
 
 
 def _normal(text):
     return re.sub(r'\s+', '', text or '')
 
 
-# 36 城 × 5 分类是近两百个请求，连打会被统计局限流（返回非 JSON 的拦截页）。
+# 36 城 × 多分类会产生数百个请求，连打会被统计局限流（返回非 JSON 的拦截页）。
 # 两道措施：请求间固定间隔放慢节奏；命中限流时指数退避重试，而不是丢掉整个分类。
 RETRIES = 4
 RETRY_BACKOFF = 5.0
@@ -176,7 +238,8 @@ def _indicator_ids(session, cid, requested):
                 break
     missing = [prefix for prefix in requested
                if not any(_normal((item.get('i_showname') or item.get('_name'))).startswith(
-                   _normal(prefix)) for item in payload)]
+                   _normal(prefix)) for item in payload)
+               and prefix not in OPTIONAL_INDICATOR_PREFIXES]
     if missing:
         raise ValueError(f'国家统计局指标目录缺少: {", ".join(missing)}')
     return selected
@@ -199,7 +262,13 @@ def parse_nbs_periods(data, city, config, indicator_specs, category):
                 value = float(str(value_item['value']).replace(',', ''))
             except ValueError:
                 continue
-            indicator_code, unit, destination = spec
+            indicator_code, unit, destination = spec[:3]
+            factor = float(spec[3]) if len(spec) > 3 else 1.0
+            value *= factor
+            scope_note = ('开发区口径。' if indicator_code.startswith('development_zone_')
+                          else '全市口径。')
+            conversion_note = (f'原始值乘以 {factor:g} 完成单位换算。'
+                               if factor != 1.0 else '')
             source_url = ('https://data.stats.gov.cn/easyquery.htm?cn=E0105'
                           f'&reg={config["nbs_da"][:6]}&sj={period}')
             # GDP 与一般指标都是城市口径，直辖市统一落城市码；只有财政沿用
@@ -220,9 +289,11 @@ def parse_nbs_periods(data, city, config, indicator_specs, category):
                 'source_name': NBS_SOURCE_NAME,
                 'source_url': source_url,
                 'source_title': f'主要城市年度数据—{category}',
-                'parser_notes': ('国家统计局在线主要城市年度数据直接值；全市口径。'
-                                 '该在线序列为经济普查修订后的统一口径，整段可比，'
-                                 '与年鉴各年初值不同，标为 official_revised。'),
+                'parser_notes': ('国家统计局在线主要城市年度数据直接值；'
+                                 + scope_note
+                                 + '该在线序列为经济普查修订后的统一口径，整段可比，'
+                                 + '与年鉴各年初值不同，标为 official_revised。'
+                                 + conversion_note),
             })
     return rows
 
@@ -257,7 +328,7 @@ def _post_once(session, cid, root_id, indicator_ids, city, config,
 
 
 def fetch_nbs_city_rows(session=None, cities=None, start_year=2010, end_year=None):
-    """低频抓取七个目标城市；单城/单分类失败不影响其他城市。"""
+    """低频抓取主要城市年度序列；单城/单分类失败不影响其他城市。"""
     session = session or requests.Session()
     end_year = end_year or datetime.now().year
     session.get(NBS_PAGE, headers=HEADERS, timeout=30).raise_for_status()
@@ -467,7 +538,7 @@ def store_nbs_rows(conn, rows, tolerance=0.005):
 
 
 def is_fresh(db_path, max_age_days=30):
-    """统计局年度序列一年只动几次，没必要每次点"更新"都重抓 7 城 × 2 分类。"""
+    """统计局年度序列一年只动几次，没必要每次点“更新”都重抓 36 城 × 5 分类。"""
     conn = sqlite3.connect(db_path, timeout=30)
     try:
         row = conn.execute('''SELECT MAX(updated_at) FROM gdp_region_observations

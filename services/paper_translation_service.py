@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,60 @@ DEFAULT_BASE_URL = os.environ.get('TRANSLATION_BASE_URL', 'http://127.0.0.1:1800
 TRANSLATION_MAX_UPLOAD_BYTES = int(os.environ.get('TRANSLATION_MAX_UPLOAD_BYTES', 50 * 1024 * 1024))
 TRANSLATION_BATCH_CHARS = int(os.environ.get('TRANSLATION_BATCH_CHARS', 4200))
 TRANSLATION_BATCH_UNITS = int(os.environ.get('TRANSLATION_BATCH_UNITS', 10))
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _process_is_alive(pid) -> bool:
+    """Cross-platform liveness check used to avoid cross-process false recovery."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == 'nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel32.OpenProcess.argtypes = (
+                wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = (
+                wintypes.HANDLE, wintypes.DWORD)
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+            if not handle:
+                return False
+            try:
+                return kernel32.WaitForSingleObject(handle, 0) == 0x00000102
+            finally:
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError):
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+# One worker is deliberately conservative: PDF extraction is CPU/memory heavy and
+# Iverson serves a single shared Qwen instance.  Administrators may raise this to
+# at most four after measuring the host, but queued jobs never create one thread
+# per uploaded file.
+TRANSLATION_MAX_CONCURRENT_JOBS = _bounded_int_env(
+    'TRANSLATION_MAX_CONCURRENT_JOBS', 1, 1, 4)
 SUPPORTED_EXTENSIONS = {'.docx', '.pdf', '.txt', '.md'}
 
 _XML_PART_RE = re.compile(
@@ -512,7 +567,27 @@ def _validate_translation_content(source: str, translated: str) -> None:
     translated = translated.strip()
     if source and not translated:
         raise ModelStructureError('模型返回了空译文')
-    if re.search(r'[.!?][\"\'\u2019\u201d)]*$', source) and not re.search(
+    # A trailing period is not always a sentence boundary. PDF tables often
+    # expose labels such as ``Std. Err.`` as standalone text units; requiring a
+    # Chinese full stop there turns a correct table-header translation into a
+    # deterministic false "truncation" failure. Keep the hard check for real
+    # sentences, questions, and exclamations while exempting an explicit,
+    # bounded set of common academic/table abbreviations.
+    period_is_abbreviation = bool(re.search(
+        r'(?i)(?:\b(?:std|err|coef|coeff|fig|eq|eqs|no|nos|vol|pp|vs|etc|'
+        r'dr|prof|mr|mrs|ms)|\b(?:e\.g|i\.e|s\.e|et\s+al))\.'
+        r'[\"\'\u2019\u201d)\]]*$', source))
+    # Signature blocks commonly end with a degree rather than a sentence,
+    # for example ``Zixing Shen, Ph.D.``. Limit this exemption to a short,
+    # comma-delimited name/credential line so prose such as ``She earned a
+    # Ph.D.`` still has to end with translated terminal punctuation.
+    credential_metadata = len(source) <= 120 and bool(re.fullmatch(
+        r"[\w\s.'\-\u00c0-\u024f]+,\s*(?:Ph\.?D|M\.?D|D\.?B\.?A|"
+        r"J\.?D|M\.?B\.?A|M\.?S|M\.?A|B\.?S|B\.?A)\."
+        r'[\"\'\u2019\u201d)\]]*', source, re.I))
+    source_has_terminal = bool(re.search(r'[.!?][\"\'\u2019\u201d)]*$', source))
+    if source_has_terminal and not period_is_abbreviation \
+            and not credential_metadata and not re.search(
             r'[。！？.!?》〉】”’\"\')\]）]$', translated):
         raise ModelStructureError('模型译文疑似在句末截断')
 
@@ -526,6 +601,8 @@ class AcademicTranslationClient:
         self.model = model
         self.timeout = timeout
         self.retries = retries
+        self.validation_retries_used = 0
+        self.protected_anchor_fallbacks_used = 0
 
     def health(self) -> dict:
         started = time.monotonic()
@@ -572,13 +649,47 @@ class AcademicTranslationClient:
             nonlocal completed, checkpoint_index
             try:
                 result = self._translate_batch(batch, options)
-            except ModelStructureError:
-                if len(batch) <= 1:
-                    raise
-                midpoint = len(batch) // 2
-                translate_batch_with_fallback(batch[:midpoint])
-                translate_batch_with_fallback(batch[midpoint:])
-                return
+            except ModelStructureError as initial_error:
+                if len(batch) > 1:
+                    midpoint = len(batch) // 2
+                    translate_batch_with_fallback(batch[:midpoint])
+                    translate_batch_with_fallback(batch[midpoint:])
+                    return
+                # A singleton cannot be split by unit any further.  Re-request
+                # it with a different seed and an explicit validation-repair
+                # instruction.  Previously the first malformed KEEP token or
+                # missing terminal punctuation permanently failed the paper,
+                # and a manual retry reproduced the same deterministic answer.
+                last_error = initial_error
+                for validation_attempt in range(1, self.retries + 1):
+                    self.validation_retries_used += 1
+                    try:
+                        result = self._translate_batch(
+                            batch, options, validation_attempt=validation_attempt)
+                        break
+                    except ModelStructureError as exc:
+                        last_error = exc
+                else:
+                    # Some models consistently omit the first placeholder even
+                    # after repair prompting.  In that case translate only the
+                    # prose between immutable anchors, then reinsert protected
+                    # values locally in exact source order.  The protected
+                    # values themselves are still never entrusted to model
+                    # output and all translated fragments retain hard checks.
+                    repaired = None
+                    for validation_attempt in range(
+                            self.retries + 1, self.retries + 3):
+                        self.validation_retries_used += 1
+                        try:
+                            repaired = self._translate_with_protected_anchors(
+                                batch[0], options, validation_attempt)
+                            break
+                        except ModelStructureError as exc:
+                            last_error = exc
+                    if repaired is None:
+                        raise last_error
+                    self.protected_anchor_fallbacks_used += 1
+                    result = repaired
             for unit in batch:
                 unit.translations = result[unit.unit_id]
             completed += len(batch)
@@ -596,7 +707,92 @@ class AcademicTranslationClient:
         for batch in batches:
             translate_batch_with_fallback(batch)
 
-    def _translate_batch(self, units: list[TranslationUnit], options: dict) -> dict[str, dict[str, str]]:
+    def _translate_with_protected_anchors(
+            self, unit: TranslationUnit, options: dict,
+            validation_attempt: int) -> dict[str, dict[str, str]] | None:
+        """Translate prose fragments while reinserting immutable spans locally.
+
+        Returns ``None`` when the unit contains no protected anchors, allowing
+        the caller to preserve the original hard failure.
+        """
+        glossary = options.get('glossary') or []
+        recipes: dict[str, list[tuple]] = {}
+        fragment_texts: dict[str, str] = {}
+        original_segments: dict[str, Segment] = {}
+        serial = 0
+        has_anchors = False
+
+        for original in unit.segments:
+            if original.locked:
+                continue
+            masked, replacements = _mask_segment(original.core_text, glossary, serial)
+            serial += len(replacements) + 1
+            original_segments[original.segment_id] = original
+            if replacements:
+                has_anchors = True
+                token_pattern = re.compile(
+                    '(' + '|'.join(re.escape(token) for token in replacements) + ')')
+                pieces = token_pattern.split(masked)
+            else:
+                pieces = [masked]
+
+            recipe: list[tuple] = []
+            for part_index, piece in enumerate(pieces):
+                if not piece:
+                    continue
+                if piece in replacements:
+                    recipe.append(('anchor', replacements[piece]))
+                    continue
+                leading, core, trailing = _split_outer_whitespace(piece)
+                if not core or not _TRANSLATABLE_RE.search(core):
+                    recipe.append(('literal', piece))
+                    continue
+                segment_id = f'{original.segment_id}:text:{part_index}'
+                fragment_texts[segment_id] = core
+                recipe.append(('translation', segment_id, leading, trailing))
+            recipes[original.segment_id] = recipe
+
+        if not has_anchors:
+            return None
+        translated_fragments: dict[str, str] = {}
+        # Request each prose fragment independently.  Asking one response to
+        # echo many tiny fragments proved vulnerable to another omission mode;
+        # singleton requests make the expected cardinality unambiguous.
+        for fragment_index, (fragment_id, source_text) in enumerate(
+                fragment_texts.items()):
+            synthetic_id = (
+                f'{unit.unit_id}:protected-anchor-fallback:{fragment_index}')
+            synthetic = TranslationUnit(
+                unit_id=synthetic_id,
+                part_name='protected-anchor-fallback',
+                paragraph_start=getattr(unit, 'paragraph_start', 0),
+                paragraph_end=getattr(unit, 'paragraph_end', 0),
+                paragraph_xml='',
+                segments=[Segment('0', source_text)],
+            )
+            translated = self._translate_batch(
+                [synthetic], options, validation_attempt=validation_attempt,
+                fragment_mode=True)
+            translated_fragments[fragment_id] = translated[synthetic_id]['0']
+        restored: dict[str, str] = {}
+        for segment_id, recipe in recipes.items():
+            output: list[str] = []
+            for item in recipe:
+                if item[0] in {'anchor', 'literal'}:
+                    output.append(item[1])
+                else:
+                    _kind, synthetic_id, leading, trailing = item
+                    output.append(
+                        leading + translated_fragments[synthetic_id] + trailing)
+            value = ''.join(output)
+            _validate_translation_content(
+                original_segments[segment_id].core_text, value)
+            restored[segment_id] = value
+        return {unit.unit_id: restored}
+
+    def _translate_batch(self, units: list[TranslationUnit], options: dict,
+                         validation_attempt: int = 0,
+                         fragment_mode: bool = False) -> dict[str, dict[str, str]]:
         glossary = options.get('glossary') or []
         payload_units = []
         masks: dict[tuple[str, str], dict[str, str]] = {}
@@ -621,24 +817,43 @@ class AcademicTranslationClient:
             expected[unit.unit_id] = translatable_ids
             payload_units.append({'id': unit.unit_id, 'segments': segments})
 
+        placeholder_instruction = (
+            'This request contains only prose fragments and no placeholder tokens. '
+            'Never emit text matching [[KEEP_ followed by digits. '
+            if fragment_mode else
+            'Tokens like [[KEEP_000001]] are immutable and must appear exactly once. '
+        )
         system = (
             'You are a meticulous academic paper translator. Translate only segments where translate=true '
             f"from {options['source_language']} to {options['target_language']}. Use publication-quality "
             f"academic language suitable for {options['domain']}. Read every segment in a unit as shared context. "
             'Preserve meaning, hedging, construct distinctions, causal strength, and terminology. '
             'Keep author personal names in their original spelling. '
-            'Tokens like [[KEEP_000001]] are immutable and must appear exactly once. '
+            + placeholder_instruction +
             'Do not translate segments where translate=false and do not return them. '
             'Return JSON only with this exact shape: '
             '{"units":[{"id":"same unit id","segments":[{"id":"same translatable segment id","text":"translation"}]}]}. '
             'Return every requested unit and every translatable segment exactly once. No notes or markdown. /no_think'
         )
+        if validation_attempt and not fragment_mode:
+            system += (
+                ' This is a validation-repair retry. Copy every [[KEEP_000000]] token '
+                'byte-for-byte exactly once before translating the surrounding prose. '
+                'Return a complete translation for every segment; when the source ends '
+                'as a sentence, the translation must also end with appropriate terminal punctuation.'
+            )
+        elif validation_attempt:
+            system += (
+                ' This is a plain-prose validation repair. Return the complete translation '
+                'without placeholders, commentary, prefixes, or suffixes. When the source '
+                'ends as a sentence, use appropriate terminal punctuation.'
+            )
         user = json.dumps({'units': payload_units}, ensure_ascii=False, separators=(',', ':'))
         body = {
             'model': self.model,
-            'temperature': 0.1,
+            'temperature': min(0.25, 0.1 + validation_attempt * 0.05),
             'top_p': 0.8,
-            'seed': 20260721,
+            'seed': 20260721 + validation_attempt * 104729,
             # The deployed Qwen endpoint has an 8K context window.  Keep the
             # output reservation comfortably below that ceiling after the
             # system prompt and masked source JSON are counted by vLLM.
@@ -712,6 +927,28 @@ class AcademicTranslationClient:
 
     # ---- Summarization (map/reduce over the same tunnelled endpoint) ---------
 
+    @staticmethod
+    def _summary_guidance(options: dict, source_text: str = '') -> str:
+        """Bound domain/terminology guidance so summary controls are not cosmetic."""
+        rows = options.get('glossary') or []
+        folded_source = source_text.casefold()
+        selected = []
+        for pair in rows:
+            source = str(pair.get('source') or '').strip()
+            target = str(pair.get('target') or '').strip()
+            if not source or not target:
+                continue
+            if source_text and source.casefold() not in folded_source:
+                continue
+            selected.append(f'{source} = {target}')
+            if len(selected) >= 40 or sum(len(item) for item in selected) > 1400:
+                break
+        guidance = f"Research domain: {options.get('domain') or 'academic research'}."
+        if selected:
+            guidance += (' Use these terms consistently when the corresponding concept appears: '
+                         + '; '.join(selected) + '.')
+        return guidance
+
     def summarize_sections(self, units: list[dict], options: dict,
                            on_batch: Callable[[dict[str, str]], None]) -> None:
         """Map step: batch section units, summarize each, report {unit_id: summary}."""
@@ -748,12 +985,14 @@ class AcademicTranslationClient:
                    for unit in units]
         expected = {unit['unit_id'] for unit in units}
         target = options['target_language']
+        guidance = self._summary_guidance(
+            options, '\n'.join(unit['text'] for unit in units))
         system = (
             'You are a meticulous academic reader. For each section object, write a faithful '
             f'summary in {target} of 2-4 sentences covering the section purpose, method or '
             'content, and key finding. Preserve technical terms, hedging, and construct '
             'distinctions. Do not invent facts not present in the section. Keep author names '
-            'in original spelling. Return JSON only with this exact shape: '
+            f'in original spelling. {guidance} Return JSON only with this exact shape: '
             '{"summaries":[{"id":"same section id","summary":"..."}]}. '
             'Return every requested section exactly once. No notes or markdown. /no_think'
         )
@@ -785,38 +1024,163 @@ class AcademicTranslationClient:
 
         Hierarchical when the combined section summaries would overflow the window.
         """
-        target = options['target_language']
         blocks = [f"[{item['title']}] {item['summary']}" for item in section_summaries]
-        joined = '\n'.join(blocks)
-        if len(joined) > 5000 and len(blocks) > 4:
-            # First fold the section summaries into a few condensed digests.
-            digests: list[str] = []
+        if not blocks:
+            raise ModelStructureError('没有可用于全文摘要的逐节小结')
+        # Repeatedly fold bounded chunks until the final synthesis fits.  This is
+        # intentionally recursive rather than a one-level reduction that can
+        # overflow again for documents with hundreds of detected sections.
+        for _level in range(6):
+            if len('\n'.join(blocks)) <= 5000:
+                break
+            chunks: list[list[str]] = []
             chunk: list[str] = []
             chunk_chars = 0
             for block in blocks:
-                if chunk and chunk_chars + len(block) > 4000:
-                    digests.append(self._reduce_call(chunk, target, condensed=True))
+                if chunk and chunk_chars + 1 + len(block) > 4000:
+                    chunks.append(chunk)
                     chunk, chunk_chars = [], 0
                 chunk.append(block)
-                chunk_chars += len(block)
+                chunk_chars += (1 if chunk_chars else 0) + len(block)
             if chunk:
-                digests.append(self._reduce_call(chunk, target, condensed=True))
-            blocks = digests
-        return self._reduce_call(blocks, target, condensed=False)
+                chunks.append(chunk)
+            previous_chars = len('\n'.join(blocks))
+            blocks = [self._reduce_call(items, options, condensed=True) for items in chunks]
+            if len('\n'.join(blocks)) >= previous_chars:
+                raise ModelStructureError('模型未能将逐节小结压缩到安全上下文范围')
+        if len('\n'.join(blocks)) > 5000:
+            raise ModelStructureError('全文摘要输入超过安全上下文范围')
+        return self._reduce_call(blocks, options, condensed=False)
 
-    def _reduce_call(self, blocks: list[str], target: str, condensed: bool) -> str:
+    def answer_question(self, evidence: list[dict], question: str,
+                        history: list[dict], options: dict) -> dict:
+        """Answer one paper question from bounded original-language evidence."""
+        target = options.get('target_language') or 'Simplified Chinese / 简体中文'
+        system = (
+            'You are an evidence-bound academic reading assistant. Answer the user question '
+            f'in {target} using only the supplied original-paper evidence. Prior conversation '
+            'is conversational context, never evidence. Do not rely on a generated translation '
+            'or summary. Preserve hedging, correlation-versus-causation distinctions, construct '
+            'definitions, sample limits, and statistical uncertainty. If the evidence is '
+            'insufficient, say what cannot be established and set not_found=true. Distinguish '
+            'the authors\' claims from your interpretation. Answer the current question directly; '
+            'do not repeat a previous answer merely because it appears in conversation context. '
+            'When the user asks you to re-check or read more carefully, re-evaluate the supplied '
+            'evidence and explain any corrected or newly supported conclusion. Cite supporting '
+            'evidence IDs such '
+            'as [E0001] in the answer. Return JSON only with exactly these keys: '
+            '{"answer":"...", "evidence_ids":["E0001"], '
+            '"confidence":"high|medium|low", "not_found":false}. /no_think'
+        )
+        safe_history = []
+        for turn in history[-4:]:
+            safe_history.append({
+                'question': str(turn.get('question') or '')[:1000],
+                'answer': str(turn.get('answer') or '')[:1600],
+            })
+        payload = {
+            'question': question,
+            'conversation_context': safe_history,
+            'evidence': [{
+                'id': row['evidence_id'],
+                'location': row.get('locator') or row.get('title') or '正文',
+                'title': row.get('title') or '正文',
+                'text': row.get('text') or '',
+            } for row in evidence],
+        }
+        expected_ids = {row['evidence_id'] for row in evidence}
+        last_error: Exception | None = None
+        for _attempt in range(self.retries + 1):
+            try:
+                content = self._chat(
+                    system, json.dumps(payload, ensure_ascii=False, separators=(',', ':')),
+                    max_tokens=1800, response_json=True)
+                parsed = json.loads(content)
+                if not isinstance(parsed, dict) or set(parsed) != {
+                        'answer', 'evidence_ids', 'confidence', 'not_found'}:
+                    raise ModelStructureError('模型未返回有效的文章问答 JSON')
+                answer = parsed.get('answer')
+                evidence_ids = parsed.get('evidence_ids')
+                confidence = parsed.get('confidence')
+                not_found = parsed.get('not_found')
+                if not isinstance(answer, str) or not answer.strip():
+                    raise ModelStructureError('模型返回了空回答')
+                if (not isinstance(evidence_ids, list)
+                        or any(not isinstance(item, str) for item in evidence_ids)):
+                    raise ModelStructureError('模型返回了无效的证据编号')
+                if len(evidence_ids) != len(set(evidence_ids)) \
+                        or any(item not in expected_ids for item in evidence_ids):
+                    raise ModelStructureError('模型引用了重复或未知的原文证据')
+                if confidence not in {'high', 'medium', 'low'} or not isinstance(not_found, bool):
+                    raise ModelStructureError('模型返回了无效的置信度或证据状态')
+                if not not_found and not evidence_ids:
+                    raise ModelStructureError('有结论的回答必须引用至少一条原文证据')
+                inline_ids = set(re.findall(r'\[(E\d{4})\]', answer))
+                if inline_ids - set(evidence_ids):
+                    raise ModelStructureError('回答正文引用了未声明的原文证据')
+                if not not_found and not inline_ids:
+                    raise ModelStructureError('有结论的回答正文必须标注原文证据编号')
+                return {
+                    'answer': answer.strip(),
+                    'evidence_ids': evidence_ids,
+                    'confidence': confidence,
+                    'not_found': not_found,
+                }
+            except (json.JSONDecodeError, ModelStructureError) as exc:
+                last_error = exc
+        if isinstance(last_error, ModelStructureError):
+            raise last_error
+        raise ModelStructureError('模型未返回有效的文章问答结果') from last_error
+
+    def _reduce_call(self, blocks: list[str], options: dict, condensed: bool) -> str:
+        target = options['target_language']
+        guidance = self._summary_guidance(options)
         if condensed:
             system = (f'Condense these academic section notes into a single tight paragraph in '
-                      f'{target}, preserving key methods and findings. Plain text only. /no_think')
+                      f'{target}, preserving key methods and findings. {guidance} '
+                      'Return JSON only as {"digest":"..."}. /no_think')
         else:
             system = (
                 'You synthesize an academic paper summary from per-section notes. '
-                f'Write in {target} using exactly these four markdown headings and nothing else: '
-                '「## 研究问题」「## 方法与数据」「## 主要发现」「## 贡献与局限」. '
-                'Be concise and faithful; do not invent anything beyond the notes. /no_think'
+                f'Write concise, faithful content in {target}; do not invent anything beyond the notes. '
+                f'{guidance} Return JSON only with exactly these four non-empty string keys: '
+                '"research_question", "methods_and_data", "key_findings", '
+                '"contributions_and_limitations". /no_think'
             )
         user = '\n'.join(blocks)
-        return self._chat(system, user, max_tokens=1600, response_json=False).strip()
+        last_error: Exception | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                content = self._chat(system, user, max_tokens=1600, response_json=True)
+                parsed = json.loads(content)
+                if not isinstance(parsed, dict):
+                    raise ModelStructureError('模型未返回总结 JSON 对象')
+                if condensed:
+                    digest = parsed.get('digest')
+                    if set(parsed) != {'digest'} or not isinstance(digest, str) or not digest.strip():
+                        raise ModelStructureError('模型未返回有效的压缩小结')
+                    return digest.strip()
+                keys = (
+                    'research_question', 'methods_and_data', 'key_findings',
+                    'contributions_and_limitations',
+                )
+                if set(parsed) != set(keys) or any(
+                        not isinstance(parsed.get(key), str) or not parsed[key].strip()
+                        for key in keys):
+                    raise ModelStructureError('模型返回的全文摘要字段不完整')
+                from services.paper_summary_service import summary_heading_set
+                headings = summary_heading_set(target)
+                return '\n\n'.join(
+                    f'## {heading}\n{parsed[key].strip()}'
+                    for heading, key in zip(headings, keys)
+                )
+            except (json.JSONDecodeError, ModelStructureError) as exc:
+                last_error = exc
+                if attempt < self.retries:
+                    continue
+        if isinstance(last_error, ModelStructureError):
+            raise last_error
+        raise ModelStructureError('模型未返回有效的全文摘要 JSON') from last_error
 
     def _chat(self, system: str, user: str, max_tokens: int, response_json: bool = True) -> str:
         body = {
@@ -964,7 +1328,9 @@ def _write_unit_hash_index(path: Path, units: list) -> None:
 class PaperTranslationManager:
     """Persistent, thread-safe job manager with isolated private job folders."""
 
-    def __init__(self, root: str | Path, client_factory: Callable[[], AcademicTranslationClient] | None = None):
+    def __init__(self, root: str | Path,
+                 client_factory: Callable[[], AcademicTranslationClient] | None = None,
+                 max_concurrent_jobs: int | None = None):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         try:
@@ -974,6 +1340,75 @@ class PaperTranslationManager:
         self._client_factory = client_factory or (lambda: AcademicTranslationClient())
         self._lock = threading.RLock()
         self._active: set[str] = set()
+        self._question_locks: dict[str, threading.Lock] = {}
+        configured_workers = (TRANSLATION_MAX_CONCURRENT_JOBS
+                              if max_concurrent_jobs is None else max_concurrent_jobs)
+        self.max_concurrent_jobs = max(1, min(4, int(configured_workers)))
+        self._executor: ThreadPoolExecutor | None = None
+        self._recover_stale_jobs()
+
+    def _recover_stale_jobs(self) -> None:
+        """Make crash/restart leftovers explicitly retryable without auto-using a GPU."""
+        for manifest_path in self.root.glob('*/manifest.json'):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+            except Exception:
+                continue
+            if manifest.get('status') not in {'queued', 'running'}:
+                continue
+            # Another process may legitimately own this manager root (for
+            # example a test importing server.py while the real server is
+            # translating).  Never rewrite a live owner's manifest.
+            if _process_is_alive(manifest.get('worker_pid')):
+                continue
+            job_id = manifest.get('job_id')
+            if not isinstance(job_id, str) or not _JOB_ID_RE.fullmatch(job_id):
+                continue
+            manifest.update(
+                status='interrupted',
+                interrupted_at=_utc_now(),
+                updated_at=_utc_now(),
+                error='服务重启前任务未完成；本机检查点已保留，可重试续跑。',
+            )
+            manifest.pop('worker_pid', None)
+            manifest.pop('worker_started_at', None)
+            self._write_manifest(job_id, manifest)
+
+    def _ensure_executor(self) -> ThreadPoolExecutor:
+        with self._lock:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self.max_concurrent_jobs,
+                    thread_name_prefix='paper-job',
+                )
+            return self._executor
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Release queue workers; primarily used by tests and controlled shutdowns."""
+        with self._lock:
+            executor, self._executor = self._executor, None
+        if executor is not None:
+            executor.shutdown(wait=wait, cancel_futures=not wait)
+
+    def _finish_cancelled_submission(self, job_id: str, future) -> None:
+        """Keep a cancelled queued job retryable instead of leaving it active forever."""
+        if not future.cancelled():
+            return
+        with self._lock:
+            self._active.discard(job_id)
+        try:
+            manifest = self._read_manifest(job_id)
+            if manifest.get('status') == 'queued':
+                now = _utc_now()
+                manifest.update(
+                    status='interrupted', interrupted_at=now, updated_at=now,
+                    error='任务队列已关闭；本机原件与检查点已保留，可重试续跑。',
+                )
+                manifest.pop('worker_pid', None)
+                manifest.pop('worker_started_at', None)
+                self._write_manifest(job_id, manifest)
+        except Exception:
+            pass
 
     def config(self) -> dict:
         client = self._client_factory()
@@ -986,8 +1421,15 @@ class PaperTranslationManager:
                 'characters': TRANSLATION_BATCH_CHARS,
                 'units': TRANSLATION_BATCH_UNITS,
             },
+            'max_concurrent_jobs': self.max_concurrent_jobs,
             'model_service': client.health(),
             'job_storage': 'data/translation_jobs (gitignored, local only)',
+            'paper_questions': {
+                'supported': True,
+                'grounding': 'original_document_only',
+                'history_storage': 'per-job JSONL (local only)',
+                'citations': 'PDF page or source section/paragraph',
+            },
             'pdf_format_preservation_supported': True,
             'pdf_support': {
                 'mode': 'high_fidelity_text_layer_overlay',
@@ -1031,8 +1473,25 @@ class PaperTranslationManager:
             ]
         if summary_name:
             warnings.append('总结为模型概括，可能有遗漏或偏差，重要判断请核对原文；总结与原文仅保存在本机。')
+        summary_settings = None
+        if summary_name:
+            from services.paper_summary_service import (
+                SUMMARY_CHECKPOINT_SCHEMA_VERSION, SUMMARY_MAX_SECTIONS,
+                SUMMARY_PROMPT_VERSION, SUMMARY_SECTION_CHAR_BUDGET,
+            )
+            summary_settings = {
+                'prompt_version': SUMMARY_PROMPT_VERSION,
+                'checkpoint_schema_version': SUMMARY_CHECKPOINT_SCHEMA_VERSION,
+                'section_character_budget': SUMMARY_SECTION_CHAR_BUDGET,
+                'maximum_sections': SUMMARY_MAX_SECTIONS,
+                'temperature': 0.2,
+                'top_p': 0.8,
+                'seed': 20260721,
+                'map_output': 'validated JSON',
+                'reduce_output': 'validated four-field JSON rendered with localized headings',
+            }
         manifest = {
-            'schema_version': 1,
+            'schema_version': 2,
             'job_id': job_id,
             'status': 'queued',
             'mode': mode,
@@ -1053,6 +1512,7 @@ class PaperTranslationManager:
                 'top_p': 0.8,
                 'seed': 20260721,
             },
+            'summary_settings': summary_settings,
             'progress': {'total_units': 0, 'translated_units': 0, 'percent': 0},
             'warnings': warnings,
             'audit': {},
@@ -1068,6 +1528,8 @@ class PaperTranslationManager:
         if manifest['status'] not in {'failed', 'interrupted'}:
             raise TranslationError('只有失败或中断的任务可以重试')
         manifest.update(status='queued', updated_at=_utc_now(), error=None)
+        manifest.pop('failed_at', None)
+        manifest.pop('interrupted_at', None)
         self._write_manifest(job_id, manifest)
         self._start(job_id)
         return self._public_manifest(manifest)
@@ -1083,6 +1545,158 @@ class PaperTranslationManager:
 
     def get_job(self, job_id: str) -> dict:
         return self._public_manifest(self._read_manifest(job_id))
+
+    def question_history(self, job_id: str) -> dict:
+        """Return validated local turns without exposing cached full-paper chunks."""
+        manifest = self._read_manifest(job_id)
+        if manifest.get('status') != 'completed':
+            raise TranslationError('文章处理完成后才能开始问答')
+        turns = self._load_question_turns(job_id, manifest.get('input_sha256'))
+        return {
+            'job_id': job_id,
+            'original_filename': manifest.get('original_filename'),
+            'model': manifest.get('model'),
+            'turns': turns,
+            'grounding': 'original_document_only',
+        }
+
+    def ask_question(self, job_id: str, question: str) -> dict:
+        """Run a source-grounded question and append one auditable local turn."""
+        question = re.sub(r'\s+', ' ', str(question or '')).strip()
+        if len(question) < 2:
+            raise TranslationError('请输入至少两个字符的问题')
+        if len(question) > 2000:
+            raise TranslationError('问题过长，请控制在 2000 个字符以内')
+        manifest = self._read_manifest(job_id)
+        if manifest.get('status') != 'completed':
+            raise TranslationError('文章处理完成后才能开始问答')
+        job_dir = self._job_dir(job_id)
+        input_path = job_dir / manifest['input_filename']
+        input_sha256 = manifest.get('input_sha256')
+        if _sha256_file(input_path) != input_sha256:
+            raise TranslationError('原文件校验失败，已停止文章问答')
+
+        with self._lock:
+            question_lock = self._question_locks.setdefault(job_id, threading.Lock())
+        if not question_lock.acquire(blocking=False):
+            raise TranslationError('这篇文章正在回答另一个问题，请稍后再问')
+        try:
+            from services.paper_summary_service import (
+                QUESTION_PROMPT_VERSION,
+                extract_question_evidence,
+                rank_question_evidence,
+            )
+            evidence_cache_path = job_dir / 'question_evidence.json'
+            evidence = self._load_question_evidence_cache(
+                evidence_cache_path, input_sha256, QUESTION_PROMPT_VERSION)
+            if evidence is None:
+                evidence = extract_question_evidence(input_path)
+                self._write_question_evidence_cache(
+                    evidence_cache_path, input_sha256, QUESTION_PROMPT_VERSION, evidence)
+
+            history = self._load_question_turns(job_id, input_sha256)
+            retrieval_context = '\n'.join(
+                turn.get('question', '') for turn in history[-2:])
+            selected = rank_question_evidence(
+                evidence, question, context=retrieval_context)
+            if not selected:
+                raise TranslationError('没有找到可供模型核对的原文证据')
+            client = self._client_factory()
+            result = client.answer_question(
+                selected, question, history, manifest.get('options') or {})
+            selected_by_id = {row['evidence_id']: row for row in selected}
+            citations = []
+            for evidence_id in result['evidence_ids']:
+                row = selected_by_id[evidence_id]
+                excerpt = re.sub(r'\s+', ' ', row.get('text') or '').strip()
+                citations.append({
+                    'evidence_id': evidence_id,
+                    'title': row.get('title') or '正文',
+                    'locator': row.get('locator') or row.get('title') or '正文',
+                    'page_number': row.get('page_number'),
+                    'excerpt': excerpt[:1200],
+                    'source_sha256': row.get('source_sha256'),
+                })
+            turn = {
+                'schema_version': 1,
+                'turn_id': uuid.uuid4().hex,
+                'created_at': _utc_now(),
+                'question': question,
+                'answer': result['answer'],
+                'citations': citations,
+                'confidence': result['confidence'],
+                'not_found': result['not_found'],
+                'model': client.model,
+                'input_sha256': input_sha256,
+                'prompt_version': QUESTION_PROMPT_VERSION,
+                'retrieved_evidence_ids': [
+                    row['evidence_id'] for row in selected],
+            }
+            with (job_dir / 'questions.jsonl').open('a', encoding='utf-8') as handle:
+                handle.write(json.dumps(turn, ensure_ascii=False) + '\n')
+                handle.flush()
+            return turn
+        finally:
+            question_lock.release()
+
+    def _load_question_turns(self, job_id: str, input_sha256: str | None) -> list[dict]:
+        path = self._job_dir(job_id) / 'questions.jsonl'
+        if not path.is_file():
+            return []
+        turns = []
+        for line in path.read_text(encoding='utf-8').splitlines():
+            try:
+                row = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if (not isinstance(row, dict) or row.get('schema_version') != 1
+                    or row.get('input_sha256') != input_sha256
+                    or not isinstance(row.get('question'), str)
+                    or not isinstance(row.get('answer'), str)
+                    or not isinstance(row.get('citations'), list)):
+                continue
+            turns.append({
+                key: row.get(key) for key in (
+                    'turn_id', 'created_at', 'question', 'answer', 'citations',
+                    'confidence', 'not_found', 'model', 'prompt_version')
+            })
+        return turns[-50:]
+
+    @staticmethod
+    def _load_question_evidence_cache(path: Path, input_sha256: str,
+                                      prompt_version: str) -> list[dict] | None:
+        if not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        evidence = payload.get('evidence') if isinstance(payload, dict) else None
+        if (payload.get('input_sha256') != input_sha256
+                or payload.get('prompt_version') != prompt_version
+                or not isinstance(evidence, list) or not evidence):
+            return None
+        required = {'evidence_id', 'title', 'locator', 'text', 'source_sha256'}
+        if any(not isinstance(row, dict) or not required.issubset(row)
+               for row in evidence):
+            return None
+        return evidence
+
+    @staticmethod
+    def _write_question_evidence_cache(path: Path, input_sha256: str,
+                                       prompt_version: str,
+                                       evidence: list[dict]) -> None:
+        payload = {
+            'schema_version': 1,
+            'input_sha256': input_sha256,
+            'prompt_version': prompt_version,
+            'created_at': _utc_now(),
+            'evidence': evidence,
+        }
+        temp = path.with_suffix(path.suffix + '.tmp')
+        temp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(temp, path)
 
     def output_path(self, job_id: str, kind: str = 'translation') -> tuple[Path, str]:
         manifest = self._read_manifest(job_id)
@@ -1125,19 +1739,54 @@ class PaperTranslationManager:
             if job_id in self._active:
                 raise TranslationError('任务已在运行')
             self._active.add(job_id)
-        threading.Thread(target=self._run, args=(job_id,), daemon=True,
-                         name=f'paper-translation-{job_id[:8]}').start()
+        try:
+            manifest = self._read_manifest(job_id)
+            manifest.update(
+                worker_pid=os.getpid(), worker_started_at=_utc_now(),
+                updated_at=_utc_now())
+            self._write_manifest(job_id, manifest)
+            future = self._ensure_executor().submit(self._run, job_id)
+            future.add_done_callback(
+                lambda completed, queued_job_id=job_id:
+                self._finish_cancelled_submission(queued_job_id, completed))
+        except Exception:
+            with self._lock:
+                self._active.discard(job_id)
+            # Submission can fail after the manifest has been marked as owned
+            # by this process (for example if the executor is shutting down).
+            # Clear that ownership and leave the job explicitly retryable
+            # instead of creating a permanent queued/live-owner contradiction.
+            try:
+                manifest = self._read_manifest(job_id)
+                if manifest.get('status') == 'queued':
+                    now = _utc_now()
+                    manifest.update(
+                        status='interrupted', interrupted_at=now,
+                        updated_at=now,
+                        error='任务未能提交到并发队列；本机原件与检查点已保留，可重试续跑。',
+                    )
+                    manifest.pop('worker_pid', None)
+                    manifest.pop('worker_started_at', None)
+                    self._write_manifest(job_id, manifest)
+            except Exception:
+                pass
+            raise
 
     def _run(self, job_id: str) -> None:
         try:
             with self._lock:
                 self._active.add(job_id)
             manifest = self._read_manifest(job_id)
-            manifest.update(status='running', started_at=_utc_now(), updated_at=_utc_now(), error=None)
+            manifest.update(
+                status='running', started_at=_utc_now(), updated_at=_utc_now(),
+                worker_pid=os.getpid(), worker_started_at=_utc_now(), error=None)
             manifest.pop('failed_at', None)
+            manifest.pop('interrupted_at', None)
             self._write_manifest(job_id, manifest)
             job_dir = self._job_dir(job_id)
             input_path = job_dir / manifest['input_filename']
+            if _sha256_file(input_path) != manifest.get('input_sha256'):
+                raise TranslationError('任务原文件校验失败；为避免复用错误检查点，已停止处理。')
             options = manifest['options']
             mode = manifest.get('mode') or options.get('mode') or 'translate'
             do_translate = mode in {'translate', 'translate_summarize'}
@@ -1223,6 +1872,7 @@ class PaperTranslationManager:
                         'translated_units': len(units),
                         'resumed_units': resumed_units,
                         'text_chars_by_page': pdf_bundle.text_chars_by_page,
+                        'document_body_font_size': pdf_bundle.document_body_font_size,
                         'skipped': pdf_bundle.skipped,
                         **integrity,
                     }
@@ -1254,21 +1904,22 @@ class PaperTranslationManager:
                         'line_count_unchanged': len(records) == len(output_text.splitlines(keepends=True)),
                         'bom_preserved': has_bom,
                     }
+                audit['validation_retries_used'] = getattr(
+                    client, 'validation_retries_used', 0)
+                audit['protected_anchor_fallbacks_used'] = getattr(
+                    client, 'protected_anchor_fallbacks_used', 0)
 
             summary_result = None
             if do_summarize:
                 from services.paper_summary_service import (
-                    render_summary_markdown, summarize_document)
+                    load_summary_checkpoint, render_summary_markdown,
+                    summarize_document)
                 summary_checkpoint_path = job_dir / 'summary.jsonl'
-                summary_resume: dict[str, str] = {}
-                if summary_checkpoint_path.is_file():
-                    for line in summary_checkpoint_path.read_text(encoding='utf-8').splitlines():
-                        try:
-                            summary_resume.update(json.loads(line).get('unit_summaries') or {})
-                        except (json.JSONDecodeError, AttributeError):
-                            continue
+                summary_resume = load_summary_checkpoint(summary_checkpoint_path)
 
                 def summary_checkpoint(record: dict) -> None:
+                    record = dict(record)
+                    record['completed_at'] = _utc_now()
                     with summary_checkpoint_path.open('a', encoding='utf-8') as handle:
                         handle.write(json.dumps(record, ensure_ascii=False) + '\n')
 
@@ -1288,8 +1939,7 @@ class PaperTranslationManager:
                 summary_temp.write_text(markdown, encoding='utf-8')
                 os.replace(summary_temp, summary_path)
                 audit['summary'] = {
-                    'section_count': summary_result['section_count'],
-                    'unit_count': summary_result['unit_count'],
+                    **(summary_result.get('audit') or {}),
                     'summary_bytes': summary_path.stat().st_size,
                 }
 
@@ -1301,7 +1951,12 @@ class PaperTranslationManager:
                 update['output_bytes'] = output_path.stat().st_size
             if summary_result is not None:
                 update['summary_preview'] = (summary_result.get('overall') or '')[:600]
+                summary_path = job_dir / manifest['summary_filename']
+                update['summary_sha256'] = _sha256_file(summary_path)
+                update['summary_bytes'] = summary_path.stat().st_size
             final.update(update)
+            final.pop('worker_pid', None)
+            final.pop('worker_started_at', None)
             unit_total = len(units) if do_translate else (summary_result or {}).get('unit_count', 0)
             final['progress'] = {
                 'total_units': unit_total, 'translated_units': unit_total, 'percent': 100,
@@ -1312,8 +1967,10 @@ class PaperTranslationManager:
                 manifest = self._read_manifest(job_id)
                 manifest.update(
                     status='failed', updated_at=_utc_now(), failed_at=_utc_now(),
-                    error=str(exc) if isinstance(exc, TranslationError) else '翻译任务发生内部错误',
+                    error=str(exc) if isinstance(exc, TranslationError) else '文档任务发生内部错误',
                 )
+                manifest.pop('worker_pid', None)
+                manifest.pop('worker_started_at', None)
                 self._write_manifest(job_id, manifest)
             except Exception:
                 pass
@@ -1357,7 +2014,9 @@ class PaperTranslationManager:
         allowed = {
             'schema_version', 'job_id', 'status', 'mode', 'created_at', 'updated_at', 'started_at',
             'completed_at', 'failed_at', 'original_filename', 'output_filename', 'summary_filename',
-            'input_sha256', 'output_sha256', 'input_bytes', 'output_bytes', 'options', 'model',
+            'interrupted_at', 'input_sha256', 'output_sha256', 'summary_sha256',
+            'input_bytes', 'output_bytes', 'summary_bytes', 'options', 'model',
+            'summary_settings',
             'progress', 'phase', 'warnings', 'audit', 'error', 'summary_preview',
         }
         return {key: value for key, value in manifest.items() if key in allowed}

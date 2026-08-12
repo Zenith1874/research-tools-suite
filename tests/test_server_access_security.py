@@ -48,6 +48,74 @@ class ServerAccessSecurityTests(unittest.TestCase):
     def test_post_limit_is_bounded(self):
         self.assertEqual(server.MAX_POST_BYTES, 1024 * 1024)
 
+    def test_translation_upload_has_separate_bounded_limit(self):
+        self.assertEqual(server.TRANSLATION_MAX_UPLOAD_BYTES, 50 * 1024 * 1024)
+
+    def test_audio_upload_has_separate_bounded_limit(self):
+        self.assertEqual(server.AUDIO_MAX_UPLOAD_BYTES, 1024 * 1024 * 1024)
+
+    def test_translation_files_are_loopback_only_by_default(self):
+        with patch.object(server, 'TRANSLATION_ALLOW_REMOTE', False):
+            self.assertTrue(server._translation_access_allowed('127.0.0.1'))
+            self.assertFalse(server._translation_access_allowed('192.168.1.25'))
+
+    def test_audio_files_are_loopback_only_by_default(self):
+        with patch.object(server, 'AUDIO_TRANSCRIPTION_ALLOW_REMOTE', False):
+            self.assertTrue(server._audio_access_allowed('127.0.0.1'))
+            self.assertFalse(server._audio_access_allowed('192.168.1.25'))
+
+    def test_yuedu_fm_files_are_loopback_only_by_default(self):
+        with patch.object(server, 'YUEDU_FM_ALLOW_REMOTE', False):
+            self.assertTrue(server._yuedu_fm_access_allowed('127.0.0.1'))
+            self.assertFalse(server._yuedu_fm_access_allowed('192.168.1.25'))
+
+    def test_cardcookie_monitor_is_loopback_only_by_default(self):
+        with patch.object(server, 'CARDCOOKIE_MONITOR_ALLOW_REMOTE', False):
+            self.assertTrue(server._cardcookie_monitor_access_allowed('127.0.0.1'))
+            self.assertFalse(server._cardcookie_monitor_access_allowed('192.168.1.25'))
+
+    def test_cardcookie_runtime_is_off_after_server_import(self):
+        runtime = server.CARDCOOKIE_MONITOR.runtime_status()
+        self.assertFalse(runtime['running'])
+        self.assertFalse(runtime['checking'])
+
+    def test_cardcookie_routes_and_private_cache_contract(self):
+        source = (ROOT / 'server.py').read_text(encoding='utf-8')
+        self.assertIn("elif path == '/api/cardcookie-monitor/status':", source)
+        self.assertGreaterEqual(
+            source.count("elif path == '/api/cardcookie-monitor/email-settings':"), 2)
+        self.assertIn("elif path == '/api/cardcookie-monitor/start':", source)
+        self.assertIn("elif path == '/api/cardcookie-monitor/stop':", source)
+        self.assertIn("elif path == '/api/cardcookie-monitor/check-now':", source)
+        block = source[source.index("elif path == '/api/cardcookie-monitor/status':"):
+                       source.index("elif path == '/api/abdc/data':")]
+        self.assertIn("cache_control='no-store, private'", block)
+        post_block = source[source.rindex(
+            "elif path == '/api/cardcookie-monitor/email-settings':"):]
+        self.assertIn("cache_control='no-store, private'", post_block)
+
+    def test_yuedu_fm_media_route_supports_private_ranges(self):
+        source = (ROOT / 'server.py').read_text(encoding='utf-8')
+        self.assertIn("r'^/api/yuedu-fm/episodes/[0-9a-f]{24}/(audio|image)$'", source)
+        self.assertIn("self.send_header('Accept-Ranges', 'bytes')", source)
+        self.assertIn("self.send_header('Cache-Control', 'no-store, private')", source)
+
+    def test_audio_result_route_uses_private_no_store_response(self):
+        source = (ROOT / 'server.py').read_text(encoding='utf-8')
+        self.assertIn("r'^/api/audio/jobs/[0-9a-f]{32}/result$'", source)
+        self.assertIn("cache_control='no-store, private'", source)
+        self.assertIn('audio_transcription_result.html', source)
+
+    def test_translation_metadata_and_text_routes_use_private_no_store(self):
+        source = (ROOT / 'server.py').read_text(encoding='utf-8')
+        self.assertIn("elif path == '/api/translation/jobs':", source)
+        self.assertIn("r'^/api/translation/jobs/[0-9a-f]{32}/view$'", source)
+        self.assertIn("r'^/api/translation/jobs/[0-9a-f]{32}/questions$'", source)
+        translation_block = source[source.index("elif path == '/api/translation/config'"):
+                                   source.index("elif path == '/api/audio/config'")]
+        self.assertGreaterEqual(
+            translation_block.count("cache_control='no-store, private'"), 5)
+
     def test_update_pages_stop_on_http_error_before_polling(self):
         for relative_path in ('dashboard.html', 'china_rates.html',
                               'us_macro.html', 'housing.html'):

@@ -45,6 +45,23 @@ class CityNbsParserTests(unittest.TestCase):
             {'known': ('nominal_gdp', '亿元', 'gdp')}, '国民经济核算')
         self.assertEqual(rows, [])
 
+    def test_development_zone_units_are_scaled_and_scope_is_auditable(self):
+        specs = {
+            'output': ('development_zone_high_tech_output', '亿元', 'indicator', 0.0001),
+            'exports': ('development_zone_high_tech_exports', '百万美元', 'indicator', 0.01),
+        }
+        rows = parse_nbs_periods(
+            [{'code': '2024YY', 'values': [
+                {'_id': 'output', 'value': '1234567'},
+                {'_id': 'exports', 'value': '98765'},
+            ]}], '武汉', NBS_CITIES['武汉'], specs,
+            '开发区高新技术企业主要经济指标')
+        values = {row['indicator_code']: row for row in rows}
+        self.assertAlmostEqual(values['development_zone_high_tech_output']['value'], 123.4567)
+        self.assertAlmostEqual(values['development_zone_high_tech_exports']['value'], 987.65)
+        self.assertIn('开发区口径', values['development_zone_high_tech_output']['parser_notes'])
+        self.assertIn('0.0001', values['development_zone_high_tech_output']['parser_notes'])
+
 
 class CityNbsPriorityTests(unittest.TestCase):
     def setUp(self):

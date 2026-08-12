@@ -1,6 +1,10 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>债务限额与时间推演 | 研究工作台</title>
+<link rel="stylesheet" href="/research-nav.css">
 <script src="/vendor/chart.umd.min.js"></script>
 <style>
 :root{color-scheme:dark;--bg:#07111f;--panel:#0b1829;--panel2:#0e2035;--bd:#213751;--text:#dce8f6;--muted:#8fa4bd;--blue:#5795ff;--green:#27d3b2;--yellow:#f5a623;--red:#ff6b7d}
@@ -9,7 +13,7 @@
 .muted,.sub{color:var(--muted);line-height:1.65}
 .card{background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px;min-width:0}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.wide{grid-column:1/-1}
-.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-top:14px}
 .kpi{background:var(--panel2);border-radius:9px;padding:13px}
 .kpi b{display:block;font-size:23px;margin:6px 0;font-variant-numeric:tabular-nums}
 .kpi small{color:var(--muted);line-height:1.45;display:block}
@@ -29,13 +33,25 @@ th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:
 .hitline .y{color:var(--yellow);font-weight:600}
 .params{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .params label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
-input,button{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;font:inherit}
+input,select,button{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;font:inherit}
 button{cursor:pointer}button:hover{border-color:#4a94ff}
 input::placeholder{color:#5d7794}
+.mini-params{display:grid;grid-template-columns:repeat(6,minmax(125px,1fr));gap:9px;margin:12px 0}
+.mini-params label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
+.boundary{border-left:3px solid var(--red);padding-left:10px}
 .overridden{border-color:#8a661c}
-@media(max-width:700px){.params{grid-template-columns:1fr 1fr}}
-@media(max-width:950px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}}
+.source{color:#79aaff;text-decoration:none}.source:hover{text-decoration:underline}
+.status-note{border-left:3px solid var(--yellow);padding-left:10px}
+.formula-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
+.formula{background:var(--panel2);border:1px solid #1b3048;border-radius:9px;padding:12px;line-height:1.7}
+.formula b{display:block;color:#f0f6ff;margin-bottom:4px}.formula code{color:#74d9c3;white-space:normal}
+@media(max-width:1050px){.mini-params{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:700px){.params,.mini-params{grid-template-columns:1fr 1fr}}
+@media(max-width:950px){.grid{grid-template-columns:1fr}}
+@media(max-width:520px){.kpis,.params,.formula-grid{grid-template-columns:1fr}}
 </style>
+</head>
+<body>
 <main class="wrap">
 <h1>债务限额与时间推演</h1>
 <p class="sub">中国没有统一法定债务上限。此处"上限"指<b>全国人大每年批准的国债限额与地方政府债务限额</b>，来自财政部预算报告与人大常委会决议原文。限额与余额为官方值，推演为情景假设。</p>
@@ -62,11 +78,28 @@ input::placeholder{color:#5d7794}
   </div>
 </div>
 
+<div class="card" style="margin-top:14px"><h3>估计算法<span class="tag scenario">公式公开</span></h3>
+  <p class="muted" style="margin:6px 0">模型只做条件外推。每一步都能由基期、样本窗口和公式手算复核。</p>
+  <div class="formula-grid">
+    <div class="formula"><b>1. 复合年增速（CAGR）</b><code>g = (期末值 ÷ 期初值)^(1 ÷ 自然年跨度) − 1</code><br><span class="muted">限额、余额、收入和付息分别计算，不共用一个增速。</span></div>
+    <div class="formula"><b>2. 限额触线</b><code>未来余额 = 基期余额 × (1 + 余额增速)^h</code><br><code>未来限额 = 基期限额 × (1 + 限额增速)^h</code><br><span class="muted">第一个“余额 ≥ 限额”的年份只表示需要再次提额。</span></div>
+    <div class="formula"><b>3. 付息压力</b><code>付息率 = 推演付息支出 ÷ 推演一般公共预算收入</code><br><span class="muted">10% / 15% / 20% 是观察线，不是官方红线。</span></div>
+    <div class="formula"><b>4. 广义政府债务</b><code>国债 + 地方法定债务 + 隐性债务残余</code><br><span class="muted">2025隐性债务只给政策桥接区间，财政部隐性债务不等同城投债。</span></div>
+    <div class="formula"><b>5. 市场候选债现金流</b><code>期末余额 = 期初余额 − 到期 + 再融资 + 新增融资</code><br><code>现金偿付 = 到期 × (1 − 再融资率) + 平均余额 × 融资利率</code><br><span class="muted">单独读取私有库，关键词代理不并入官方政府债务合计。</span></div>
+  </div>
+  <p class="muted status-note" id="algorithmValues" style="margin-bottom:0"></p>
+</div>
+
 <div class="grid">
   <div class="card wide"><h3>限额 vs 余额<span class="tag official">官方</span></h3>
     <p class="muted" id="ceilSub"></p>
     <div class="chart"><canvas id="ceilChart"></canvas></div>
     <div class="scroll"><table><thead id="ceilHead"></thead><tbody id="ceilBody"></tbody></table></div>
+  </div>
+
+  <div class="card wide"><h3>当前年度地方限额使用进度<span class="tag official">官方月度</span><span class="tag">derived 对照</span></h3>
+    <p class="muted" id="monitorSub"></p>
+    <div class="chart"><canvas id="localMonitorChart"></canvas></div>
   </div>
 
   <div class="card"><h3>A 限额约束<span class="tag scenario">情景推演</span></h3>
@@ -81,13 +114,54 @@ input::placeholder{color:#5d7794}
     <div class="chart"><canvas id="burdenChart"></canvas></div>
   </div>
 
-  <div class="card wide"><h3>城投债为什么这里没有数字<span class="tag gap">无官方口径</span></h3>
-    <div class="muted" style="line-height:1.85;margin-top:8px">
-      <p><b>"城投"不是任何官方分类。</b>国家统计局、财政部、人民银行、中债登都没有"城投债"这一登记类别。市场上的城投债余额，全部来自 Wind、中诚信、YY 等机构<b>各自划定的发行人名单</b>——判定标准（股东背景、业务构成、政府补贴占比、是否承担公益性项目）各家不同，同一年的口径差异可达十万亿量级。</p>
-      <p><b>它也不在人大限额之内。</b>本页的"上限"是《预算法》框架下人大批准的法定政府债务限额；城投债在会计上是企业债务，不计入政府债务余额，因此既没有对应的官方限额，也不能与本页数字相加。</p>
-      <p><b>2024 年 11 月的 6 万亿是化债，不是承认。</b>人大常委会一次性增加 6 万亿地方专项债务限额，用途是<b>置换</b>纳入监测范围的存量隐性债务——把隐性债务转为法定债务。财政部在议案说明中明确"不增加政府债务总体负担，不改变地方偿债责任"。置换规模本身不构成隐性债务总量的官方披露。</p>
-      <p>因此本项目对城投债<b>一贯不给数字</b>：给不出带官方来源的值，就不给估算冒充。若需要研究口径，应在论文中自行声明名单规则并自证合理性。</p>
+  <div class="card wide"><h3>假设敏感性<span class="tag scenario">±2 个百分点压力测试</span></h3>
+    <p class="muted" id="sensitivitySub"></p>
+    <div class="scroll"><table>
+      <thead><tr><th>情景</th><th>余额/付息增速调整</th><th>国债需再提额</th><th>地方债需再提额</th><th>付息占收入 10%</th></tr></thead>
+      <tbody id="sensitivityBody"></tbody>
+    </table></div>
+  </div>
+
+  <div class="card wide"><h3>广义政府债务全景<span class="tag official">官方锚点</span><span class="tag scenario">2025 区间</span></h3>
+    <div class="kpis" id="broadKpis"></div>
+    <p class="muted" id="broadSub"></p>
+    <div class="chart"><canvas id="broadDebtChart"></canvas></div>
+    <div class="scroll"><table>
+      <thead><tr><th>年份/口径</th><th>国债</th><th>地方法定债</th><th>隐性债务</th><th>广义合计</th><th>广义债务/GDP</th><th>状态</th><th>来源</th></tr></thead>
+      <tbody id="broadDebtBody"></tbody>
+    </table></div>
+    <div class="caveats" id="broadCaveats"></div>
+  </div>
+
+  <div class="card wide"><h3>市场候选债偿付推演<span class="tag scenario">私有库</span><span class="tag gap">非官方城投分类</span></h3>
+    <p class="muted boundary">本区只对中国货币网候选债券做透明关键词代理与现金流敏感性分析。它不是财政部认定的城投债余额，也不与法定债务或隐性债务相加。</p>
+    <div class="mini-params" id="lgfvParams">
+      <label>候选样本诊断口径<select id="lgfv_scope"><option value="strict">严格关键词代理</option><option value="broad">宽口径关键词代理</option><option value="all">全部候选债（诊断）</option></select></label>
+      <label>基准再融资率 %<input id="lgfv_refinancing_rate" type="number" step="1" min="0" max="100" value="90"></label>
+      <label>基准新增融资/期初 %<input id="lgfv_new_money_rate" type="number" step="0.5" min="0" max="30" value="3"></label>
+      <label>基准融资利率 %<input id="lgfv_funding_rate" type="number" step="0.1" min="0" max="30" placeholder="留空=存续样本加权票息"></label>
+      <label>假设期限（年）<input id="lgfv_term_years" type="number" step="1" min="1" max="10" value="3"></label>
+      <label>推演年数<input id="lgfv_horizon" type="number" step="1" min="5" max="20" value="10"></label>
     </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button id="lgfvRecalc">按市场假设重算</button><button id="lgfvCsv">导出逐年明细 CSV</button>
+    </div>
+    <div class="kpis" id="lgfvKpis"></div>
+    <p class="muted" id="lgfvSub"></p>
+    <div class="grid">
+      <div class="card"><h3>合同到期墙与已知票息</h3><div class="chart"><canvas id="lgfvMaturityChart"></canvas></div></div>
+      <div class="card"><h3>三情景期末余额</h3><div class="chart"><canvas id="lgfvBalanceChart"></canvas></div></div>
+      <div class="card wide"><h3>基准情景现金偿付需求</h3><div class="chart"><canvas id="lgfvCashChart"></canvas></div></div>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>情景</th><th>年份</th><th>期初余额</th><th>合同到期</th><th>再融资后到期</th><th>再融资发行</th><th>新增融资</th><th>现金偿还本金</th><th>估算利息</th><th>现金偿付合计</th><th>期末余额</th></tr></thead>
+      <tbody id="lgfvScenarioBody"></tbody>
+    </table></div>
+    <div class="caveats" id="lgfvCaveats"></div>
+  </div>
+
+  <div class="card wide"><h3>官方库与市场代理边界<span class="tag gap">禁止混加</span></h3>
+    <div class="muted" id="lgfvAudit" style="line-height:1.85;margin-top:8px"></div>
   </div>
 
   <div class="card wide"><h3>口径与假设</h3><div class="caveats" id="caveats"></div></div>
@@ -104,12 +178,14 @@ const OPT=(yTitle)=>({responsive:true,maintainAspectRatio:false,interaction:{mod
 
 const GROWTH_IDS=['treasury_balance_growth','treasury_limit_growth','local_balance_growth','local_limit_growth','revenue_growth','interest_growth'];
 const WINDOW_IDS=['limit_window','interest_window','horizon'];
+const LGFV_IDS=['lgfv_scope','lgfv_refinancing_rate','lgfv_new_money_rate','lgfv_funding_rate','lgfv_term_years','lgfv_horizon'];
 const $=id=>document.getElementById(id);
 let charts={};
+let lastPayload=null;
 function destroy(){Object.values(charts).forEach(c=>c&&c.destroy());charts={}}
 function queryString(){
   const q=new URLSearchParams();
-  GROWTH_IDS.concat(WINDOW_IDS).forEach(id=>{const v=$(id).value.trim();if(v!=='')q.set(id,v)});
+  GROWTH_IDS.concat(WINDOW_IDS,LGFV_IDS).forEach(id=>{const v=$(id).value.trim();if(v!=='')q.set(id,v)});
   return q.toString()?'?'+q.toString():'';
 }
 function load(){
@@ -119,18 +195,24 @@ function load(){
     .catch(e=>{$('notice').textContent='加载失败：'+e.message});
 }
 function render(p){
+  lastPayload=p;
   const years=p.ceiling.years, last=[...years].reverse().find(y=>y.treasury_headroom!=null)||{};
   const lastLocal=[...years].reverse().find(y=>y.local_headroom!=null)||{};
-  const lc=p.limit_constraint, ib=p.interest_burden;
+  const lc=p.limit_constraint, ib=p.interest_burden, mon=p.current_local_monitor||{};
+  const t=lc.treasury||{},l=lc.local||{};
+  const localHeadroom=mon.status==='official_monitor'?mon.latest_headroom:lastLocal.local_headroom;
+  const localPeriod=mon.status==='official_monitor'?mon.latest_period:(lastLocal.period?lastLocal.period+'-12':'—');
 
   document.getElementById('kpis').innerHTML=`
-    <div class="kpi">国债剩余空间<b>${WY(last.treasury_headroom)}</b><small>${last.period||'—'} 年末 · 已用 ${last.treasury_balance&&last.treasury_limit?(last.treasury_balance/last.treasury_limit*100).toFixed(1):'—'}% 限额</small></div>
-    <div class="kpi">地方剩余空间<b>${WY(lastLocal.local_headroom)}</b><small>${lastLocal.period||'—'} 年末 · 已用 ${lastLocal.local_balance&&lastLocal.local_limit?(lastLocal.local_balance/lastLocal.local_limit*100).toFixed(1):'—'}% 限额</small></div>
+    <div class="kpi">国债官方剩余空间<b>${WY(last.treasury_headroom)}</b><small>${last.period||'—'} 年末 · 已用 ${last.treasury_balance&&last.treasury_limit?(last.treasury_balance/last.treasury_limit*100).toFixed(1):'—'}% 限额</small></div>
+    <div class="kpi">地方当前剩余空间<b>${WY(localHeadroom)}</b><small>${localPeriod} · 已用 ${mon.latest_utilisation!=null?mon.latest_utilisation.toFixed(2):'—'}% 的 ${mon.limit_year||lastLocal.period||'—'} 年限额</small></div>
     <div class="kpi">付息 / 一般预算收入<b>${ib.base_ratio!=null?ib.base_ratio.toFixed(2)+'%':'—'}</b><small>${ib.base_year||'—'} 年 · 付息 ${WY(ib.base_interest)}</small></div>
-    <div class="kpi">按现节奏国债需再提额<b>${lc.treasury&&lc.treasury.hit_year?lc.treasury.hit_year+' 年':'本情景下不触及'}</b><small>剩余空间归零＝须再次提高限额，非违约</small></div>`;
+    <div class="kpi">国债条件触线<b>${t.hit_year?t.hit_year+' 年':'外推期内不触及'}</b><small>按当前有效增速机械外推；不是违约时点</small></div>
+    <div class="kpi">地方债条件触线<b>${l.hit_year?l.hit_year+' 年':'外推期内不触及'}</b><small>${l.base_balance_data_status==='scenario'?'年末余额尚未公布，基期余额为情景值':'基期使用官方余额'}</small></div>`;
 
   document.getElementById('notice').innerHTML=p.ceiling.definition+
-    ' 下方 A、B 两条推演线互相独立，均为<b>情景假设</b>，不是预测。';
+    (mon.status==='official_monitor'?` <b>${mon.latest_period} 实际进度：</b>地方债余额 ${WY(mon.latest_balance)}，尚余 ${WY(mon.latest_headroom)}。`:'')+
+    ' 下方“触线年份”是条件推演，不是实际已触线、违约或财政失效时点。';
 
   // 限额 vs 余额
   const ys=years.map(y=>y.period);
@@ -147,14 +229,33 @@ function render(p){
       :y.local_limit_status==='incomplete'||y.treasury_limit_status==='incomplete'?'<span class="tag">部分缺</span>':'<span class="tag official">如批准</span>';
     return `<tr><td>${y.period}</td><td>${F(y.treasury_limit)}</td><td>${F(y.treasury_balance)}</td><td>${F(y.treasury_headroom)}</td><td>${F(y.local_limit)}</td><td>${F(y.local_balance)}</td><td>${F(y.local_headroom)}</td><td>${st}</td></tr>`}).join('');
 
+  // 当前年度地方限额：明确展示财政部月度实际值；缺失月份保留 null，不连线。
+  if(mon.status==='official_monitor'){
+    const latestMonth=Number(mon.latest_period.slice(5,7));
+    const labels=Array.from({length:latestMonth},(_,i)=>`${mon.limit_year}-${String(i+1).padStart(2,'0')}`);
+    const byPeriod=Object.fromEntries(mon.series.map(x=>[x.period,x]));
+    document.getElementById('monitorSub').innerHTML=
+      `${mon.latest_period} 地方政府债务余额 <b>${WY(mon.latest_balance)}</b>，对照 ${mon.limit_year} 年人大批准限额 <b>${WY(mon.limit)}</b>，使用率 <b>${mon.latest_utilisation.toFixed(2)}%</b>，尚余 <b>${WY(mon.latest_headroom)}</b>。缺月不插值、不连线。`+
+      (mon.source_url?` <a class="source" href="${mon.source_url}" target="_blank" rel="noopener">月度余额原文</a>`:'')+
+      (mon.limit_source_url?` · <a class="source" href="${mon.limit_source_url}" target="_blank" rel="noopener">年度限额原文</a>`:'');
+    charts.localMonitor=new Chart(document.getElementById('localMonitorChart'),{type:'line',data:{labels,datasets:[
+      {label:'地方债限额使用率 %',data:labels.map(x=>byPeriod[x]?.utilisation??null),borderColor:'#27d3b2',backgroundColor:'rgba(39,211,178,.12)',fill:true,pointRadius:3,spanGaps:false},
+      {label:'100% 限额线',data:labels.map(()=>100),borderColor:'#ff6b7d',borderDash:[4,4],pointRadius:0}]},
+      options:{...OPT('限额使用率 %'),scales:{...OPT().scales,y:{...OPT().scales.y,suggestedMin:80,suggestedMax:101,ticks:{color:'#8fa4bd',callback:v=>v+'%'}}}}});
+  }else{
+    document.getElementById('monitorSub').textContent='同年度官方月度余额或批准限额缺失，暂不计算；不会用年度推演值替代。';
+  }
+
   // A 限额约束
-  const t=lc.treasury||{},l=lc.local||{};
+  const sampleText=x=>x?`${x.sample_start}–${x.sample_end}（${x.n_obs} 点 / ${x.span_years} 年跨度）`:'—';
   document.getElementById('limitSub').textContent=
-    t.status==='projected'?`余额与限额各按近 ${t.window_years} 年复合增速定速外推。国债余额年均 ${(t.balance_growth*100).toFixed(2)}%、限额 ${(t.limit_growth*100).toFixed(2)}%。`:'历史点不足，无法外推。';
+    t.status==='projected'?`国债限额样本 ${sampleText(t.limit_sample)}，余额样本 ${sampleText(t.balance_sample)}；地方限额样本 ${sampleText(l.limit_sample)}，余额样本 ${sampleText(l.balance_sample)}。各自独立计算 CAGR，已公布的 ${t.latest_official_limit_year} 年限额优先作为官方锚点。`:'历史点不足，无法外推。';
+  const conditionalNote=l.base_balance_data_status==='scenario'&&l.hit_year===l.base_year&&mon.status==='official_monitor'
+    ?`地方 ${l.hit_year} 是“年末余额按历史增速外推”得出的条件结果；${mon.latest_period} 官方月度实际使用率为 ${mon.latest_utilisation.toFixed(2)}%，两者不可混同。`:'';
   document.getElementById('limitHits').innerHTML=
-    `<p class="hitline">国债剩余空间归零：<span class="y">${t.hit_year||'本情景下不归零'}</span></p>
-     <p class="hitline">地方剩余空间归零：<span class="y">${l.hit_year||'本情景下不归零'}</span></p>
-     <p class="muted" style="margin:4px 0 10px">${t.note||''}</p>`;
+    `<p class="hitline">国债需再次提额：<span class="y">${t.hit_year||'外推期内不触及'}</span></p>
+     <p class="hitline">地方债需再次提额：<span class="y">${l.hit_year||'外推期内不触及'}</span></p>
+     <p class="muted status-note" style="margin:4px 0 10px">${conditionalNote||t.note||''}</p>`;
   if(t.status==='projected'){
     const path=t.path,lp=(l.path||[]);
     charts.limit=new Chart(document.getElementById('limitChart'),{type:'line',data:{labels:path.map(x=>x.period),datasets:[
@@ -182,6 +283,122 @@ function render(p){
       options:{...OPT('付息 / 一般公共预算收入 %'),scales:{...OPT().scales,y:{...OPT().scales.y,ticks:{color:'#8fa4bd',callback:v=>v+'%'}}}}});
   }
 
+  // 一致性压力测试：不赋概率，也不称为最好/最坏预测。
+  const sens=p.sensitivity||{};
+  document.getElementById('sensitivitySub').textContent=
+    sens.status==='scenario'?`${sens.method} ${sens.caveat}`:'历史点不足，暂不计算敏感性。';
+  const hitLabel=v=>v?`${v} 年`:`${p.assumptions.horizon_years} 年外推期内不触及`;
+  document.getElementById('sensitivityBody').innerHTML=(sens.rows||[]).map(row=>
+    `<tr><td>${row.scenario}</td><td>${row.growth_delta_pp>0?'+':''}${row.growth_delta_pp.toFixed(1)} pp</td><td>${hitLabel(row.treasury_hit_year)}</td><td>${hitLabel(row.local_hit_year)}</td><td>${hitLabel(row.interest_10_hit_year)}</td></tr>`).join('');
+
+  // 算法与本轮实际参数：把公式和输入值放在同一页，便于逐项手算。
+  document.getElementById('algorithmValues').innerHTML=
+    t.status==='projected'&&ib.status==='projected'
+      ?`本轮实际参数：国债余额/限额 CAGR <b>${(t.balance_growth*100).toFixed(2)}%</b> / <b>${(t.limit_growth*100).toFixed(2)}%</b>；地方债余额/限额 <b>${(l.balance_growth*100).toFixed(2)}%</b> / <b>${(l.limit_growth*100).toFixed(2)}%</b>；付息/收入 <b>${(ib.interest_growth*100).toFixed(2)}%</b> / <b>${(ib.revenue_growth*100).toFixed(2)}%</b>。`
+      :'历史样本不足，当前无法形成完整参数。';
+
+  // 广义政府债务：2023/2024 为官方隐性债务锚点，2025 只展示情景区间。
+  const broad=p.broad_government_debt||{}, broadRows=broad.records||[];
+  const broadLatest=broad.latest||{}, broadOfficial=broad.official_latest||{};
+  const rangeText=(lo,hi,d=0)=>lo==null?'—':Math.abs(Number(lo)-Number(hi))<1e-9?F(lo,d):`${F(lo,d)}–${F(hi,d)}`;
+  document.getElementById('broadKpis').innerHTML=`
+    <div class="kpi">2024官方全口径<b>${WY(broadOfficial.reported_broad_total)}</b><small>法定债务 + 财政部披露隐性债务；官方报告值</small></div>
+    <div class="kpi">2025法定政府债务<b>${WY(broadLatest.legal_debt_total)}</b><small>国债 ${WY(broadLatest.treasury_balance)} + 地方法定债 ${WY(broadLatest.local_legal_balance)}</small></div>
+    <div class="kpi">2025广义情景区间<b>${broadLatest.broad_total_low==null?'—':WY(broadLatest.broad_total_low)+'–'+WY(broadLatest.broad_total_high)}</b><small>隐性债务残余仅为政策桥接情景</small></div>
+    <div class="kpi">2025广义债务 / GDP<b>${broadLatest.debt_to_gdp_low_pct==null?'—':broadLatest.debt_to_gdp_low_pct.toFixed(2)+'%–'+broadLatest.debt_to_gdp_high_pct.toFixed(2)+'%'}</b><small>GDP 使用国家统计局全年现价值</small></div>`;
+  document.getElementById('broadSub').innerHTML=
+    broadLatest.data_status==='scenario'
+      ?`2025 隐性债务尚无官方余额。机械区间为 <b>${WY(broadLatest.hidden_debt_low)}–${WY(broadLatest.hidden_debt_high)}</b>：高位只扣除已确认的 2 万亿元置换债；低位再假设 8000 亿元年度化债资源全部按 1:1 冲减本金。两端都假设无新增隐性债务；该区间无概率含义。`
+      :'当前只有官方历史锚点，未形成最新情景。';
+  const chartRows=[];
+  broadRows.forEach(row=>{
+    if(row.hidden_debt_low!==row.hidden_debt_high){
+      chartRows.push({...row,label:`${row.period} 情景低`,hidden_debt_mid:row.hidden_debt_low});
+      chartRows.push({...row,label:`${row.period} 情景高`,hidden_debt_mid:row.hidden_debt_high});
+    }else chartRows.push(row);
+  });
+  if(chartRows.length){
+    const broadOpt=OPT('亿元');
+    broadOpt.scales.x.stacked=true;broadOpt.scales.y.stacked=true;
+    charts.broadDebt=new Chart(document.getElementById('broadDebtChart'),{type:'bar',data:{labels:chartRows.map(x=>x.label),datasets:[
+      {label:'国债',data:chartRows.map(x=>x.treasury_balance),backgroundColor:'#5795ff'},
+      {label:'地方法定债务',data:chartRows.map(x=>x.local_legal_balance),backgroundColor:'#f5a623'},
+      {label:'隐性债务/情景残余',data:chartRows.map(x=>x.hidden_debt_mid),backgroundColor:'#a879e6'}]},options:broadOpt});
+  }
+  document.getElementById('broadDebtBody').innerHTML=broadRows.map(row=>{
+    const status=row.data_status==='scenario'?'<span class="tag scenario">scenario</span>':'<span class="tag official">official + derived</span>';
+    const ratio=rangeText(row.debt_to_gdp_low_pct,row.debt_to_gdp_high_pct,2)+(row.debt_to_gdp_low_pct==null?'':'%');
+    return `<tr><td>${row.label}</td><td>${F(row.treasury_balance)}</td><td>${F(row.local_legal_balance)}</td><td>${rangeText(row.hidden_debt_low,row.hidden_debt_high)}</td><td>${rangeText(row.broad_total_low,row.broad_total_high)}</td><td>${ratio}</td><td>${status}</td><td>${row.source_url?`<a class="source" href="${row.source_url}" target="_blank" rel="noopener">原文</a>`:'—'}</td></tr>`;
+  }).join('');
+  document.getElementById('broadCaveats').innerHTML=(broad.caveats||[]).map(x=>`<p>• ${x}</p>`).join('');
+
+  // 私有市场候选债：与财政主库、法定债务和财政部隐性债务完全分开。
+  const market=p.lgfv_market_scenario||{}, base=market.base_scenario||{};
+  const pct=v=>v==null?'—':Number(v).toFixed(2)+'%';
+  if(market.status!=='missing'&&(market.scenarios||[]).length){
+    document.getElementById('lgfvKpis').innerHTML=`
+      <div class="kpi">代理口径条款覆盖<b>${pct(market.scope_detail_coverage_pct)}</b><small>${F(market.scope_terms_count)} / ${F(market.scope_inventory_count)} 只；仅作识别诊断，缺失不机械放大</small></div>
+      <div class="kpi">城投债情景基准<b>${WY(market.scenario_opening_balance)}</b><small>用户指定15万亿手动基准；非官方余额</small></div>
+      <div class="kpi">候选样本发行额上限<b>${WY(market.active_issue_amount_upper_bound)}</b><small>${F(market.active_bond_count)} 只、${F(market.active_issuer_count)} 家；不是全国余额</small></div>
+      <div class="kpi">未来三年合同到期<b>${WY(market.next_three_year_maturity)}</b><small>从 ${market.as_of} 后实际到期日汇总</small></div>
+      <div class="kpi">存续样本加权票息<b>${pct(market.weighted_coupon_rate_pct)}</b><small>票息覆盖 ${pct(market.active_coupon_coverage_pct)}</small></div>
+      <div class="kpi">基准峰值现金偿付<b>${WY(base.peak_cash_debt_service)}</b><small>${base.peak_cash_year||'—'} 年；本金缺口 + 情景利息</small></div>`;
+    const a=market.assumptions||{};
+    const firstFraction=a.first_period_fraction==null?'—':(a.first_period_fraction*100).toFixed(1)+'%';
+    const anchorText=market.manual_balance_anchor_enabled
+      ? `情景基准 ${WY(market.scenario_opening_balance)} 为手动市场假设，到期结构按全候选债池缩放（系数 ${Number(market.schedule_scale_factor||0).toFixed(4)}）。`
+      : '情景基准使用当前代理样本上限。';
+    document.getElementById('lgfvSub').innerHTML=
+      `<b>${market.scope_label}</b>，清单 ${F(market.inventory_count)} 只，已回填条款 ${F(market.terms_success_count)} 只（全库 ${pct(market.overall_detail_coverage_pct)}）。`+
+      anchorText+
+      `首年 ${a.start_year} 仅覆盖快照日后的剩余 ${firstFraction} 年；新增融资和估算利息按剩余天数折算，合同到期按实际日期汇总。`+
+      `融资宽松/压力分别在基准上调整再融资率、新增融资率和利率，三者均无概率含义。 `+
+      `<a class="source" href="${market.source_url}" target="_blank" rel="noopener">公开查询来源</a>`;
+
+    const contracted=market.contracted_cashflows||[];
+    const maturityOpt=OPT('到期本金（亿元）');
+    maturityOpt.scales.y1={position:'right',ticks:{color:'#8fa4bd',callback:v=>F(v)},grid:{drawOnChartArea:false},title:{display:true,text:'已知票息（亿元）',color:'#8fa4bd'}};
+    charts.lgfvMaturity=new Chart(document.getElementById('lgfvMaturityChart'),{type:'bar',data:{labels:contracted.map(x=>x.period),datasets:[
+      {label:'合同到期本金上限',data:contracted.map(x=>x.maturing_principal),backgroundColor:'#5795ff',yAxisID:'y'},
+      {type:'line',label:'条款推导已知票息',data:contracted.map(x=>x.known_coupon_interest),borderColor:'#f5a623',backgroundColor:'#f5a623',pointRadius:2,yAxisID:'y1'}]},options:maturityOpt});
+
+    const scenarioColors={easing:'#27d3b2',base:'#5795ff',stress:'#ff6b7d'};
+    const balanceLabels=(market.scenarios[0]?.path||[]).map(x=>x.period);
+    charts.lgfvBalance=new Chart(document.getElementById('lgfvBalanceChart'),{type:'line',data:{labels:balanceLabels,datasets:market.scenarios.map(s=>({
+      label:s.scenario,data:s.path.map(x=>x.closing_balance),borderColor:scenarioColors[s.scenario_code],pointRadius:2,borderDash:s.scenario_code==='base'?[]:[6,3],spanGaps:false
+    }))},options:OPT(market.manual_balance_anchor_enabled?'期末余额（15万亿基准，亿元）':'期末余额上限（亿元）')});
+
+    const basePath=base.path||[], cashOpt=OPT('亿元');
+    cashOpt.scales.x.stacked=true;cashOpt.scales.y.stacked=true;
+    charts.lgfvCash=new Chart(document.getElementById('lgfvCashChart'),{type:'bar',data:{labels:basePath.map(x=>x.period),datasets:[
+      {label:'需现金偿还本金',data:basePath.map(x=>x.cash_principal),backgroundColor:'#ff6b7d',stack:'cash'},
+      {label:'估算利息',data:basePath.map(x=>x.estimated_interest),backgroundColor:'#f5a623',stack:'cash'},
+      {type:'line',label:'现金偿付合计',data:basePath.map(x=>x.cash_debt_service),borderColor:'#dce8f6',backgroundColor:'#dce8f6',pointRadius:2,stack:'total'}]},options:cashOpt});
+
+    document.getElementById('lgfvScenarioBody').innerHTML=market.scenarios.flatMap(s=>s.path.map(row=>
+      `<tr><td>${s.scenario}</td><td>${row.period}${row.period_fraction<0.999?'（剩余年度）':''}</td><td>${F(row.opening_balance,2)}</td><td>${F(row.contracted_maturity,2)}</td><td>${F(row.projected_maturity,2)}</td><td>${F(row.refinancing_issuance,2)}</td><td>${F(row.new_money_issuance,2)}</td><td>${F(row.cash_principal,2)}</td><td>${F(row.estimated_interest,2)}</td><td>${F(row.cash_debt_service,2)}</td><td>${F(row.closing_balance,2)}</td></tr>`
+    )).join('');
+    const rules=market.classification_rules||{};
+    document.getElementById('lgfvCaveats').innerHTML=(market.caveats||[]).map(x=>`<p>• ${x}</p>`).join('')+
+      `<p>• 严格关键词：${(rules.strict_keywords||[]).join('、')||'—'}。</p>`+
+      `<p>• 宽口径额外关键词：${(rules.broad_extra_keywords||[]).join('、')||'—'}。</p>`+
+      `<p>• 基准公式：${market.method?.closing_balance||'—'}；${market.method?.cash_principal||'—'}；${market.method?.estimated_interest||'—'}。</p>`;
+    if(!$('lgfv_funding_rate').value&&a.base_funding_rate!=null){
+      $('lgfv_funding_rate').placeholder=`加权票息 ${(a.base_funding_rate*100).toFixed(2)}`;
+    }
+  }else{
+    document.getElementById('lgfvKpis').innerHTML='<div class="kpi">市场候选债推演<b>暂无</b><small>私有数据库未就绪或没有可计算条款</small></div>';
+    document.getElementById('lgfvSub').textContent=market.reason||'暂无可计算数据。';
+    document.getElementById('lgfvScenarioBody').innerHTML='';
+    document.getElementById('lgfvCaveats').innerHTML='';
+  }
+
+  const lgfv=p.lgfv_data_audit||{};
+  document.getElementById('lgfvAudit').innerHTML=`
+    <p><b>官方财政主库：${F(lgfv.record_count||0)} 条被官方认定为“城投债”的数值记录。</b>${lgfv.reason||''}</p>
+    <p><b>财政部隐性债务不等同城投债。</b>${lgfv.scope_note||''}</p>
+    <p><b>私有市场代理：</b>${market.status==='missing'?'尚未形成可计算样本':`${market.scope_label}已回填 ${F(market.scope_terms_count)} 只，覆盖率 ${pct(market.scope_detail_coverage_pct)}`}。只用于上方独立推演，绝不进入官方法定债务、隐性债务或广义政府债务合计。</p>`;
+
   document.getElementById('caveats').innerHTML=
     p.ceiling.caveats.concat(p.caveats).map(x=>`<p>• ${x}</p>`).join('')+
     `<p>• 推演方法：${p.assumptions.method} 窗口：限额 ${p.assumptions.limit_window_years} 年、付息 ${p.assumptions.interest_window_years} 年；外推上限 ${p.assumptions.horizon_years} 年。</p>`;
@@ -200,8 +417,23 @@ function render(p){
 }
 
 document.getElementById('recalc').onclick=load;
+document.getElementById('lgfvRecalc').onclick=load;
+document.getElementById('lgfvCsv').onclick=()=>{
+  const market=lastPayload?.lgfv_market_scenario;
+  if(!market||(market.scenarios||[]).length===0){$('notice').textContent='当前没有可导出的市场候选债推演明细。';return}
+  const headers=['scope','scenario','year','period_fraction','opening_balance','contracted_maturity','projected_maturity','refinancing_issuance','new_money_issuance','cash_principal','estimated_interest','cash_debt_service','closing_balance','data_status'];
+  const rows=market.scenarios.flatMap(s=>s.path.map(r=>[market.scope_label,s.scenario,r.period,r.period_fraction,r.opening_balance,r.contracted_maturity,r.projected_maturity,r.refinancing_issuance,r.new_money_issuance,r.cash_principal,r.estimated_interest,r.cash_debt_service,r.closing_balance,r.data_status]));
+  const quote=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+  const csv='\ufeff'+[headers,...rows].map(row=>row.map(quote).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download=`market_debt_scenario_${market.scope}_${market.snapshot_date}.csv`;a.click();URL.revokeObjectURL(url);
+};
 document.getElementById('reset').onclick=()=>{GROWTH_IDS.forEach(id=>$(id).value='');
-  $('limit_window').value=4;$('interest_window').value=7;$('horizon').value=25;load()};
-document.querySelectorAll('#params input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')load()}));
+  $('limit_window').value=4;$('interest_window').value=7;$('horizon').value=25;
+  $('lgfv_scope').value='strict';$('lgfv_refinancing_rate').value=90;$('lgfv_new_money_rate').value=3;
+  $('lgfv_funding_rate').value='';$('lgfv_term_years').value=3;$('lgfv_horizon').value=10;load()};
+document.querySelectorAll('#params input,#lgfvParams input').forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')load()}));
 load();
 </script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+region_code,region_name,period,indicator_code,value,unit,government_scope,source_url,source_title,parser_notes
+11,北京,2023,general_budget_revenue,例:6181.1,亿元,province_total,https://请替换为统计局或财政部门原文链接,例:2023年北京市财政决算,示例行不可直接导入;删除“例:”并核对官方值后使用

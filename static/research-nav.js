@@ -4,16 +4,19 @@
   const groups = {
     china: {
       label: '中国宏观',
-      summary: '总览 · 财政债务 · 利率汇率 · 城市经济',
+      summary: '实体 · 金融 · 财政 · 城市',
       defaultHref: '/dashboard',
       items: [
-        { label: '宏观总览', href: '/dashboard', description: '央行金融统计、货币与信用核心指标。' },
-        { label: '宏观统计分析', href: '/macro-analytics', description: '中国、美国与中美对照的派生统计分析。' },
+        { label: '货币信用', href: '/dashboard', description: '央行金融统计、货币与信用核心指标。' },
+        { label: '实体外贸', href: '/china-macro', description: '增长、消费投资、价格景气、就业人口、双币种外贸与跨境资金。' },
+        { label: '统计分析', href: '/macro-analytics', description: '中国、美国与中美对照的派生统计分析。' },
         { label: '中美 GDP', href: '/gdp', description: '全国历史规模、增长与中国省级/美国州级地区 GDP。' },
-        { label: '财政收支与债务', href: '/fiscal-debt', description: '年度财政收支、未来情景、政府债务与央行相关工具。' },
-        { label: '债务限额与推演', href: '/debt-ceiling', description: '人大批准的国债/地方债限额、剩余空间与两条时间推演线。' },
-        { label: '利率与汇率', href: '/china-rates', description: 'LPR、SHIBOR 与人民币中间价。' },
-        { label: '城市经济', href: '/city-economy', description: '城市房价、地区 GDP、地方财政、土地财政与地方债。' }
+        { label: '中国房价', href: '/housing', description: '70城官方新房/二手指数、全国销售面积、BIS与安居客挂牌参考。' },
+        { label: '财政债务', href: '/fiscal-debt', description: '年度财政收支、未来情景、政府债务与央行相关工具。' },
+        { label: '债务推演', href: '/debt-ceiling', description: '人大批准的国债/地方债限额、剩余空间与两条时间推演线。' },
+        { label: '利率汇率', href: '/china-rates', description: 'LPR、SHIBOR 与人民币中间价。' },
+        { label: '城市经济', href: '/city-economy', description: '城市房价、地区 GDP、地方财政、土地财政与地方债。' },
+        { label: '房价推演', href: '/housing-scenario', description: '70城多情景路径、模拟敏感性区间与历史机械回测。' }
       ]
     },
     us: {
@@ -52,20 +55,21 @@
     },
     leisure: {
       label: '娱乐',
-      summary: '悦读FM · 本地听',
+      summary: '悦读FM · 按需提醒',
       defaultHref: '/yuedu-fm',
       items: [
-        { label: '悦读FM', href: '/yuedu-fm', description: '本地保存标题、节目文字、封面和音频，断网也可收听。' }
+        { label: '悦读FM', href: '/yuedu-fm', description: '本地保存标题、节目文字、封面和音频，断网也可收听。' },
+        { label: 'CardCookie 监控', href: '/cardcookie-monitor', description: '手动开启 Walmart 与 Best Buy 的低频库存、折扣和价格变化提醒。' }
       ]
     }
   };
 
   function activeGroupForPath(pathname) {
-    if (/^\/(dashboard|macro-analytics|fiscal-debt|financial\/debug|china-rates|city-economy|housing|gdp|debt-ceiling)/.test(pathname)) return 'china';
+    if (/^\/(dashboard|china-macro|macro-analytics|fiscal-debt|financial\/debug|china-rates|city-economy|housing-scenario|housing|gdp|debt-ceiling)/.test(pathname)) return 'china';
     if (/^\/us-macro/.test(pathname)) return 'us';
     if (/^\/(abdc|abdc-astar-research)/.test(pathname)) return 'research';
     if (/^\/(paper-translation|audio-transcription)/.test(pathname)) return 'tools';
-    if (/^\/yuedu-fm/.test(pathname)) return 'leisure';
+    if (/^\/(yuedu-fm|cardcookie-monitor)/.test(pathname)) return 'leisure';
     return '';
   }
 

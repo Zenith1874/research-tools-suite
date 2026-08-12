@@ -611,7 +611,8 @@ def _derived_rows(rows):
 def build_regional_fiscal_payload(conn):
     ensure_regional_fiscal_table(conn)
     rows = [dict(r) for r in conn.execute('''SELECT country_code,government_scope,region_code,
-      region_name,indicator_code,period,value,unit,data_status,source_name,source_url
+      region_name,indicator_code,period,value,unit,data_status,source_name,source_url,
+      source_title,parser_notes
       FROM regional_fiscal_observations ORDER BY country_code,period,region_name,indicator_code''')]
     rows = _derived_rows(rows)
     # Same-country, same-year nominal GDP denominator; no FX conversion or cross-country ratio.

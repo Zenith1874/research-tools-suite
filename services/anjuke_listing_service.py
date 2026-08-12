@@ -40,7 +40,11 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
 BLOCK_MARKERS = ('访问验证', '请输入验证码', 'antibot/verifycode', '滑块验证')
 TIER1 = ('北京', '上海', '广州', '深圳')
-FOCUS_CITIES = ('北京', '上海', '广州', '深圳', '厦门', '南京', '合肥', '常州', '苏州', '无锡')
+CORE_FOCUS_CITIES = (
+    '北京', '上海', '广州', '深圳', '厦门', '南京', '合肥', '常州', '苏州', '无锡',
+)
+ADDED_FOCUS_CITIES = ('武汉', '长沙', '成都', '杭州', '福州')
+FOCUS_CITIES = CORE_FOCUS_CITIES + ADDED_FOCUS_CITIES
 
 
 def connect(db_path=None):
@@ -910,7 +914,13 @@ def build_anjuke_payload(db_path=None):
     for row in yearly_rank_rows:
         if row['city'] not in FOCUS_CITIES:
             continue
-        yearly_index[(row['city'], int(row['year']))] = {
+        key = (row['city'], int(row['year']))
+        current = yearly_index.get(key)
+        # 历史年份同为年末时全国排名页优先；当前年份若逐月页已更新到更晚月份，
+        # 不允许较旧的排名页缓存把年度最新点倒退。
+        if current is not None and row['snapshot_period'] < current['period']:
+            continue
+        yearly_index[key] = {
             'city': row['city'],
             'year': int(row['year']),
             'period': row['snapshot_period'],

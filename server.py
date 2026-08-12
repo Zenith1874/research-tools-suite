@@ -64,7 +64,10 @@ from services.us_macro_service import (
     update_us_macro,
 )
 from services.gdp_service import build_gdp_payload, update_gdp
-from services.china_macro_service import update_china_macro
+from services.china_macro_dashboard_service import (
+    build_china_macro_payload,
+    update_china_macro_bundle,
+)
 from services.macro_analytics_service import build_macro_analytics_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
 from services.housing_price_service import (
@@ -84,11 +87,14 @@ from services.housing_scenario_service import (
 from services.listed_company_service import (
     build_city_listed_payload,
     update_company_directory,
+    update_financial_history,
     update_financials,
     update_market_caps,
 )
 from services.city_nbs_service import update_city_nbs
 from services.city_fiscal_decision_service import update_city_fiscal_decisions
+from services.city_bulletin_indicator_service import update_city_bulletin_indicators
+from services.city_bulletin_official_service import update_city_bulletin_official
 from services.debt_ceiling_service import update_debt_ceiling
 from services.debt_projection_service import build_projection_payload, parse_overrides
 from services.abdc_astar_research_service import (
@@ -133,6 +139,10 @@ from services.yuedu_fm_service import (
     YueduFMError,
     YueduFMManager,
 )
+from services.cardcookie_monitor_service import (
+    CardCookieMonitorError,
+    CardCookieMonitorManager,
+)
 
 logging.basicConfig(level=logging.INFO,
     format='%(asctime)s  %(levelname)-7s  %(message)s', datefmt='%H:%M:%S')
@@ -167,6 +177,8 @@ AUDIO_TRANSCRIPTION_ALLOW_REMOTE = os.environ.get(
     'AUDIO_TRANSCRIPTION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 YUEDU_FM_ALLOW_REMOTE = os.environ.get(
     'YUEDU_FM_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
+CARDCOOKIE_MONITOR_ALLOW_REMOTE = os.environ.get(
+    'CARDCOOKIE_MONITOR_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 AUDIO_MAX_UPLOAD_BYTES = int(os.environ.get(
     'AUDIO_MAX_UPLOAD_BYTES', AUDIO_DEFAULT_MAX_UPLOAD_BYTES))
 MAX_POST_BYTES = 1024 * 1024
@@ -178,6 +190,9 @@ PAPER_TRANSLATION = PaperTranslationManager(os.path.join(_ROOT, 'data', 'transla
 AUDIO_TRANSCRIPTION = AudioTranscriptionManager(
     os.path.join(_ROOT, 'data', 'audio_jobs'), max_upload_bytes=AUDIO_MAX_UPLOAD_BYTES)
 YUEDU_FM = YueduFMManager(os.path.join(_ROOT, 'data', 'yuedu_fm'))
+CARDCOOKIE_MONITOR = CardCookieMonitorManager(
+    os.path.join(_ROOT, 'data', 'cardcookie_monitor.db'),
+    secrets_path=os.path.join(_ROOT, '.secrets'))
 BASE    = 'https://www.pbc.gov.cn'
 INDEX_URL = BASE + '/goutongjiaoliu/113456/113469/index.html'
 HEADERS = {
@@ -1468,6 +1483,14 @@ def _yuedu_fm_access_allowed(client_ip, supplied_token=''):
                 _write_request_allowed(client_ip, supplied_token))
 
 
+def _cardcookie_monitor_access_allowed(client_ip, supplied_token=''):
+    """Monitor state and masked mail metadata are private unless opted in."""
+    if _is_loopback_address(client_ip):
+        return True
+    return bool(CARDCOOKIE_MONITOR_ALLOW_REMOTE and
+                _write_request_allowed(client_ip, supplied_token))
+
+
 def cors_headers(origin=None):
     headers = {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -1481,6 +1504,18 @@ def cors_headers(origin=None):
         headers['Access-Control-Allow-Origin'] = origin if CORS_ORIGIN != '*' else '*'
         headers['Vary'] = 'Origin'
     return headers
+
+
+def _parse_housing_scenario_horizon(query, default=24):
+    """Return (fallback_months, end_period) for numeric or end-year UI input."""
+    raw = (query.get('horizon') or '').strip().lower()
+    if raw in ('2030', 'to2030', 'end2030'):
+        return 120, '2030-12'
+    try:
+        return max(6, min(120, int(float(raw or default)))), None
+    except (TypeError, ValueError):
+        return int(default), None
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
@@ -1633,6 +1668,16 @@ class Handler(BaseHTTPRequestHandler):
             }, 403)
         return allowed
 
+    def _require_cardcookie_monitor_access(self):
+        allowed = _cardcookie_monitor_access_allowed(
+            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+        if not allowed:
+            self.send_json({
+                'error': 'CardCookie 监控和邮件设置默认仅允许服务器本机访问',
+                'code': 'cardcookie_monitor_local_only',
+            }, 403)
+        return allowed
+
     def _serve_static(self, url_path):
         # 把 URL 路径映射到 STATIC_DIR 下的文件，防止目录穿越
         rel = url_path.lstrip('/').replace('/', os.sep)
@@ -1728,6 +1773,14 @@ class Handler(BaseHTTPRequestHandler):
                     parts = path.split('/')
                     media_path, media_type = YUEDU_FM.media_path(parts[4], parts[5])
                     self.send_ranged_file(media_path, media_type)
+            elif path == '/api/cardcookie-monitor/status':
+                if self._require_cardcookie_monitor_access():
+                    self.send_json(CARDCOOKIE_MONITOR.status(),
+                                   cache_control='no-store, private')
+            elif path == '/api/cardcookie-monitor/email-settings':
+                if self._require_cardcookie_monitor_access():
+                    self.send_json(CARDCOOKIE_MONITOR.email_settings(),
+                                   cache_control='no-store, private')
             elif path == '/api/abdc/data':  self._api_abdc_data()
             elif path == '/api/financial/debug': self._api_financial_debug()
             elif path == '/api/fiscal-debt/data': self._api_fiscal_debt_data()
@@ -1756,6 +1809,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/health': self.send_json(build_journal_health_payload())
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
+            elif path == '/api/china-macro/data': self.send_json(build_china_macro_payload(DB_PATH))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
             elif path == '/api/housing-scenario/cities':
@@ -1770,11 +1824,30 @@ class Handler(BaseHTTPRequestHandler):
                 cities = [value.strip() for value in (q.get('cities') or '').split(',')
                           if value.strip()]
                 try:
+                    scenario_horizon, end_period = _parse_housing_scenario_horizon(q)
+                    try:
+                        structural_weight = max(
+                            0.0, min(1.0, float(q.get('structural_weight', 0.40))))
+                    except (TypeError, ValueError):
+                        structural_weight = 0.40
+                    def _formation(name, default):
+                        try:
+                            return max(-50.0, min(50.0, float(q.get(name, default))))
+                        except (TypeError, ValueError):
+                            return default
+                    formation_adjustments = {
+                        'optimistic': _formation('formation_optimistic', 10.0),
+                        'base': _formation('formation_base', 0.0),
+                        'stress': _formation('formation_stress', -15.0),
+                    }
                     self.send_json(build_housing_scenario_comparison(
                         DB_PATH, cities=cities or None,
                         kind=q.get('kind') or 'second',
-                        horizon=int(float(q.get('horizon') or 24)),
-                        source=q.get('source') or 'official'))
+                        horizon=scenario_horizon,
+                        source=q.get('source') or 'official',
+                        end_period=end_period,
+                        structural_weight=structural_weight,
+                        formation_adjustments=formation_adjustments))
                 except (TypeError, ValueError) as exc:
                     self.send_json({'success': False, 'data_status': 'scenario',
                                     'error': str(exc)}, 400)
@@ -1793,7 +1866,8 @@ class Handler(BaseHTTPRequestHandler):
                     except (TypeError, ValueError): return default
                 over = {}
                 source = q.get('source') or 'official'
-                override_kinds = (('listing',) if source == 'anjuke' else
+                scenario_horizon, end_period = _parse_housing_scenario_horizon(q)
+                override_kinds = (('listing',) if source in ('anjuke', 'anjuke_yearly') else
                                   ((q.get('kind'),) if q.get('kind') in ('second', 'new')
                                    else ('second', 'new')))
                 for key in ('optimistic', 'base', 'stress'):
@@ -1809,10 +1883,12 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     self.send_json(build_housing_scenario_payload(
                         DB_PATH, q.get('city') or '厦门',
-                        horizon=int(_num('horizon', 24, 6, 120)),
+                        horizon=scenario_horizon,
                         down_payment=_num('down_payment', 0.35, 0.15, 1.0),
                         overrides=over or None,
-                        city_code=q.get('city_code'), source=source))
+                        city_code=q.get('city_code'), source=source,
+                        end_period=end_period,
+                        structural_weight=_num('structural_weight', 0.40, 0.0, 1.0)))
                 except (TypeError, ValueError) as exc:
                     self.send_json({'success': False, 'data_status': 'scenario',
                                     'error': str(exc)}, 400)
@@ -1821,12 +1897,37 @@ class Handler(BaseHTTPRequestHandler):
                 def _int(name, default, low, high):
                     try: return max(low, min(high, int(flat.get(name, default))))
                     except (TypeError, ValueError): return default
+                def _float(name, default, low, high):
+                    try: return max(low, min(high, float(flat.get(name, default))))
+                    except (TypeError, ValueError): return default
+                lgfv_scope = flat.get('lgfv_scope') or 'strict'
+                if lgfv_scope not in ('strict', 'broad', 'all'):
+                    lgfv_scope = 'strict'
+                funding_raw = flat.get('lgfv_funding_rate')
+                lgfv_funding_rate = (
+                    None if funding_raw in (None, '')
+                    else _float('lgfv_funding_rate', 3.0, 0.0, 30.0) / 100.0
+                )
                 self.send_json(build_projection_payload(
                     DB_PATH,
                     limit_window=_int('limit_window', 4, 2, 20),
                     interest_window=_int('interest_window', 7, 2, 30),
                     horizon=_int('horizon', 25, 5, 60),
-                    overrides=parse_overrides(flat)))
+                    overrides=parse_overrides(flat),
+                    lgfv_options={
+                        'scope': lgfv_scope,
+                        'horizon': _int('lgfv_horizon', 10, 5, 20),
+                        'refinancing_rate': _float(
+                            'lgfv_refinancing_rate', 90.0, 0.0, 100.0) / 100.0,
+                        'new_money_rate': _float(
+                            'lgfv_new_money_rate', 3.0, 0.0, 30.0) / 100.0,
+                        'funding_rate': lgfv_funding_rate,
+                        'term_years': _int('lgfv_term_years', 3, 1, 10),
+                        # User-selected market benchmark: 15万亿元 = 150,000亿元.
+                        # This remains a scenario/manual assumption, not an official balance.
+                        'balance_anchor': _float(
+                            'lgfv_balance_anchor', 150000.0, 0.0, 500000.0),
+                    }))
             elif path == '/api/analytics': self.send_json(_analytics_payload())
             elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing','/api/analytics/debt'):
                 self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
@@ -1869,8 +1970,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'audio_transcription_result.html'))
             elif path in ('/yuedu-fm', '/yuedu-fm/'):
                 self.send_file(os.path.join(STATIC_DIR, 'yuedu_fm.html'))
+            elif path in ('/cardcookie-monitor', '/cardcookie-monitor/'):
+                self.send_file(os.path.join(STATIC_DIR, 'cardcookie_monitor.html'))
             elif path in ('/china-rates', '/china-rates/'):
                 self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
+            elif path in ('/china-macro', '/china-macro/'):
+                self.send_file(os.path.join(STATIC_DIR, 'china_macro.html'))
             elif path in ('/us-macro', '/us-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
             elif path in ('/gdp', '/gdp/'):
@@ -1888,7 +1993,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
-        except (TranslationError, AudioTranscriptionError, YueduFMError) as e:
+        except (TranslationError, AudioTranscriptionError, YueduFMError,
+                CardCookieMonitorError) as e:
             self.send_json({'error': str(e)}, 400)
         except FileNotFoundError:
             self.send_json({'error': 'not found'}, 404)
@@ -1928,6 +2034,17 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json_body()
             backfill = bool(body.get('backfill'))
             self.send_json(_run_update_job('china_rates', lambda: update_china_rates(DB_PATH, backfill=backfill)))
+        elif path == '/api/china-macro/update':
+            body = self._read_json_body()
+            full_history = bool(body.get('full_history'))
+            try:
+                start_year = int(body.get('start_year')) if body.get('start_year') else None
+            except (TypeError, ValueError):
+                self.send_json({'error': 'start_year 必须是年份整数'}, 400)
+                return
+            self.send_json(_run_update_job(
+                'china_macro', lambda: update_china_macro_bundle(
+                    DB_PATH, full_history=full_history, start_year=start_year)))
         elif path == '/api/us-macro/update':
             self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
         elif path == '/api/gdp/update':
@@ -1936,7 +2053,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job('city_official',
                                            lambda: {
                                                'nbs_major_cities': update_city_nbs(DB_PATH),
+                                               'city_bulletin_official': update_city_bulletin_official(DB_PATH),
                                                'city_bulletins': update_city_official(DB_PATH),
+                                               'city_bulletin_indicators': update_city_bulletin_indicators(DB_PATH),
                                                'city_fiscal_decisions': update_city_fiscal_decisions(DB_PATH),
                                            }))
         elif path == '/api/listed-company/update':
@@ -1952,6 +2071,13 @@ class Handler(BaseHTTPRequestHandler):
                     raw = (q.get('cities') or '').strip()
                     out['financials'] = update_financials(
                         DB_PATH, cities=[c for c in raw.split(',') if c] or None)
+                if step == 'history':
+                    raw = (q.get('cities') or '').strip()
+                    out['history'] = update_financial_history(
+                        DB_PATH, cities=[c for c in raw.split(',') if c] or None,
+                        start_year=int(q.get('start_year') or 2021),
+                        end_year=int(q.get('end_year') or 2025),
+                        retry_missing=q.get('retry_missing') in ('1', 'true'))
                 return out
             self.send_json(_run_update_job('listed_company', _run))
         elif path == '/api/city-economy/update-nbs':
@@ -2007,9 +2133,17 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/abdc/astar/enrich':
             body = self._read_json_body()
             limit = body.get('limit')
-            threading.Thread(target=lambda: enrich_with_semantic_scholar(limit=limit), daemon=True).start()
+            threading.Thread(
+                target=lambda: enrich_with_semantic_scholar(
+                    limit=limit,
+                    batch_size=500,
+                    batch_delay=2.0,
+                    only_without_source=True,
+                ),
+                daemon=True,
+            ).start()
             self.send_json({'status': 'started',
-                            'message': 'Semantic Scholar 补全已启动（补摘要/引用/学科，按批进行，可在 Debug 看进度）'})
+                            'message': 'Semantic Scholar 全量补全已启动（500 条/批，只处理未查验队列；可在 Debug 看进度）'})
         elif path == '/api/translation/jobs':
             self._api_translation_create(content_length)
         elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/questions$', path):
@@ -2035,6 +2169,43 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(result, 202, cache_control='no-store, private')
                 except YueduFMError as exc:
                     self.send_json({'error': str(exc)}, 409,
+                                   cache_control='no-store, private')
+        elif path == '/api/cardcookie-monitor/start':
+            if self._require_cardcookie_monitor_access():
+                body = self._read_json_body()
+                try:
+                    result = CARDCOOKIE_MONITOR.start(
+                        targets=body.get('targets'),
+                        interval_seconds=body.get('interval_seconds', 600),
+                        confirm_email=body.get('confirm_email') is True,
+                    )
+                    self.send_json(result, 202, cache_control='no-store, private')
+                except CardCookieMonitorError as exc:
+                    code = 409 if exc.code in ('already_running', 'busy') else 400
+                    self.send_json({'error': str(exc), 'code': exc.code}, code,
+                                   cache_control='no-store, private')
+        elif path == '/api/cardcookie-monitor/stop':
+            if self._require_cardcookie_monitor_access():
+                self.send_json(CARDCOOKIE_MONITOR.stop(),
+                               cache_control='no-store, private')
+        elif path == '/api/cardcookie-monitor/check-now':
+            if self._require_cardcookie_monitor_access():
+                body = self._read_json_body()
+                try:
+                    result = CARDCOOKIE_MONITOR.check_now(targets=body.get('targets'))
+                    self.send_json(result, 202, cache_control='no-store, private')
+                except CardCookieMonitorError as exc:
+                    code = 409 if exc.code in ('already_running', 'busy') else 400
+                    self.send_json({'error': str(exc), 'code': exc.code}, code,
+                                   cache_control='no-store, private')
+        elif path == '/api/cardcookie-monitor/email-settings':
+            if self._require_cardcookie_monitor_access():
+                body = self._read_json_body()
+                try:
+                    result = CARDCOOKIE_MONITOR.save_email_settings(body)
+                    self.send_json(result, cache_control='no-store, private')
+                except CardCookieMonitorError as exc:
+                    self.send_json({'error': str(exc), 'code': exc.code}, 400,
                                    cache_control='no-store, private')
         else:
             self.send_json({'error':'not found'},404)
@@ -2415,7 +2586,7 @@ def rates_scheduler_thread(interval_hours=24):
             r1 = _run_update_job('china_rates', lambda: update_china_rates(DB_PATH), blocking=True)
             r2 = _run_update_job('us_macro', lambda: update_us_macro(DB_PATH), blocking=True)
             r3 = _run_update_job('housing', lambda: update_housing_prices(DB_PATH), blocking=True)
-            r4 = _run_update_job('china_macro', lambda: update_china_macro(DB_PATH), blocking=True)
+            r4 = _run_update_job('china_macro', lambda: update_china_macro_bundle(DB_PATH), blocking=True)
             log.info(f"利率/宏观/房价更新：cn={r1.get('records_upserted')} us={r2.get('records_upserted')} "
                      f"housing={r3.get('records_upserted')} cn_macro={r4.get('records_upserted')}")
         except Exception as e:
@@ -2476,8 +2647,9 @@ if __name__ == '__main__':
     _probe.close()
 
     init_db()
-    _run_update_job('pboc_scrape', scrape_and_update)   # 后台启动，串行+不卡 HTTP
-    threading.Thread(target=scheduler_thread, daemon=True).start()
+    if os.environ.get('PBOC_AUTO', '1') != '0':
+        _run_update_job('pboc_scrape', scrape_and_update)   # 后台启动，串行+不卡 HTTP
+        threading.Thread(target=scheduler_thread, daemon=True).start()
     if os.environ.get('ASTAR_AUTO', '1') != '0':
         threading.Thread(target=astar_scheduler_thread, daemon=True).start()
     if os.environ.get('FISCAL_AUTO', '1') != '0':

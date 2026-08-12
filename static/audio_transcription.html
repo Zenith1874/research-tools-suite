@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>研究语音工作台 · Research Tools Suite</title>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
+<style>
+:root{--bg:#07111f;--panel:#0c192b;--panel2:#102039;--bd:#223651;--text:#e8eef8;--muted:#91a2bb;--blue:#6da5ff;--green:#4dd6aa;--yellow:#f5bd61;--red:#ff7b91}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:24px 20px 64px}h1{font-size:24px;margin:0 0 8px}h2{font-size:16px;margin:0 0 14px}.sub{color:var(--muted);font-size:13px;line-height:1.7}.hero{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;margin-bottom:18px}.states{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.state{border:1px solid var(--bd);border-radius:8px;padding:9px 12px;font-size:11px;white-space:nowrap}.state.ok{border-color:#2f896f;color:#a9f0d9}.state.warn{border-color:#8b6a37;color:#ffe0a6}.state.bad{border-color:#8d4f5d;color:#ffc0cb}.notice{border-left:3px solid var(--blue);background:#0a1728;padding:12px 14px;margin:16px 0;color:#b9c8db;font-size:12px;line-height:1.75}.notice strong{color:var(--text)}.grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(330px,.75fr);gap:16px}.card{background:var(--panel);border:1px solid var(--bd);border-radius:9px;padding:18px}.drop{border:1px dashed #44658c;border-radius:8px;padding:28px 18px;text-align:center;background:#081525;cursor:pointer;transition:.15s}.drop:hover,.drop.drag{border-color:var(--blue);background:#0b1b30}.drop-title{font-weight:700;margin-bottom:6px}.drop-detail{font-size:12px;color:var(--muted);line-height:1.6}.selected{margin:10px 0 0;color:#b9d3ff;font-size:12px;word-break:break-all}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}.field.full{grid-column:1/-1}.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px}.field input,.field select,.field textarea{width:100%;border:1px solid var(--bd);border-radius:6px;background:#081426;color:var(--text);padding:9px;font:inherit;font-size:12px}.field textarea{min-height:90px;resize:vertical;line-height:1.55}.speaker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.check{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#bdcadc;line-height:1.55;margin:13px 0}.check input{margin-top:3px}.actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:15px}.actions .help{flex:1;min-width:220px}.btn{border:1px solid var(--bd);border-radius:6px;background:var(--panel2);color:var(--text);padding:9px 13px;font:inherit;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.primary{border-color:#477fcf;background:#17447e}.btn.danger{border-color:#77414c;color:#ffc0cb}.btn:disabled{opacity:.45;cursor:not-allowed}.help{font-size:11px;color:var(--muted);line-height:1.8}.privacy-list{margin:12px 0 0;padding-left:18px;color:#c6d2e2;font-size:12px;line-height:1.8}.privacy-list b{color:#9fdcff}.jobs{margin-top:18px}.job-list{display:grid;gap:10px}.job{background:#091627;border:1px solid var(--bd);border-radius:8px;padding:13px}.job-top{display:flex;justify-content:space-between;gap:10px}.job-name{font-size:13px;font-weight:650;word-break:break-all}.badge{font-size:10px;border:1px solid var(--bd);border-radius:999px;padding:3px 7px;height:max-content}.badge.completed{color:#a9f0d9;border-color:#2f896f}.badge.running,.badge.queued{color:#bdd6ff;border-color:#3f6da8}.badge.failed,.badge.interrupted{color:#ffc0cb;border-color:#8d4f5d}.progress{height:6px;border-radius:6px;background:#15263b;overflow:hidden;margin:10px 0}.progress>span{display:block;height:100%;background:linear-gradient(90deg,#4d8fff,#4dd6aa)}.job-meta,.job-error,.job-audit{font-size:11px;color:var(--muted);line-height:1.65}.job-error{color:#ffc0cb}.job-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.empty{padding:18px;border:1px dashed var(--bd);border-radius:7px;text-align:center;color:var(--muted);font-size:12px}@media(max-width:820px){.grid{grid-template-columns:1fr}.hero{flex-direction:column}.states{justify-content:flex-start}.state{white-space:normal}.form-grid,.speaker-grid{grid-template-columns:1fr}.field.full{grid-column:auto}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="hero">
+    <div><h1>研究语音工作台</h1><div class="sub">用于访谈、会议、讲座和研究录音的隐私优先转录、匿名说话人区分、逐轮翻译与双语字幕。</div></div>
+    <div class="states"><div id="asr-state" class="state">检查语音运行器…</div><div id="translation-state" class="state">检查翻译模型…</div></div>
+  </div>
+
+  <div class="notice"><strong>隐私边界：</strong>原文件先保存在本机 gitignored 私有目录，再经 SSH 加密暂存到 Keller 的空闲 GPU；转录和说话人区分在 Keller 完成，逐轮翻译继续调用 Iverson 上的 Qwen。结构化结果通过输入 SHA-256 校验复制回来后，系统删除该任务的远端临时目录。说话人仅以 <code>SPEAKER_00</code> 等匿名标签表示，不推断姓名、性别或身份。</div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>转录与翻译</h2>
+      <input id="audio-file" type="file" accept="audio/*,video/mp4,video/webm,.mkv,.mov" hidden>
+      <div id="drop" class="drop" tabindex="0" role="button" aria-controls="audio-file">
+        <div class="drop-title">选择或拖入录音 / 视频</div>
+        <div class="drop-detail">WAV / MP3 / M4A / FLAC / AAC / OGG / OPUS / MP4 / MOV / MKV / WEBM；默认最大 1 GB。</div>
+      </div>
+      <div id="selected" class="selected">尚未选择文件</div>
+
+      <div class="form-grid">
+        <div class="field"><label for="source-language">录音语言</label><select id="source-language"><option>Auto detect</option><option>English</option><option>Simplified Chinese</option><option>Traditional Chinese</option><option>Spanish</option><option>French</option><option>German</option><option>Japanese</option><option>Korean</option></select></div>
+        <div class="field"><label for="target-language">翻译目标语言</label><select id="target-language"><option>Simplified Chinese</option><option>English</option><option>Traditional Chinese</option></select></div>
+        <div class="field full"><label>说话人数约束（知道准确人数时只填第一项；不确定可填范围）</label><div class="speaker-grid"><input id="num-speakers" type="number" min="1" max="20" placeholder="准确人数（可空）"><input id="min-speakers" type="number" min="1" max="20" placeholder="最少人数（可空）"><input id="max-speakers" type="number" min="1" max="20" placeholder="最多人数（可空）"></div></div>
+        <div class="field full"><label for="domain">研究语境提示</label><input id="domain" value="Research interviews, meetings, Information Systems, Management, OB/HR, and computational social science"></div>
+        <div class="field full"><label for="glossary">术语表（每行：原词 = 译词）</label><textarea id="glossary" placeholder="sensemaking = 意义建构&#10;algorithmic management = 算法管理"></textarea></div>
+      </div>
+      <label class="check"><input id="translate" type="checkbox" checked><span>转录完成后继续逐轮翻译，并生成译文及双语 TXT / SRT / VTT；关闭后只做原文转录和说话人区分。</span></label>
+      <label class="check"><input id="privacy-confirm" type="checkbox"><span>我知悉音频会经 SSH 加密暂存到校内计算机，并在结果校验复制回本机后删除远端临时副本。</span></label>
+      <div class="actions"><button id="start" class="btn primary" disabled>开始语音任务</button><button id="refresh" class="btn" type="button">重新检查服务</button><span id="submit-message" class="help">请先选择文件并确认隐私边界。</span></div>
+    </section>
+
+    <aside class="card">
+      <h2>一致性与研究审计</h2>
+      <ul class="privacy-list">
+        <li><b>逐词对齐：</b>faster-whisper 生成词级时间戳，再与 Community-1 exclusive diarization 对齐。</li>
+        <li><b>时间轴同源：</b>原文、译文和双语字幕共用同一组起止时间，不会因翻译改变时序。</li>
+        <li><b>可约束人数：</b>已知访谈人数时填准确值，可降低短音频中过度拆分说话人的概率。</li>
+        <li><b>断点复用：</b>翻译模型暂不可用时，已完成的转录不会重跑；重试会复用 SHA-256 匹配的结果和翻译检查点。</li>
+        <li><b>完整导出：</b>保存模型/包版本、参数、词/轮次、匿名标签、哈希和运行主机，并打包为 ZIP。</li>
+      </ul>
+      <div class="help">噪声、串音、重叠发言和极短发言都会降低说话人区分准确率。重要研究材料请抽查说话人切换点；系统不把匿名聚类标签当作真实身份。</div>
+    </aside>
+  </div>
+
+  <section class="card jobs">
+    <h2>本机最近语音任务</h2>
+    <div id="jobs" class="job-list"><div class="empty">正在读取任务…</div></div>
+  </section>
+</main>
+
+<script>
+(function(){
+  'use strict';
+  const $=id=>document.getElementById(id);
+  const input=$('audio-file'),drop=$('drop'),selected=$('selected'),start=$('start'),privacy=$('privacy-confirm');
+  const refresh=$('refresh'),asrState=$('asr-state'),translationState=$('translation-state'),jobsNode=$('jobs'),message=$('submit-message');
+  let chosenFile=null,maxBytes=1024*1024*1024,pollTimer=null;
+  const allowed=new Set(['wav','mp3','m4a','flac','aac','ogg','opus','mp4','mov','mkv','webm']);
+  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function bytes(value){if(value==null)return'-';const units=['B','KB','MB','GB'];let n=Number(value),i=0;while(n>=1024&&i<units.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+units[i];}
+  function duration(value){const seconds=Math.round(Number(value)||0),h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return(h?h+'小时 ':'')+(m?m+'分 ':'')+s+'秒';}
+  function label(status){return({queued:'排队中',running:'处理中',completed:'已完成',failed:'失败',interrupted:'已中断'})[status]||status;}
+  function encodeOptions(value){const raw=new TextEncoder().encode(JSON.stringify(value));let binary='';raw.forEach(b=>binary+=String.fromCharCode(b));return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+  function glossary(){return $('glossary').value.split(/\r?\n/).map(line=>{const i=line.indexOf('=');return i>0?{source:line.slice(0,i).trim(),target:line.slice(i+1).trim()}:null;}).filter(x=>x&&x.source&&x.target);}
+  function optionalInt(id){const value=$(id).value.trim();return value?Number(value):null;}
+  async function jsonFetch(url,options){const response=await fetch(url,options);let body={};try{body=await response.json();}catch(e){}if(!response.ok)throw new Error(body.error||('HTTP '+response.status));return body;}
+  function syncStart(){start.disabled=!chosenFile||!privacy.checked;start.title=!chosenFile?'请先选择录音或视频':(!privacy.checked?'请确认隐私边界':'');}
+  function choose(file){chosenFile=file||null;if(!file){selected.textContent='尚未选择文件';syncStart();return;}const ext=(file.name.split('.').pop()||'').toLowerCase();if(!allowed.has(ext)){chosenFile=null;selected.textContent='不支持 '+file.name+'；请换用页面列出的格式。';message.textContent='文件类型不受支持。';syncStart();return;}if(file.size>maxBytes){chosenFile=null;selected.textContent='文件超过 '+bytes(maxBytes)+' 限制。';message.textContent='请选择更小的文件。';syncStart();return;}selected.textContent=file.name+' · '+bytes(file.size);message.textContent=privacy.checked?'可以开始；若 GPU 正忙，任务会安全等待空闲资源。':'请确认音频远端临时处理的隐私边界。';syncStart();}
+  drop.addEventListener('click',()=>input.click());drop.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();input.click();}});input.addEventListener('change',()=>choose(input.files[0]));privacy.addEventListener('change',()=>{syncStart();if(chosenFile)message.textContent=privacy.checked?'可以开始；若 GPU 正忙，任务会安全等待空闲资源。':'请确认音频远端临时处理的隐私边界。';});
+  ['dragenter','dragover'].forEach(name=>drop.addEventListener(name,event=>{event.preventDefault();drop.classList.add('drag');}));['dragleave','drop'].forEach(name=>drop.addEventListener(name,event=>{event.preventDefault();drop.classList.remove('drag');}));drop.addEventListener('drop',event=>choose(event.dataTransfer.files[0]));
+  $('num-speakers').addEventListener('input',()=>{const disabled=Boolean($('num-speakers').value.trim());$('min-speakers').disabled=disabled;$('max-speakers').disabled=disabled;});
+  $('translate').addEventListener('change',()=>{$('target-language').disabled=!$('translate').checked;});
+
+  async function loadConfig(){refresh.disabled=true;try{const config=await jsonFetch('/api/audio/config',{cache:'no-store'});maxBytes=config.max_upload_bytes||maxBytes;const asr=config.transcription_service||{},translation=config.translation_service||{};if(!asr.available){asrState.textContent='本机 SSH 工具不可用';asrState.className='state bad';}else if(!asr.connected){asrState.textContent='Keller 暂时无法连接';asrState.className='state bad';}else if(asr.idle_available){asrState.textContent='Keller 已连接 · GPU 空闲';asrState.className='state ok';}else{asrState.textContent='Keller 已连接 · GPU 正忙';asrState.className='state warn';}translationState.textContent=translation.available?'Iverson Qwen 已连接':'Iverson Qwen 未连接 · 可先转录';translationState.className='state '+(translation.available?'ok':'warn');}catch(error){asrState.textContent='语音服务检查失败';asrState.className='state bad';translationState.textContent=error.message;translationState.className='state bad';}finally{refresh.disabled=false;refresh.textContent='重新检查服务';syncStart();}}
+  refresh.addEventListener('click',loadConfig);
+  start.addEventListener('click',async()=>{if(!chosenFile||!privacy.checked)return;const num=optionalInt('num-speakers'),min=optionalInt('min-speakers'),max=optionalInt('max-speakers');if(min&&max&&min>max){message.textContent='最少说话人数不能大于最多说话人数。';return;}const resultWindow=window.open('about:blank','_blank');if(resultWindow){resultWindow.opener=null;resultWindow.document.title='正在创建语音任务…';resultWindow.document.body.innerHTML='<p style="font:14px system-ui;padding:24px;color:#334155">正在安全保存音频并创建结果查看页…</p>';}start.disabled=true;message.textContent='正在将文件写入本机私有任务目录…';const options={source_language:$('source-language').value,target_language:$('target-language').value,translate:$('translate').checked,num_speakers:num,min_speakers:min,max_speakers:max,domain:$('domain').value,glossary:glossary()};try{const created=await jsonFetch('/api/audio/jobs',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(chosenFile.name),'X-Audio-Options':encodeOptions(options)},body:chosenFile});const resultUrl='/audio-transcription/results/'+created.job_id;if(resultWindow){resultWindow.location.replace(resultUrl);message.textContent='任务已创建；结果页已在新标签打开。';}else{message.innerHTML='任务已创建；浏览器阻止了新标签，<a href="'+resultUrl+'" target="_blank" rel="noopener" style="color:#9fc5ff">点击打开结果页</a>。';}chosenFile=null;input.value='';selected.textContent='尚未选择文件';privacy.checked=false;syncStart();await loadJobs();beginPolling();}catch(error){if(resultWindow)resultWindow.close();message.textContent=error.message;syncStart();}});
+
+  function jobHtml(job){const p=job.progress&&job.progress.percent||0,outputs=job.outputs||{},runtime=job.runtime||{};let actions='<a class="btn primary" target="_blank" rel="noopener" href="/audio-transcription/results/'+job.job_id+'">'+(job.status==='completed'?'打开查看结果':'打开任务进度')+'</a>';if(job.status==='completed'){actions+='<a class="btn" href="/api/audio/jobs/'+job.job_id+'/download?format=bundle">下载全部 ZIP</a>';[['txt','原文 TXT'],['srt','原文 SRT'],['bilingual_srt','双语 SRT'],['json','审计 JSON']].forEach(item=>{if(outputs[item[0]])actions+='<a class="btn" href="/api/audio/jobs/'+job.job_id+'/download?format='+item[0]+'">'+item[1]+'</a>';});if(!(job.options&&job.options.translate))actions+='<button class="btn" data-action="translate" data-id="'+job.job_id+'">追加翻译</button>';}if(job.status==='failed'||job.status==='interrupted')actions+='<button class="btn" data-action="retry" data-id="'+job.job_id+'">复用检查点重试</button>';const host=runtime.host?(' · '+runtime.host+' GPU '+runtime.gpu_index):'';const detail=job.stage_detail||'';const audit=job.audit&&Object.keys(job.audit).length?('轮次 '+(job.audit.turn_count||0)+' · 词数 '+(job.audit.word_count||0)+' · 远端清理 '+(job.audit.remote_cleanup_verified?'已确认':'待确认')):'';return '<article class="job"><div class="job-top"><div class="job-name">'+esc(job.original_filename)+'</div><span class="badge '+esc(job.status)+'">'+esc(label(job.status))+'</span></div><div class="progress"><span style="width:'+Number(p)+'%"></span></div><div class="job-meta">'+esc(detail)+' · '+Math.round(Number(p))+'%'+host+(job.duration_seconds?' · '+duration(job.duration_seconds):'')+(job.speaker_count?' · '+job.speaker_count+' 位匿名说话人':'')+'</div>'+(job.error?'<div class="job-error">'+esc(job.error)+'</div>':'')+(audit?'<div class="job-audit">'+esc(audit)+'</div>':'')+'<div class="job-actions">'+actions+'<button class="btn danger" data-action="delete" data-id="'+job.job_id+'">删除本机文件</button></div></article>';}
+  async function loadJobs(){try{const data=await jsonFetch('/api/audio/jobs',{cache:'no-store'});jobsNode.innerHTML=data.jobs.length?data.jobs.map(jobHtml).join(''):'<div class="empty">暂无本机语音任务</div>';return data.jobs;}catch(error){jobsNode.innerHTML='<div class="empty">'+esc(error.message)+'</div>';return[];}}
+  function beginPolling(){if(pollTimer)return;pollTimer=setInterval(async()=>{const jobs=await loadJobs();if(!jobs.some(job=>job.status==='queued'||job.status==='running')){clearInterval(pollTimer);pollTimer=null;}},1800);}
+  jobsNode.addEventListener('click',async event=>{const button=event.target.closest('button[data-action]');if(!button)return;const id=button.dataset.id,action=button.dataset.action;if(action==='delete'&&!confirm('删除该任务的本机原始录音、检查点、转录和字幕？此操作不可撤销。'))return;button.disabled=true;try{const request={method:'POST'};if(action==='translate'){request.headers={'X-Audio-Options':encodeOptions({translate:true,target_language:$('target-language').value,domain:$('domain').value,glossary:glossary()})};}await jsonFetch('/api/audio/jobs/'+id+'/'+action,request);await loadJobs();if(action==='retry'||action==='translate')beginPolling();}catch(error){alert(error.message);button.disabled=false;}});
+  loadConfig();loadJobs().then(jobs=>{if(jobs.some(job=>job.status==='queued'||job.status==='running'))beginPolling();});syncStart();
+})();
+</script>
+</body>
+</html>

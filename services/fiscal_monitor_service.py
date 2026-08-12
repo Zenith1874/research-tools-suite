@@ -5,6 +5,7 @@ from statistics import median
 
 from services.fiscal_debt_service import (
     MOF_CENTRAL_DEBT_PDF,
+    MOF_CENTRAL_DEBT_INDEX,
     MOF_LOCAL_DEBT_INDEX,
     build_fiscal_debt_debug_payload,
     build_fiscal_debt_payload,
@@ -49,7 +50,7 @@ MODULE_UPDATES = {
     },
     'central_government_debt': {
         'source_name': '财政部国库司', 'source_type': 'mof_central_government_debt_sdds',
-        'source_url': MOF_CENTRAL_DEBT_PDF, 'update': update_central_government_debt,
+        'source_url': MOF_CENTRAL_DEBT_INDEX, 'update': update_central_government_debt,
     },
     'treasury_issuance': {
         'source_name': '财政部债务管理司', 'source_type': 'mof_treasury_bond',
@@ -411,12 +412,17 @@ def build_fiscal_monitor_payload(db_path):
     budget = build_fiscal_budget_payload(db_path)
     local_records = fiscal['local_government_debt']['records']
     central_records = fiscal['treasury_debt']['records']
+    central_operation_records = fiscal.get('central_government_operations', {}).get('records', [])
     local_latest = _latest_by_period(local_records)
     central_latest = _latest_by_period(central_records)
+    central_operation_latest = _latest_by_period(central_operation_records)
 
     overview_cards = [
         _local_card(central_latest, 'central_government_debt_balance', '中央政府债务余额'),
         _local_card(central_latest, 'central_government_bond_balance', '中央政府债券余额'),
+        _local_card(central_operation_latest, 'central_government_revenue_monthly', '中央政府合并收入（当月）'),
+        _local_card(central_operation_latest, 'central_government_expenditure_monthly', '中央政府合并支出（当月）'),
+        _local_card(central_operation_latest, 'central_government_financing_monthly', '中央政府融资（当月）'),
         _local_card(local_latest, 'local_debt_balance_total', '地方政府债务余额'),
         _local_card(local_latest, 'local_general_debt_balance', '地方政府一般债务余额'),
         _local_card(local_latest, 'local_special_debt_balance', '地方政府专项债务余额'),
@@ -768,9 +774,17 @@ def build_fiscal_monitor_payload(db_path):
             'latest_ytd_cards': budget.get('cards', []),
             'tables': {
                 'annual': budget.get('annual_series', []),
+                'land_transfer_annual': budget.get('land_transfer_annual_series', []),
+                'land_transfer_half_year': budget.get(
+                    'land_transfer_half_year_analysis', {}).get('rows', []),
                 'ytd': budget.get('series', []),
+                'monthly': budget.get('monthly_series', []),
             },
+            'monthly_cards': budget.get('monthly_cards', []),
+            'monthly_coverage': budget.get('monthly_coverage', {}),
             'forecast': budget.get('forecast', {}),
+            'half_year_analysis': budget.get('land_transfer_half_year_analysis', {}),
+            'budget_half_year_analysis': budget.get('budget_half_year_analysis', {}),
             'debt_service_cashflow': {
                 'data_status': 'scenario', 'cards': cashflow_cards,
                 'history': debt_service_history,
@@ -806,9 +820,11 @@ def build_fiscal_monitor_payload(db_path):
             'cards': overview_cards,
             'budget_cards': budget.get('cards', []),
             'tables': {'central_government_debt': central_records, 'local_government_debt': local_records,
+                       'central_government_operations': central_operation_records,
                        'fiscal_budget': budget.get('series', [])},
             'warnings': ['中央政府债务与地方政府债务口径分开保存；显性合计只在同一期数计算。',
-                         '财政收支为国库司月度报告 YTD 累计；收支差额为 derived，不等于官方预算口径赤字。'],
+                         '财政收支为国库司月度报告 YTD 累计；收支差额为 derived，不等于官方预算口径赤字。',
+                         '中央政府月度收支/融资来自财政部 SDDS 合并口径，不等于全国财政总收入/总支出；融资不含国债本金偿还。'],
         },
         'debt_rollover_pressure': {
             'title': '发行、还本、付息压力',
@@ -863,6 +879,9 @@ def build_fiscal_monitor_payload(db_path):
     coverage = {
         'central_government_debt': {'records': len(central_records), 'earliest_period': central_records[0]['period'] if central_records else None,
                                     'latest_period': central_records[-1]['period'] if central_records else None},
+        'central_government_operations': {'records': len(central_operation_records),
+                                          'earliest_period': central_operation_records[0]['period'] if central_operation_records else None,
+                                          'latest_period': central_operation_records[-1]['period'] if central_operation_records else None},
         'local_government_debt': {'records': len(local_records), 'earliest_period': local_records[0]['period'] if local_records else None,
                                   'latest_period': local_records[-1]['period'] if local_records else None},
         'pboc_balance_sheet': balance.get('coverage'), 'pboc_gov_bond_omo': omo.get('coverage'),

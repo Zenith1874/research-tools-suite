@@ -89,6 +89,7 @@ button.research-nav-write-disabled {
   justify-content: center;
   max-width: 220px;
   min-width: 145px;
+  overflow: hidden;
   padding: 7px 18px 8px;
   border-left: 1px solid rgba(33, 51, 77, .65);
   color: var(--research-nav-muted) !important;
@@ -117,7 +118,18 @@ button.research-nav-write-disabled {
 }
 
 .research-nav-tab-label { font-size: 13px; font-weight: 700; }
-.research-nav-tab-summary { margin-top: 4px; overflow: hidden; color: #6f829d; font-size: 9.5px; font-weight: 500; text-overflow: ellipsis; }
+.research-nav-tab-summary {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #6f829d;
+  font-size: 9.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
 
 .research-nav-search {
   position: relative;

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-12T01:38:26.344725+00:00",
+  "layout": "one_plus_five",
+  "git": {
+    "branch": "codex/one-plus-five-migration",
+    "commit": "pending_current_migration_commit",
+    "origin": "https://github.com/Zenith1874/research-tools-suite.git",
+    "tracked_file_count": 150,
+    "changed_tracked_file_count": 53,
+    "untracked_file_count": 107,
+    "ignored_file_count": 4732,
+    "commit_at_inventory": "5783bde1a405cb746fa336cf0afda36f55579a4f"
+  },
+  "projects": [
+    {
+      "id": "china_macro",
+      "name": "中国宏观、财政、城市与住房",
+      "routes": [
+        "/dashboard",
+        "/china-macro",
+        "/macro-analytics",
+        "/gdp",
+        "/housing",
+        "/fiscal-debt",
+        "/debt-ceiling",
+        "/china-rates",
+        "/city-economy",
+        "/housing-scenario"
+      ],
+      "source_file_count": 65,
+      "source_bytes": 1720797
+    },
+    {
+      "id": "us_macro",
+      "name": "美国宏观",
+      "routes": [
+        "/us-macro"
+      ],
+      "source_file_count": 3,
+      "source_bytes": 63756
+    },
+    {
+      "id": "abdc_research",
+      "name": "ABDC 商科研究",
+      "routes": [
+        "/abdc",
+        "/abdc-astar-research"
+      ],
+      "source_file_count": 29,
+      "source_bytes": 325594
+    },
+    {
+      "id": "research_tools",
+      "name": "科研语言与语音工具",
+      "routes": [
+        "/paper-translation",
+        "/audio-transcription"
+      ],
+      "source_file_count": 19,
+      "source_bytes": 392934
+    },
+    {
+      "id": "personal_tools",
+      "name": "个人归档与按需监控",
+      "routes": [
+        "/yuedu-fm",
+        "/cardcookie-monitor"
+      ],
+      "source_file_count": 9,
+      "source_bytes": 169643
+    }
+  ],
+  "private_boundary": {
+    "matched_file_count": 4239,
+    "matched_bytes": 9631310785,
+    "tracked_private_files": [],
+    "unignored_private_file_count": 0
+  },
+  "public_boundary": {
+    "max_file_bytes": 20971520,
+    "oversized_tracked_files": [],
+    "high_confidence_secret_findings": []
+  },
+  "warnings": [],
+  "errors": [],
+  "status": "pass"
+}

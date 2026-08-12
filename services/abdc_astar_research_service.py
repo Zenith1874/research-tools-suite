@@ -14,7 +14,7 @@ JD-R、OB-IS 交叉等）打相关性分。
   - 全部走公开 scholarly metadata API，不抓全文、不绕付费墙。
 """
 
-import os, re, json, time, sqlite3, logging
+import os, re, json, time, sqlite3, logging, html
 from datetime import datetime, timedelta, date
 
 import requests
@@ -34,6 +34,17 @@ CROSSREF_BASE = 'https://api.crossref.org/journals'
 S2_BATCH_URL  = 'https://api.semanticscholar.org/graph/v1/paper/batch'
 HTTP_TIMEOUT  = 25
 POLITE_DELAY  = 0.15                       # 每次外部请求之间的间隔（秒）
+
+# A publisher-level HTTP/API access outcome cannot establish that an
+# individual article has no public abstract.  Missing records in these
+# families must stay in a review-pending state until an article page or an
+# authorized publisher API is checked.
+ABSTRACT_PUBLISHER_REVIEW_HINTS = (
+    'elsevier', 'psychological association', 'sage', 'wiley', 'chicago',
+    'academy of management', 'public health association',
+    'oxford university press', 'operations research',
+    'management sciences', 'informa uk', 'routledge', 'taylor & francis',
+)
 
 # ── ANZSRC FoR 代码 → 学科 / broad_area ─────────────────────────────────────
 FOR_DISCIPLINE = {
@@ -1032,6 +1043,18 @@ def _upsert_article(conn, art, journal):
     )
 
     if existing_id:
+        existing = conn.execute(
+            'SELECT abstract, abstract_status, data_status FROM astar_articles WHERE id=?',
+            (existing_id,)).fetchone()
+        classification_art = art
+        if existing and existing['abstract'] and not art.get('abstract'):
+            # OpenAlex/Crossref may continue to return no abstract after a verified
+            # publisher-page abstract has been added.  Preserve both the text and
+            # its availability/status, and classify with the stored abstract.
+            fields['abstract_status'] = None
+            fields['data_status'] = None
+            classification_art = dict(art)
+            classification_art['abstract'] = existing['abstract']
         # 更新：只在新值非空时覆盖（保护已有 abstract 等）
         sets, vals = [], []
         for k, v in fields.items():
@@ -1040,7 +1063,7 @@ def _upsert_article(conn, art, journal):
                 vals.append(v)
         vals.append(existing_id)
         conn.execute(f'UPDATE astar_articles SET {",".join(sets)} WHERE id=?', vals)
-        _persist_classification(conn, existing_id, art)
+        _persist_classification(conn, existing_id, classification_art)
         _record_source(conn, existing_id, art)
         return 'updated', existing_id
 
@@ -1068,6 +1091,157 @@ def _record_source(conn, article_id, art):
         (article_id, art.get('source_name'), art.get('source_type'), art.get('source_url'),
          art.get('openalex_id') or art.get('doi'), None, now,
          f"abstract_status={art.get('abstract_status')}"))
+
+
+def _clean_verified_abstract(value):
+    """Normalize a verified publisher metadata abstract to plain text."""
+    without_tags = re.sub(r'<[^>]+>', ' ', value or '')
+    cleaned = re.sub(r'\s+', ' ', html.unescape(without_tags)).strip()
+    return re.sub(r'^abstract\s*[:\-–—]?\s*', '', cleaned,
+                  flags=re.IGNORECASE)
+
+
+def apply_verified_publisher_abstract(
+        doi, abstract, source_url, source_name='Publisher abstract page',
+        source_id=None, verified_at=None, verification_notes=None,
+        expected_title=None, source_type='publisher_page', db_path=None,
+        conn=None, dry_run=False):
+    """Apply one publicly visible publisher abstract with auditable provenance.
+
+    This is intentionally a verified override, not a general publisher scraper:
+    it never fetches paywalled full text and refuses to replace a different
+    non-empty abstract.  The source record stores the exact public page, source
+    identifier, verification time, and raw abstract used for the update.
+    """
+    doi_norm = (doi or '').strip().lower()
+    abstract_text = _clean_verified_abstract(abstract)
+    source_url = (source_url or '').strip()
+    source_type = (source_type or 'publisher_page').strip().lower()
+    if not doi_norm:
+        raise ValueError('doi is required')
+    if len(abstract_text) < 80:
+        raise ValueError('verified abstract is unexpectedly short')
+    if not source_url.startswith(('https://', 'http://')):
+        raise ValueError('source_url must be an HTTP(S) URL')
+    if source_type not in ('publisher_page', 'publisher_api'):
+        raise ValueError('source_type must be publisher_page or publisher_api')
+
+    own = conn is None
+    if own:
+        conn = sqlite3.connect(db_path or DB_PATH, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA busy_timeout=8000')
+
+    now = verified_at or datetime.now().isoformat(timespec='seconds')
+    source_key = (source_id or doi_norm).strip()
+    try:
+        ensure_astar_tables(conn)
+        rows = conn.execute(
+            'SELECT * FROM astar_articles WHERE lower(doi)=?', (doi_norm,)).fetchall()
+        if len(rows) != 1:
+            raise ValueError(f'expected one article for DOI {doi_norm}, found {len(rows)}')
+        row = rows[0]
+        if expected_title and normalize_title(row['title']) != normalize_title(expected_title):
+            raise ValueError(
+                f'title mismatch for DOI {doi_norm}: database has {row["title"]!r}')
+        previous_raw = row['abstract'] or ''
+        previous = _clean_verified_abstract(previous_raw)
+        if previous and previous != abstract_text:
+            raise ValueError(
+                f'article {row["id"]} already has a different non-empty abstract')
+
+        changed = (
+            previous_raw != abstract_text or row['abstract_status'] != 'available'
+            or row['data_status'] != 'publisher_metadata')
+        conn.execute("""
+            UPDATE astar_articles
+            SET abstract=?, abstract_status='available',
+                data_status='publisher_metadata', updated_at=?
+            WHERE id=?""", (abstract_text, now, row['id']))
+
+        raw_payload = json.dumps({
+            'doi': doi_norm,
+            'source_id': source_key,
+            'source_url': source_url,
+            'abstract': abstract_text,
+            'verified_at': now,
+            'verification_notes': verification_notes or '',
+        }, ensure_ascii=False)
+        parser_notes = (
+            ('abstract=verified_public_publisher_page'
+             if source_type == 'publisher_page'
+             else 'abstract=verified_publisher_api_metadata')
+            + '; full_text_fetched=false'
+            + (f'; {verification_notes}' if verification_notes else ''))
+        source_row = conn.execute("""
+            SELECT id FROM astar_article_sources
+            WHERE article_id=? AND source_type=? AND raw_id=?
+            LIMIT 1""", (row['id'], source_type, source_key)).fetchone()
+        if source_row:
+            conn.execute("""
+                UPDATE astar_article_sources
+                SET source_name=?, source_url=?, raw_json=?, fetched_at=?, parser_notes=?
+                WHERE id=?""",
+                (source_name, source_url, raw_payload, now, parser_notes,
+                 source_row['id']))
+        else:
+            conn.execute("""
+                INSERT INTO astar_article_sources
+                  (article_id, source_name, source_type, source_url, raw_id,
+                   raw_json, fetched_at, parser_notes)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (row['id'], source_name, source_type, source_url, source_key,
+                 raw_payload, now, parser_notes))
+
+        art = dict(row)
+        art['abstract'] = abstract_text
+        try:
+            art['concepts'] = json.loads(row['concepts_json'] or '[]')
+        except Exception:
+            art['concepts'] = []
+        try:
+            art['keywords'] = json.loads(row['keywords_json'] or '[]')
+        except Exception:
+            art['keywords'] = []
+        art['_journal_discipline_area'] = _journal_area_for_issn(
+            conn, row['journal_issn'])
+        classification = _persist_classification(conn, row['id'], art)
+
+        conn.execute("""INSERT INTO astar_update_logs
+            (started_at,finished_at,success,update_mode,abdc_version,
+             journals_checked,journals_with_issn,journals_missing_issn,
+             articles_found,articles_inserted,articles_updated,duplicates_skipped,
+             failed_journals,failed_sources,warnings,error_message)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (now, now, 1, 'verified_publisher_abstract', row['journal_abdc_version'],
+             0, 0, 0, 1, 0, int(changed), 0, 0, '[]',
+             json.dumps([f'doi={doi_norm}', f'source={source_url}'],
+                        ensure_ascii=False), None))
+
+        result = {
+            'success': True,
+            'dry_run': bool(dry_run),
+            'changed': changed,
+            'article_id': row['id'],
+            'doi': doi_norm,
+            'abstract_characters': len(abstract_text),
+            'abstract_words': len(abstract_text.split()),
+            'source_url': source_url,
+            'source_type': source_type,
+            'classification': classification,
+        }
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+        return result
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if own:
+            conn.close()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1360,6 +1534,16 @@ def _article_row_to_dict(r):
             d[k.replace('_json', '')] = json.loads(d.get(k) or '[]')
         except Exception:
             d[k.replace('_json', '')] = []
+    if d.get('abstract_status') == 'missing':
+        publisher = (d.get('publisher') or '').lower()
+        if not (d.get('doi') or '').strip():
+            d['abstract_review_status'] = 'no_doi'
+        elif any(hint in publisher for hint in ABSTRACT_PUBLISHER_REVIEW_HINTS):
+            d['abstract_review_status'] = 'publisher_page_review_pending'
+        else:
+            d['abstract_review_status'] = 'metadata_recheck_pending'
+    else:
+        d['abstract_review_status'] = 'resolved'
     return d
 
 
@@ -1549,11 +1733,20 @@ def build_astar_debug_payload():
     total_art = conn.execute('SELECT COUNT(*) FROM astar_articles WHERE is_duplicate=0').fetchone()[0]
     no_doi = conn.execute("SELECT COUNT(*) FROM astar_articles WHERE (doi IS NULL OR doi='') AND is_duplicate=0").fetchone()[0]
     no_abs = conn.execute("SELECT COUNT(*) FROM astar_articles WHERE abstract_status='missing' AND is_duplicate=0").fetchone()[0]
-    # 缺摘要拆分:已查过 Semantic Scholar 仍无摘要 = 免费元数据确实没有(多为 Elsevier 等
-    # 不向 OpenAlex/Crossref/S2 提供摘要的出版商,政策性缺失,非抓取遗漏);其余为可重试。
-    no_abs_confirmed = conn.execute(
+    # 缺摘要拆分：这里仅表示已查过 Semantic Scholar 仍无返回；出版社公开落地页
+    # 可能后来出现摘要，不能据此断言“公开摘要不存在”。其余记录仍可重试元数据 API。
+    no_abs_metadata_checked = conn.execute(
         "SELECT COUNT(*) FROM astar_articles WHERE abstract_status='missing' AND is_duplicate=0 "
         "AND semantic_scholar_id IS NOT NULL").fetchone()[0]
+    review_where = ' OR '.join(
+        "lower(COALESCE(publisher,'')) LIKE ?"
+        for _ in ABSTRACT_PUBLISHER_REVIEW_HINTS)
+    no_abs_publisher_review = conn.execute(
+        "SELECT COUNT(*) FROM astar_articles "
+        "WHERE abstract_status='missing' AND is_duplicate=0 AND doi IS NOT NULL "
+        f"AND ({review_where})",
+        ['%' + hint + '%' for hint in ABSTRACT_PUBLISHER_REVIEW_HINTS],
+    ).fetchone()[0]
     no_abs_top_journals = [dict(r) for r in conn.execute("""
         SELECT journal_title, COUNT(*) n FROM astar_articles
         WHERE abstract_status='missing' AND is_duplicate=0
@@ -1580,7 +1773,11 @@ def build_astar_debug_payload():
             'missing_issn_count': jcount - with_issn,
             'articles_total': total_art, 'articles_without_doi': no_doi,
             'articles_without_abstract': no_abs,
-            'articles_without_abstract_confirmed_unavailable': no_abs_confirmed,
+            'articles_without_abstract_checked_metadata_apis': no_abs_metadata_checked,
+            'articles_without_abstract_publisher_review_pending': no_abs_publisher_review,
+            # Backward-compatible alias.  The old name was semantically wrong;
+            # clients should use checked_metadata_apis instead.
+            'articles_without_abstract_confirmed_unavailable': no_abs_metadata_checked,
             'articles_without_abstract_top_journals': no_abs_top_journals,
             'duplicates': dups,
             'classification_status_distribution': cls_dist,
@@ -1628,24 +1825,55 @@ def _s2_batch(dois, fields='abstract,fieldsOfStudy,citationCount,influentialCita
     return out
 
 
-def enrich_with_semantic_scholar(limit=None, batch_size=100):
+def enrich_with_semantic_scholar(limit=None, batch_size=100,
+                                 only_without_source=False,
+                                 batch_delay=1.0):
     """对缺摘要且有 DOI 的文章批量查 Semantic Scholar。
     - 仅当 S2 提供真实 abstract 时才回填（abstract_status='available'）。
     - 同时回填 citationCount、fieldsOfStudy（并入 keywords，作为分类信号）、semantic_scholar_id。
-    - 回填后重跑分类。返回统计 dict。不伪造摘要。"""
+    - 回填后重跑分类。返回统计 dict。不伪造摘要。
+    - ``only_without_source`` 只处理尚未留下 Semantic Scholar 查验记录的 DOI，
+      便于 429 后断点续跑；成功返回空结果的 DOI 也会留下可审计的 ``abstract=none`` 记录。
+    """
+    if batch_size < 1:
+        raise ValueError('batch_size must be positive')
+    if batch_delay < 0:
+        raise ValueError('batch_delay must be non-negative')
     started = datetime.now().isoformat(timespec='seconds')
     conn = get_db()
     ensure_astar_tables(conn)
     q = """SELECT id, doi, keywords_json, concepts_json, journal_issn, title
            FROM astar_articles
-           WHERE abstract_status='missing' AND doi IS NOT NULL AND doi!='' AND is_duplicate=0
+           WHERE abstract_status='missing' AND doi IS NOT NULL AND doi!='' AND is_duplicate=0"""
+    if only_without_source:
+        q += """
+           AND NOT EXISTS (
+               SELECT 1 FROM astar_article_sources s
+               WHERE s.article_id=astar_articles.id
+                 AND s.source_name='Semantic Scholar'
+           )"""
+    q += """
            ORDER BY publication_date DESC"""
     rows = conn.execute(q).fetchall()
     if limit:
         rows = rows[:limit]
 
     checked = abstracts_filled = citations_filled = fos_filled = failed_batches = 0
+    no_valid_batches = 0
+    empty_records = 0
     now = datetime.now().isoformat(timespec='seconds')
+
+    def record_empty_rows(chunk, note):
+        """Record a successful no-result response without fabricating an abstract."""
+        nonlocal empty_records
+        for row in chunk:
+            empty_records += 1
+            conn.execute("""INSERT OR IGNORE INTO astar_article_sources
+                (article_id, source_name, source_type, source_url, raw_id,
+                 raw_json, fetched_at, parser_notes)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (row['id'], 'Semantic Scholar', 'semantic_scholar', None,
+                 row['doi'], None, now, note))
 
     for i in range(0, len(rows), batch_size):
         chunk = rows[i:i + batch_size]
@@ -1653,6 +1881,16 @@ def enrich_with_semantic_scholar(limit=None, batch_size=100):
         try:
             res = _s2_batch(dois)
         except Exception as e:
+            response = getattr(e, 'response', None)
+            response_text = (getattr(response, 'text', '') or '').lower()
+            if (getattr(response, 'status_code', None) == 400
+                    and 'no valid paper ids given' in response_text):
+                # This is a completed negative lookup, not a transient failure.
+                no_valid_batches += 1
+                checked += len(chunk)
+                record_empty_rows(chunk, 'abstract=none; batch_response=no_valid_paper_ids')
+                conn.commit()
+                continue
             failed_batches += 1
             log.warning(f's2 batch failed [{i}:{i+batch_size}]: {e}')
             time.sleep(3)
@@ -1661,6 +1899,7 @@ def enrich_with_semantic_scholar(limit=None, batch_size=100):
             checked += 1
             rec = res.get((r['doi'] or '').lower())
             if not rec:
+                record_empty_rows([r], 'abstract=none; batch_response=empty')
                 continue
             updates, vals = [], []
             s2id = (rec.get('externalIds') or {}).get('CorpusId')
@@ -1701,7 +1940,8 @@ def enrich_with_semantic_scholar(limit=None, batch_size=100):
                    '_journal_discipline_area': _journal_area_for_issn(conn, r['journal_issn'])}
             _persist_classification(conn, r['id'], art)
         conn.commit()
-        time.sleep(1.0)   # S2 未授权速率较严，批间停顿
+        if i + batch_size < len(rows):
+            time.sleep(batch_delay)   # S2 未授权速率较严，批间停顿
 
     finished = datetime.now().isoformat(timespec='seconds')
     conn.execute("""INSERT INTO astar_update_logs
@@ -1711,12 +1951,22 @@ def enrich_with_semantic_scholar(limit=None, batch_size=100):
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (started, finished, 1, 'enrich_semantic_scholar', None, 0, 0, 0,
          checked, 0, abstracts_filled, 0, failed_batches,
-         '[]', json.dumps([f'citations_filled={citations_filled}', f'fos_filled={fos_filled}']), None))
+         '[]', json.dumps([
+             f'citations_filled={citations_filled}',
+             f'fos_filled={fos_filled}',
+             f'empty_records={empty_records}',
+             f'no_valid_batches={no_valid_batches}',
+             f'batch_size={batch_size}',
+             f'batch_delay={batch_delay}',
+             f'only_without_source={only_without_source}',
+         ]), None))
     conn.commit()
     conn.close()
     return {'success': True, 'checked': checked, 'abstracts_filled': abstracts_filled,
             'citations_filled': citations_filled, 'fields_of_study_filled': fos_filled,
-            'failed_batches': failed_batches}
+            'failed_batches': failed_batches, 'empty_records': empty_records,
+            'no_valid_batches': no_valid_batches,
+            'only_without_source': only_without_source}
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -9,6 +9,8 @@ from services.housing_price_service import (
     extract_70city_search_releases, parse_70city_article, parse_dual_column_table,
     parse_period_from_title, parse_sales_article, parse_sales_period_from_title,
     ensure_housing_tables, _upsert_sales_release, _norm_city, build_housing_payload,
+    build_equal_weighted_price_index, load_nbs_annual_sales_history,
+    seed_housing_annual_sales_history, build_national_housing_scenarios,
 )
 from services.anjuke_city_map import ANJUKE_CITY_SLUGS
 from bs4 import BeautifulSoup
@@ -24,6 +26,72 @@ _TABLE = """
 
 
 class HousingParserTests(unittest.TestCase):
+    def test_nbs_annual_sales_history_starts_at_1991(self):
+        records = load_nbs_annual_sales_history()
+        self.assertEqual(len(records), 24)
+        self.assertEqual(records[0]['period'], '1991-12')
+        self.assertEqual(records[0]['value'], 3025.46)
+        self.assertEqual(records[-1]['period'], '2014-12')
+        self.assertEqual(records[-1]['value'], 120649.0)
+        self.assertTrue(records[0]['source_url'].startswith('https://www.stats.gov.cn/'))
+
+    def test_nbs_annual_sales_seed_is_idempotent_and_syncs_december(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'annual.db')
+            conn = sqlite3.connect(path)
+            ensure_housing_tables(conn)
+            conn.execute('''INSERT INTO housing_national_observations
+                (indicator_code,period,value,source_url,parser_notes)
+                VALUES (?,?,?,?,?)''',
+                ('sales_area_ytd', '2015-12', 128495.0,
+                 'https://www.stats.gov.cn/2016-release', '月度累计官方值'))
+            first = seed_housing_annual_sales_history(conn)
+            conn.commit()
+            second = seed_housing_annual_sales_history(conn)
+            conn.commit()
+            count = conn.execute('''SELECT COUNT(*) FROM housing_national_observations
+                WHERE indicator_code='sales_area_annual_official' ''').fetchone()[0]
+            rows = conn.execute('''SELECT period, value, frequency, data_status, source_url
+                FROM housing_national_observations
+                WHERE indicator_code='sales_area_annual_official' AND period IN ('1991-12','2015-12')
+                ORDER BY period''').fetchall()
+            conn.close()
+        self.assertEqual(first['static_rows'], 24)
+        self.assertEqual(first['year_end_rows'], 1)
+        self.assertEqual(second['static_rows'], 24)
+        self.assertEqual(count, 25)
+        self.assertEqual(rows[0][0:4], ('1991-12', 3025.46, 'annual', 'official'))
+        self.assertEqual(rows[1][0:4], ('2015-12', 128495.0, 'annual', 'official'))
+        self.assertEqual(rows[1][4], 'https://www.stats.gov.cn/2016-release')
+
+    def test_national_housing_scenarios_reach_2030_without_mutating_history(self):
+        annual = [
+            {'period': '2007-12', 'value': 77354.72},
+            {'period': '2024-12', 'value': 100000.0},
+            {'period': '2025-12', 'value': 90000.0},
+        ]
+        composite = []
+        new_index, second_index = 150.0, 120.0
+        for step in range(48):
+            year = 2022 + step // 12
+            month = step % 12 + 1
+            new_index *= 1.002
+            second_index *= 0.998
+            composite.append({'period': f'{year:04d}-{month:02d}',
+                              'new_home_index': new_index,
+                              'second_home_index': second_index})
+        result = build_national_housing_scenarios(
+            annual, -11.6, composite, target_year=2030)
+        self.assertEqual(result['data_status'], 'scenario')
+        self.assertEqual(result['target_year'], 2030)
+        self.assertEqual(result['sales']['series'][-1]['period'], '2030-12')
+        self.assertEqual(result['price']['series'][-1]['period'], '2030-12')
+        self.assertEqual(result['sales']['target_2007'], 77354.72)
+        self.assertEqual(set(result['sales']['scenarios']), {'optimistic', 'base', 'stress'})
+        self.assertTrue(all(item['data_status'] == 'scenario'
+                            for item in result['sales']['scenarios'].values()))
+        self.assertEqual(len(annual), 3)
+
     def test_sales_article_parses_two_wording_generations_and_signs(self):
         old = parse_sales_article(
             '1-12月份，商品房销售面积171654万平方米，同比下降1.8%；'
@@ -183,16 +251,59 @@ class HousingSalesPayloadTests(unittest.TestCase):
         area = next(c for c in sales['cards'] if c['label'] == '销售面积累计')
         self.assertEqual((area['value'], area['yoy'], area['unit']), (40140.0, -11.6, '万平方米'))
         self.assertEqual(sales['series'][-1], {'period': '2026-06', 'area_yoy': -11.6, 'value_yoy': -13.6})
+        self.assertEqual(sales['area_series'][-1], {'period': '2026-06', 'value': 40140.0})
+        self.assertEqual(sales['annual_history'], [])
         self.assertEqual(len(sales['series']), 2)
+
+    def test_70city_composite_new_and_second_price_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'composite.db')
+            conn = sqlite3.connect(path); ensure_housing_tables(conn)
+            for city in ('北京', '上海'):
+                for period, new, second in (
+                    ('2025-01', 101.0, 100.0),
+                    ('2025-02', 102.0, 98.0),
+                    ('2025-03', 99.0, 101.0)):
+                    conn.execute(
+                        'INSERT INTO housing_city_observations(city,period,indicator_code,value) VALUES(?,?,?,?)',
+                        (city, period, 'new_home_mom_idx', new))
+                    conn.execute(
+                        'INSERT INTO housing_city_observations(city,period,indicator_code,value) VALUES(?,?,?,?)',
+                        (city, period, 'second_home_mom_idx', second))
+            conn.commit(); conn.close()
+            composite = build_housing_payload(path)['national_composite']
+
+        self.assertEqual(composite['data_status'], 'derived')
+        self.assertEqual(composite['coverage']['complete_periods'], 3)
+        self.assertEqual(composite['latest_period'], '2025-03')
+        self.assertAlmostEqual(composite['series'][1]['new_home_index'], 102.0, places=4)
+        self.assertAlmostEqual(composite['series'][1]['second_home_index'], 98.0, places=4)
+        self.assertEqual(composite['series'][-1]['new_home_city_count'], 2)
+        self.assertIn('70城等权综合代理指数', composite['notes'][0])
+
+    def test_70city_composite_keeps_gap_without_bridging(self):
+        rows = [
+            {'city': '北京', 'period': '2025-01', 'value': 101.0},
+            {'city': '北京', 'period': '2025-03', 'value': 99.0},
+        ]
+        series = build_equal_weighted_price_index(rows)
+        self.assertEqual([row['period'] for row in series],
+                         ['2025-01', '2025-02', '2025-03'])
+        self.assertEqual(series[1]['index'], None)
+        self.assertEqual(series[2]['index'], 100.0)
 
     def test_housing_sales_block_missing_when_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / 'e.db')
             conn = sqlite3.connect(path); ensure_housing_tables(conn); conn.commit(); conn.close()
-            sales = build_housing_payload(path)['sales']
+            payload = build_housing_payload(path)
+            sales = payload['sales']
         self.assertEqual(sales['data_status'], 'missing')
         self.assertEqual(sales['series'], [])
+        self.assertEqual(sales['area_series'], [])
+        self.assertEqual(sales['annual_history'], [])
         self.assertEqual(sales['cards'], [])
+        self.assertEqual(payload['national_composite']['data_status'], 'missing')
 
 
 if __name__ == '__main__':

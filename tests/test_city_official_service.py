@@ -37,6 +37,15 @@ class CityOfficialExtractionTests(unittest.TestCase):
         self.assertEqual(extract_value(text, 'general_budget_revenue'), 379.0)
         self.assertEqual(extract_value(text, 'general_budget_expenditure'), 384.1)
 
+    def test_industry_and_tax_values_are_city_totals(self):
+        text = ('全年地区生产总值7050.3亿元。第一产业实现增加值156.3亿元，'
+                '第二产业实现增加值3263.3亿元，第三产业实现增加值3630.7亿元。'
+                '一般公共预算收入592.0亿元，其中税收收入487.5亿元。')
+        self.assertEqual(extract_value(text, 'primary_industry_value'), 156.3)
+        self.assertEqual(extract_value(text, 'secondary_industry_value'), 3263.3)
+        self.assertEqual(extract_value(text, 'tertiary_industry_value'), 3630.7)
+        self.assertEqual(extract_value(text, 'tax_revenue'), 487.5)
+
     def test_window_never_crosses_a_sentence_boundary(self):
         """常州 2013：收入名第二次出现后接的是比重句，跨句会把下一句的支出数当收入。"""
         text = ('全年实现公共财政预算收入408.9亿元，比上年增长7.9%。'
@@ -51,11 +60,15 @@ class CityOfficialExtractionTests(unittest.TestCase):
 
     def test_bulletin_links_need_city_name_and_year(self):
         html = ('<a href="/a.html">2024年常州市国民经济和社会发展统计公报</a>'
+                '<a href="/d.html">2020年苏州经济和社会发展概况</a>'
                 '<a href="/b.html">2024年江苏省国民经济和社会发展统计公报</a>'
                 '<a href="/c.html">常州市第五次全国经济普查公报</a>')
         found = find_bulletins(html, 'https://tjj.changzhou.gov.cn/', '常州')
         self.assertEqual(list(found), ['2024'])
         self.assertTrue(found['2024'][0].endswith('/a.html'))
+        suzhou = find_bulletins(html, 'https://tjj.suzhou.gov.cn/', '苏州')
+        self.assertEqual(list(suzhou), ['2020'])
+        self.assertTrue(suzhou['2020'][0].endswith('/d.html'))
 
     def test_gdp_smaller_than_three_times_revenue_is_rejected(self):
         """抽错列时 GDP 会落到财政量级，用这条比例关系整篇丢弃。"""
@@ -118,11 +131,76 @@ class CityMirrorTests(unittest.TestCase):
         self.assertNotIn('镜像', row[1])
         conn.close()
 
+    def test_industry_rows_go_to_gdp_table_not_fiscal_table(self):
+        import sqlite3
+        from services.city_official_service import store_rows
+        conn = sqlite3.connect(':memory:')
+        store_rows(conn, [{
+            'city': '无锡', 'period': '2024',
+            'indicator_code': 'secondary_industry_value', 'value': 7716.02,
+            'unit': '亿元', 'source_url': 'https://www.wuxi.gov.cn/x',
+            'source_title': '2024年无锡市国民经济和社会发展统计公报',
+        }])
+        row = conn.execute('SELECT indicator_code,value FROM gdp_region_observations').fetchone()
+        self.assertEqual(row[0], 'secondary_industry_value')
+        self.assertEqual(row[1], 7716.02)
+        self.assertEqual(conn.execute('SELECT COUNT(*) FROM regional_fiscal_observations').fetchone()[0], 0)
+        conn.close()
+
+    def test_official_bulletin_replaces_a_mirror_and_is_idempotent(self):
+        import sqlite3
+        from services.city_official_service import store_rows
+        conn = sqlite3.connect(':memory:')
+        row = {
+            'city': '无锡', 'period': '2024',
+            'indicator_code': 'nominal_gdp', 'value': 16263.29,
+            'unit': '亿元', 'source_url': 'https://www.wuxi.gov.cn/official',
+            'source_title': '2024年无锡市国民经济和社会发展统计公报',
+        }
+        store_rows(conn, [{**row, 'value': 16000.0, 'source_url': 'https://mirror.invalid'}],
+                   data_status='official_mirror', source_name_fmt='第三方镜像')
+        store_rows(conn, [row])
+        store_rows(conn, [row])
+        rows = conn.execute('SELECT value,data_status,source_url FROM gdp_region_observations').fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], 16263.29)
+        self.assertEqual(rows[0][1], 'official')
+        self.assertEqual(rows[0][2], 'https://www.wuxi.gov.cn/official')
+        conn.close()
+
     def test_mirror_only_covers_cities_without_official_access(self):
         from services.city_mirror_service import MIRROR_CITIES, VERIFY_CITIES
         from services.city_official_service import CITY_SOURCES
         self.assertEqual(set(MIRROR_CITIES) & set(CITY_SOURCES), set())
         self.assertEqual(set(VERIFY_CITIES), set(CITY_SOURCES))
+        self.assertIn('无锡', CITY_SOURCES)
+
+    def test_mirror_cannot_overwrite_higher_priority_official_value(self):
+        import sqlite3
+        from services.city_official_service import store_rows
+        from services.city_mirror_service import ALL_MIRROR_CODES
+        conn = sqlite3.connect(':memory:')
+        store_rows(conn, [{
+            'city': '厦门', 'period': '2020',
+            'indicator_code': 'general_budget_revenue', 'value': 783.94,
+            'unit': '亿元', 'source_url': 'https://data.stats.gov.cn/',
+            'source_title': '国家统计局主要城市年度数据',
+        }], region_codes=ALL_MIRROR_CODES, data_status='official_revised',
+            source_name_fmt='国家统计局')
+        result = store_rows(conn, [{
+            'city': '厦门', 'period': '2020',
+            'indicator_code': 'general_budget_revenue', 'value': 236.92,
+            'unit': '亿元', 'source_url': 'https://mirror.invalid',
+            'source_title': '第三方镜像公报',
+        }], region_codes=ALL_MIRROR_CODES, data_status='official_mirror',
+            source_name_fmt='第三方镜像')
+        row = conn.execute('''SELECT value,data_status FROM regional_fiscal_observations
+          WHERE region_code='350200' AND indicator_code='general_budget_revenue'
+          AND period='2020' ''').fetchone()
+        self.assertEqual(row[0], 783.94)
+        self.assertEqual(row[1], 'official_revised')
+        self.assertEqual(result['skipped_lower_priority'], 1)
+        conn.close()
 
 
 if __name__ == "__main__":

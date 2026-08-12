@@ -42,6 +42,12 @@ def main():
     ap.add_argument('--version', default='latest', help='ABDC 版本，默认最新')
     ap.add_argument('--classify-only', action='store_true', help='只重跑规则分类，不抓取')
     ap.add_argument('--enrich-abstracts', action='store_true', help='用 Semantic Scholar 补摘要/引用/学科')
+    ap.add_argument('--s2-batch-size', type=int, default=100,
+                    help='Semantic Scholar batch size (default: 100; max 500)')
+    ap.add_argument('--s2-batch-delay', type=float, default=1.0,
+                    help='seconds between Semantic Scholar batches')
+    ap.add_argument('--s2-only-unchecked', action='store_true',
+                    help='only retry missing abstracts without a Semantic Scholar source record')
     ap.add_argument('--health-check', action='store_true', help='跑期刊健康检查(逐刊查 OpenAlex)')
     ap.add_argument('--dedup-sources', action='store_true', help='来源表去重 + 建唯一索引')
     ap.add_argument('--llm-classify', action='store_true', help='用 LLM 重判(自动选 DeepSeek/Claude，需对应 API key)')
@@ -87,7 +93,11 @@ def main():
 
     if args.enrich_abstracts:
         print('Semantic Scholar 补全（缺摘要且有 DOI 的文章）…')
-        print(json.dumps(enrich_with_semantic_scholar(), ensure_ascii=False, indent=2))
+        print(json.dumps(enrich_with_semantic_scholar(
+            batch_size=args.s2_batch_size,
+            batch_delay=args.s2_batch_delay,
+            only_without_source=args.s2_only_unchecked,
+        ), ensure_ascii=False, indent=2))
         return
 
     if args.classify_only:

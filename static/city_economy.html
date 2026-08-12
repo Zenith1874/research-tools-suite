@@ -9,22 +9,24 @@
   <style>
     :root{color-scheme:dark;--bg:#07111f;--panel:#0b1829;--panel2:#0e2035;--bd:#213751;--text:#dce8f6;--muted:#8fa4bd;--blue:#5795ff;--green:#27d3b2;--yellow:#f5a623;--red:#ff6b7d}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui}.wrap{max-width:1500px;margin:auto;padding:28px 22px 70px}h1{font-size:29px;margin:0 0 7px}h2,h3{margin:0}.sub,.muted{color:var(--muted);line-height:1.65}.head,.row,.chart-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.actions,.tabs,.quick,.controls,.chips{display:flex;gap:8px;flex-wrap:wrap}.actions a,.tabs button,.quick button,select,input{background:#0d1b2d;color:var(--text);border:1px solid #263b55;border-radius:8px;padding:8px 11px;text-decoration:none}.tabs{margin:20px 0}.tabs button,.quick button,.chip{cursor:pointer}.tabs button.active,.quick button.active{background:#1666d8;border-color:#4a94ff}.controls{align-items:end;margin:14px 0}.controls label,.axis label{display:grid;gap:4px;font-size:11px;color:var(--muted)}
-    .card,.picker{background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px}.picker{margin-bottom:14px}.picker-title{font-size:12px;color:#b8c9dc;margin:0 0 9px}.picker-block+.picker-block{margin-top:14px;padding-top:13px;border-top:1px solid #1b3048}.chip{border:1px solid #2b415b;background:var(--panel2);color:var(--muted);border-radius:18px;padding:6px 10px;font:inherit;font-size:12px}.chip.active{color:var(--text);border-color:var(--chip-color,#5795ff);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--chip-color,#5795ff) 30%,transparent)}.chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--chip-color,#5795ff)}.chip.missing{border-style:dashed;opacity:.65}.count-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:14px 0}.count-strip div{background:var(--panel2);padding:12px;border-radius:9px;color:var(--muted)}.count-strip b{display:block;color:var(--text);font-size:21px;margin-top:4px}.notice{border:1px solid #80611d;background:#29230f;color:#f3d47c;border-radius:9px;padding:11px 13px;line-height:1.65;margin:11px 0}
+    .card,.picker{background:var(--panel);border:1px solid var(--bd);border-radius:12px;padding:16px}.picker{margin-bottom:14px}.picker-title{font-size:12px;color:#b8c9dc;margin:0 0 9px}.picker-block+.picker-block{margin-top:14px;padding-top:13px;border-top:1px solid #1b3048}.chip{border:1px solid #2b415b;background:var(--panel2);color:var(--muted);border-radius:18px;padding:6px 10px;font:inherit;font-size:12px}.chip.active{color:var(--text);border-color:var(--chip-color,#5795ff);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--chip-color,#5795ff) 30%,transparent)}.chip.active:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--chip-color,#5795ff)}.chip.missing{border-style:dashed;opacity:.65}.count-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:14px 0}.count-strip div{background:var(--panel2);padding:12px;border-radius:9px;color:var(--muted)}.count-strip b{display:block;color:var(--text);font-size:21px;margin-top:4px}.notice{border:1px solid #80611d;background:#29230f;color:#f3d47c;border-radius:9px;padding:11px 13px;line-height:1.65;margin:11px 0}.board-tabs{margin-bottom:8px}.board-tabs button{min-width:150px;padding:11px 15px;font-weight:650}.aux-tabs{margin-top:8px}.board-intro{margin:10px 0 14px;padding:15px 17px;border-left:3px solid var(--blue);background:linear-gradient(90deg,rgba(87,149,255,.09),transparent);border-radius:0 10px 10px 0}.board-intro h2{font-size:20px;margin-bottom:5px}.board-intro p{margin:0}.scope-mini{font-size:10px;color:#8fa4bd;margin-left:4px}
     .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0}.chart-head{align-items:center;margin-bottom:7px}.chart-title{font-size:14px}.chart-sub{font-size:11px;color:var(--muted);margin-top:4px}.axis{display:flex;align-items:end;gap:6px;flex-wrap:wrap}.axis select,.axis input{padding:5px 7px;height:30px;font-size:11px}.axis input{width:82px}.chart{height:300px}.empty{display:grid;place-items:center;height:240px;color:var(--muted);border:1px dashed #28405b;border-radius:8px}.wide{grid-column:1/-1}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.kpi{background:var(--panel2);border-radius:9px;padding:12px;min-height:100px}.kpi b{font-size:20px;display:block;margin:6px 0;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted);line-height:1.4}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.badge{display:inline-flex;border:1px solid #38516d;border-radius:999px;padding:3px 8px;font-size:11px;color:#b9cae0}.badge.city{border-color:#247c68;color:#62e4c5}.badge.province{border-color:#8a661c;color:#ffd36e}.hidden{display:none!important}.scroll{overflow:auto;max-height:560px}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{padding:9px;border-bottom:1px solid #1b3048;text-align:right}th:first-child,td:first-child{text-align:left}th{position:sticky;top:0;background:var(--panel);z-index:1}td small{display:block;color:var(--muted);margin-top:3px}
     .ctag{font-style:normal;font-size:10px;border-radius:4px;padding:1px 4px;margin-right:5px;border:1px solid #38516d;color:#b9cae0}
     td.lvl{background:rgba(87,149,255,.05)}td.lvl .ctag{border-color:#31588f;color:#9dc0ff}
     td.rev{background:rgba(39,211,178,.04)}td.rev .ctag{border-color:#247c68;color:#62e4c5}
     td.mir{background:rgba(224,193,104,.05)}td.mir .ctag{border-color:#6b5a2b;color:#e0c168}td.mir small{color:#b09a5c}
+    td.drv{background:rgba(157,117,255,.05)}td.drv .ctag{border-color:#654f9f;color:#c3aaff}
+    td.ref{background:rgba(245,166,35,.05)}td.ref .ctag{border-color:#80611d;color:#f3d47c}
     td.gap{color:#c07fa4;font-size:12px;background:repeating-linear-gradient(135deg,transparent,transparent 6px,rgba(192,127,164,.07) 6px,rgba(192,127,164,.07) 12px)}
     .badge.gap{border-color:#5a3f52;color:#e39ac2}
-    .legend{display:flex;gap:14px;flex-wrap:wrap;margin:9px 0 2px;font-size:11px;color:var(--muted);line-height:1.7}.coverage{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}.coverage div{background:var(--panel2);padding:12px;border-radius:8px}.coverage b{display:block;font-size:20px;margin-top:5px}
+    .legend{display:flex;gap:14px;flex-wrap:wrap;margin:9px 0 2px;font-size:11px;color:var(--muted);line-height:1.7}.coverage{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px}.coverage div{background:var(--panel2);padding:12px;border-radius:8px}.coverage b{display:block;font-size:20px;margin-top:5px}
     @media(max-width:950px){.chart-grid,.detail-grid,.kpis,.count-strip,.coverage{grid-template-columns:1fr}.chart{height:310px}.wide{grid-column:auto}}@media(max-width:600px){.wrap{padding:20px 12px 60px}.chip{padding:7px 9px}.axis{width:100%}}
   </style>
 </head>
 <body>
 <main class="wrap">
   <div class="head">
-    <div><h1>城市经济</h1><div class="sub">多城市 × 多指标横向比较；房价、财政与 GDP 均只使用城市自身口径，缺失不以省级数据代替。</div></div>
+    <div><h1>城市经济</h1><div class="sub">十五城 × 五板块 × 多指标横向比较；自由选城市、指标与期间，每个指标独立作图和调节纵轴。</div></div>
     <div class="actions"><a href="/housing-scenario">城市房价推演</a><a href="/housing">房价完整详页</a><a href="/gdp">中美 GDP 与地方排行</a></div>
   </div>
 
@@ -34,33 +36,38 @@
     <span class="muted">期间条件同时作用于所有图表和最新值矩阵</span>
   </div>
 
-  <div class="tabs">
-    <button data-tab="compare" class="active">多城多指标</button>
+  <div class="tabs board-tabs" id="boardTabs" aria-label="城市经济五板块"></div>
+
+  <div class="tabs aux-tabs">
+    <button data-tab="compare" class="active">多城分析</button>
     <button data-tab="detail">单城详情</button>
     <button data-tab="scenario">房价情景</button><button data-tab="listed">上市公司</button><button data-tab="coverage">覆盖与口径</button>
   </div>
 
   <section id="compare">
+    <div class="board-intro"><h2 id="boardTitle">增长总览</h2><p id="boardDescription" class="muted"></p></div>
     <div class="picker">
       <div class="picker-block">
         <div class="row"><div class="picker-title">城市（可多选）</div><div class="quick" id="cityQuick"></div></div>
         <div class="chips" id="cityChips"></div>
       </div>
       <div class="picker-block">
-        <div class="row"><div class="picker-title">指标（可多选；每个指标独立纵轴）</div><div class="quick" id="metricQuick"></div></div>
+        <div class="row"><div class="picker-title">本板块指标（可多选；每个指标独立作图、独立纵轴）</div><div class="quick" id="metricQuick"></div></div>
         <div class="chips" id="metricChips"></div>
       </div>
     </div>
     <div id="compareNotice" class="notice"></div>
+    <div class="notice" style="border-color:#31588f;background:#0c2039;color:#aacbff"><b>暂不做城市综合得分。</b>先把十五城关键指标覆盖对齐；后续“城市经济脉搏指数”将公开权重、分项贡献、缺失处理和敏感性结果。</div>
     <div id="vintageNotice" class="notice hidden"></div>
     <div id="compareCounts" class="count-strip"></div>
     <div id="comparisonCharts" class="chart-grid"></div>
-    <div class="card wide" style="margin-top:14px"><div class="row"><h3>所选城市最新值矩阵</h3><span class="muted">各列独立取所选期间内最新可用值；缺失不补零</span></div>
-      <div class="legend"><span>本表<b>只放城市自己的官方值</b>，省级数据不参与填充：</span><span><i class="ctag" style="border-color:#31588f;color:#9dc0ff">市本级</i>该指标只有市本级披露，口径小于全市，不与别城全市值直接比</span><span><i class="ctag" style="border-color:#247c68;color:#62e4c5">统计局修订</i>国家统计局在线主要城市序列，可能含历史修订</span><span><i class="ctag" style="border-color:#6b5a2b;color:#e0c168">镜像</i>官方原站本机不可达，仅作补缺</span><span><i class="ctag" style="border-color:#5a3f52;color:#e39ac2">待入库</i>该市这项官方值尚未采集，保持空缺</span><span>无标注＝该市全市口径</span></div>
-      <div class="muted" style="font-size:11px;margin-bottom:8px">同一列的年份可能不同（如卖地收入北京 2022、上海 2023），跨口径或跨年份的格子不要直接横向相减。</div><div class="scroll"><table><thead id="matrixHead"></thead><tbody id="matrixBody"></tbody></table></div></div>
+    <div class="card wide" style="margin-top:14px"><div class="row"><h3 id="matrixTitle">所选城市最新值矩阵</h3><span class="muted">各列独立取所选期间内最新可用值；缺失不补零</span></div>
+      <div class="legend"><span>本表<b>只放城市自身对应口径的数据</b>，省级数据不参与填充；官方、派生与商业挂牌逐格标注：</span><span><i class="ctag" style="border-color:#31588f;color:#9dc0ff">市本级</i>该指标只有市本级披露，口径小于全市，不与别城全市值直接比</span><span><i class="ctag" style="border-color:#247c68;color:#62e4c5">统计局修订</i>国家统计局在线主要城市序列，可能含历史修订</span><span><i class="ctag" style="border-color:#654f9f;color:#c3aaff">派生</i>只用同城同年字段按公开公式计算</span><span><i class="ctag" style="border-color:#80611d;color:#f3d47c">挂牌参考</i>安居客商业挂牌口径，非官方</span><span><i class="ctag" style="border-color:#6b5a2b;color:#e0c168">镜像</i>官方原站本机不可达，仅作补缺</span><span><i class="ctag" style="border-color:#5a3f52;color:#e39ac2">待入库</i>该市这项对应口径数据尚未采集，保持空缺</span><span>无标注＝该市全市口径官方值</span></div>
+      <div class="muted" style="font-size:11px;margin-bottom:8px">同一列的最新年份可能不同；跨口径或跨年份的格子不要直接横向相减。</div><div class="scroll"><table><thead id="matrixHead"></thead><tbody id="matrixBody"></tbody></table></div></div>
   </section>
 
   <section id="detail" class="hidden">
+    <div class="board-intro"><h2 id="detailCityTitle">城市详情</h2><p id="detailCityDescription" class="muted">以下图表和明细均按所选城市自身口径展示；缺失年份不补零。</p></div>
     <div class="controls"><label>选择城市<select id="city"></select></label><span id="scopeBadge" class="badge"></span></div>
     <div id="scopeNotice" class="notice"></div>
     <div id="kpis" class="kpis"></div>
@@ -69,7 +76,18 @@
       <div class="card"><h3>城市挂牌均价</h3><div class="chart"><canvas id="detailListing"></canvas></div></div>
       <div class="card"><h3 id="detailFiscalTitle">财政收入与支出</h3><div class="chart"><canvas id="detailFiscal"></canvas></div></div>
       <div class="card"><h3 id="detailGdpTitle">地区 GDP</h3><div class="chart"><canvas id="detailGdp"></canvas></div></div>
-      <div class="card wide"><div class="row"><h3>财政与土地逐年明细</h3><label class="muted">财政指标 <select id="fiscalMetric"></select></label></div><div class="scroll"><table><thead><tr><th>年份</th><th>数值</th><th>地区口径</th><th>状态</th><th>来源</th></tr></thead><tbody id="fiscalTable"></tbody></table></div></div>
+      <div class="card wide">
+        <div class="row"><div><h3 id="detailFiscalMetricTitle">城市财政动态表</h3><div class="chart-sub" id="detailFiscalMetricSub">城市、指标和期间可独立选择；图表与逐年明细同步更新，缺年断线，不插值。</div></div><button id="fiscalTableCsv" type="button">下载当前表 CSV</button></div>
+        <div class="controls" aria-label="城市财政动态表筛选条件">
+          <label>城市<select id="fiscalTableCity" aria-label="动态表城市"></select></label>
+          <label>财政指标<select id="fiscalMetric" aria-label="动态表财政指标"></select></label>
+          <label>开始年份<select id="fiscalTableStart" aria-label="动态表开始年份"></select></label>
+          <label>结束年份<select id="fiscalTableEnd" aria-label="动态表结束年份"></select></label>
+        </div>
+        <div class="chart" style="height:320px"><canvas id="detailFiscalMetricChart"></canvas></div>
+        <p class="muted" id="detailFiscalMetricNote" style="font-size:11px"></p>
+        <div class="scroll"><table><thead><tr><th>城市</th><th>年份</th><th>指标</th><th>数值</th><th>地区口径</th><th>状态</th><th>来源</th><th>说明</th></tr></thead><tbody id="fiscalTable"></tbody></table></div>
+      </div>
     </div>
   </section>
 
@@ -107,26 +125,45 @@
     <div class="notice">上市公司归属按<b>地址解析</b>：默认办公地，可切换注册地。两者常不同——茅台注册仁怀、格力注册珠海，为税收优惠注册在霍尔果斯/西藏而总部在北上深的更普遍；只用注册地会系统性扭曲城市产业实力。</div>
     <div class="controls">
       <label>归属口径<select id="lcScope"><option value="office_city">办公地（默认）</option><option value="register_city">注册地</option></select></label>
-      <label>排序<select id="lcSort"><option value="market_cap">总市值</option><option value="company_count">公司家数</option><option value="revenue">营业收入</option><option value="securitisation_rate">证券化率</option></select></label>
+      <label>排名指标<select id="lcSort"><option value="market_cap">总市值</option><option value="company_count">公司家数</option><option value="revenue">完整年度营业收入</option><option value="securitisation_rate">证券化率</option></select></label>
       <button id="lcReload">刷新</button>
       <span class="muted" id="lcMeta"></span>
     </div>
-    <div class="card wide"><div class="row"><h3>十城上市公司汇总</h3><span class="muted">单位亿元；合计为各公司最新披露期简单加总</span></div>
-      <div class="scroll"><table><thead><tr><th>城市</th><th>家数</th><th>总市值</th><th>营业收入</th><th>净利润</th><th>净资产</th><th>总资产</th><th>总负债</th><th>证券化率</th><th>营收/GDP</th></tr></thead><tbody id="lcTable"></tbody></table></div></div>
+    <div class="card wide"><div class="row"><div><h3 id="lcScaleTitle">城市上市公司总市值排名</h3><div class="chart-sub" id="lcScaleSub"></div></div><span class="muted">上方“排名指标”同时控制本图与明细表顺序</span></div>
+      <div class="chart" style="height:410px"><canvas id="lcScaleChart"></canvas></div></div>
+    <div class="card wide" style="margin-top:14px"><div class="row"><h3>目标城市上市公司汇总</h3><span class="muted">市值为最新行情快照；营收、净利润只取最新完整年度；其余为最新报告期</span></div>
+      <div class="scroll"><table><thead><tr><th>城市</th><th>家数</th><th>总市值</th><th>完整年度营收</th><th>完整年度净利润</th><th>净资产</th><th>总资产</th><th>总负债</th><th>证券化率</th><th>年度营收/GDP</th></tr></thead><tbody id="lcTable"></tbody></table></div></div>
+    <div class="card wide" style="margin-top:14px"><div class="row"><div><h3>上市公司五年趋势</h3><div class="chart-sub" id="lcHistorySub">完整年度流量；默认平衡样本避免公司覆盖变化伪装成增长</div></div>
+      <div class="axis"><label>指标<select id="lcHistoryMetric"><option value="revenue">营业收入</option><option value="net_profit">归母净利润</option><option value="profit_margin_pct">利润率</option></select></label>
+        <label>样本<select id="lcHistorySample"><option value="balanced">平衡样本</option><option value="available">各年可得样本</option></select></label>
+        <label>显示<select id="lcHistoryScale"><option value="indexed">首年＝100</option><option value="level">绝对值</option></select></label></div></div>
+      <div class="chart" style="height:410px"><canvas id="lcHistoryChart"></canvas></div>
+      <p class="muted" id="lcHistoryNote" style="font-size:11px"></p></div>
+    <div class="card wide" style="margin-top:14px"><div class="row"><div><h3>城市穿透：头部公司与集中度</h3><div class="chart-sub">总量高不等于公司普遍强；用 Top1、Top5 和 HHI 检查结果是否由少数公司驱动</div></div>
+      <div class="axis"><label>城市<select id="lcDrillCity"></select></label><label>指标<select id="lcDrillMetric"><option value="market_cap">总市值</option><option value="revenue">完整年度营收</option></select></label></div></div>
+      <div class="kpis" id="lcConcentrationKpis" style="margin-top:12px"></div>
+      <div class="chart" style="height:410px"><canvas id="lcTopCompaniesChart"></canvas></div>
+      <p class="muted" id="lcConcentrationNote" style="font-size:11px"></p></div>
     <div class="detail-grid" style="margin-top:14px">
-      <div class="card"><div class="row"><h3>证券化率与营收/GDP</h3><span class="muted">对数轴：两项跨度达 17 倍，线性轴会把中小城市压成看不出差别的细条</span></div>
-        <div class="chart" style="height:360px"><canvas id="lcRateChart"></canvas></div></div>
-      <div class="card"><div class="row"><h3>估值与营收的背离</h3><span class="muted">横轴营收/GDP、纵轴证券化率，均为对数轴</span></div>
-        <div class="chart" style="height:360px"><canvas id="lcScatterChart"></canvas></div>
-        <p class="muted" id="lcScatterNote" style="font-size:11px"></p></div>
-      <div class="card"><h3>主导行业（按公司家数）</h3><div class="scroll"><table><thead><tr><th>城市</th><th>行业构成</th></tr></thead><tbody id="lcIndustry"></tbody></table></div></div>
+      <div class="card"><div class="row"><div><h3>市值证券化率</h3><div class="chart-sub">最新总市值 ÷ 城市 GDP；线性零基准，精确值直接标在条末</div></div></div>
+        <div class="chart" style="height:390px"><canvas id="lcSecuritisationChart"></canvas></div></div>
+      <div class="card"><div class="row"><div><h3>完整年度营收 / GDP</h3><div class="chart-sub">只在上市公司营收年度与城市 GDP 年份一致时计算</div></div></div>
+        <div class="chart" style="height:390px"><canvas id="lcRevenueGdpChart"></canvas></div></div>
+      <div class="card"><div class="row"><div><h3>市销率</h3><div class="chart-sub">最新总市值 ÷ 最新完整年度营业收入；两项覆盖公司不完全相同，作城市级描述</div></div></div>
+        <div class="chart" style="height:390px"><canvas id="lcSalesMultipleChart"></canvas></div>
+        <p class="muted" id="lcMultipleNote" style="font-size:11px"></p></div>
+      <div class="card"><div class="row"><div><h3>办公地 vs 注册地</h3><div class="chart-sub">同一批公司按两种地址重新归属；差额不是新增或流失公司</div></div></div>
+        <div class="chart" style="height:390px"><canvas id="lcScopeComparisonChart"></canvas></div>
+        <p class="muted" id="lcScopeComparisonNote" style="font-size:11px"></p></div>
+      <div class="card wide"><h3>主导行业（按公司家数）</h3><div class="scroll"><table><thead><tr><th>城市</th><th>行业构成</th></tr></thead><tbody id="lcIndustry"></tbody></table></div></div>
     </div>
     <div class="card wide" style="margin-top:14px"><h3>口径与边界</h3><div id="lcCaveats" class="muted"></div></div>
   </section>
 
   <section id="coverage" class="hidden">
     <div id="coverageCards" class="coverage"></div>
-    <div class="card" style="margin-top:14px"><h3>十城数据覆盖</h3><div class="scroll"><table><thead><tr><th>城市</th><th>官方房价</th><th>挂牌历史</th><th>财政采用口径</th><th>财政记录</th><th>GDP记录</th></tr></thead><tbody id="coverageTable"></tbody></table></div></div>
+    <div class="card" style="margin-top:14px"><h3>十五城数据覆盖</h3><div class="scroll"><table><thead><tr><th>城市</th><th>官方房价</th><th>挂牌历史</th><th>一般指标</th><th>财政采用口径</th><th>财政记录</th><th>GDP记录</th></tr></thead><tbody id="coverageTable"></tbody></table></div></div>
+    <div class="card" style="margin-top:14px"><div class="row"><h3>指标覆盖审计</h3><span class="muted">“有城市”不等于每年齐全；同时列出起止期和记录数</span></div><div class="scroll"><table><thead><tr><th>板块</th><th>指标</th><th>有值城市</th><th>覆盖期间</th><th>记录数</th></tr></thead><tbody id="metricCoverageTable"></tbody></table></div></div>
     <div class="card" style="margin-top:14px"><div class="row"><h3>多来源数值分歧</h3><span class="muted" id="conflictNote"></span></div>
       <div class="scroll"><table><thead><tr><th>城市</th><th>指标</th><th>年份</th><th>已采用值</th><th>来源</th><th>统计局修订值</th><th>差异</th><th>原文</th></tr></thead><tbody id="conflictTable"></tbody></table></div></div>
     <div class="card" style="margin-top:14px"><h3>口径纪律</h3><div id="caveats" class="muted"></div></div>

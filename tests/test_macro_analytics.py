@@ -326,6 +326,75 @@ class PayloadContractTests(unittest.TestCase):
         self.assertEqual(card['data_status'], 'insufficient_sample')
         self.assertIsNone(card['value'])
 
+    def test_china_tab_exposes_official_first_hand_sales_area(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'sales-area.db'); self._db(path)
+            conn = sqlite3.connect(path)
+            periods = [f'{year:04d}-{month:02d}'
+                       for year, month in ((2024, month) for month in range(2, 13))]
+            periods += [f'2025-{month:02d}' for month in range(1, 13)]
+            periods += ['2026-01']
+            for index, period in enumerate(periods):
+                conn.executemany(
+                    'INSERT INTO housing_national_observations(indicator_code,period,value) VALUES(?,?,?)',
+                    [('sales_area_ytd', period, 1000 + index * 10),
+                     ('sales_area_ytd_yoy_official', period, -5.0 + index * 0.1)])
+            conn.commit(); conn.close()
+            payload = build_macro_analytics_payload(path)
+            block = payload['china']
+
+        items = block['positioning'] + block['analyses']
+        yoy_card = next(item for item in items
+                        if item['title'] == '一手商品房销售面积累计同比定位')
+        level_card = next(item for item in items
+                          if item['title'] == '一手商品房销售面积累计')
+        self.assertEqual(yoy_card['data_status'], 'derived')
+        self.assertAlmostEqual(yoy_card['value']['current'], -2.7, places=4)
+        self.assertIn('官方公布的可比口径', yoy_card['method'])
+        self.assertEqual(level_card['value'], 1230)
+        self.assertEqual(level_card['series'][-1]['period'], '2026-01')
+        self.assertIn('一手商品房销售面积', [item['label'] for item in payload['summary']])
+        for card in (yoy_card, level_card):
+            for field in ('method', 'sample_start', 'sample_end', 'n_obs', 'data_status'):
+                self.assertIn(field, card)
+
+    def test_housing_sales_area_and_land_use_common_official_yoy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'area-land.db'); self._db(path)
+            conn = sqlite3.connect(path)
+            periods = [f'{year:04d}-{month:02d}'
+                       for year in (2024, 2025) for month in range(1, 13)]
+            for index, period in enumerate(periods):
+                conn.executemany(
+                    'INSERT INTO housing_national_observations(indicator_code,period,value) VALUES(?,?,?)',
+                    [('sales_area_ytd_yoy_official', period, -4.0 + index * 0.2),
+                     ('sales_area_ytd', period, 1000 + index * 10)])
+                conn.executemany(
+                    'INSERT INTO fiscal_budget_observations(indicator_code,period,value) VALUES(?,?,?)',
+                    [('govfund_land_transfer_revenue_ytd_yoy_official', period,
+                      -8.0 + index * 0.15),
+                     ('govfund_land_transfer_revenue_ytd', period, 500 + index * 5)])
+            conn.commit(); conn.close()
+            block = build_housing_analytics(path)
+
+        by_title = {item['title']: item for item in block['positioning'] + block['analyses']}
+        compare = by_title['销售面积与土地收入同比对比']
+        level_compare = by_title['销售面积与土地收入累计值对比']
+        lag = by_title['销售面积与土地收入领先滞后']
+        self.assertEqual(compare['data_status'], 'derived')
+        self.assertEqual(compare['n_obs'], 24)
+        self.assertEqual([key['key'] for key in compare['compare_keys']],
+                         ['sales_area_yoy', 'land_yoy'])
+        self.assertEqual(compare['series'][-1]['period'], '2025-12')
+        self.assertEqual(level_compare['data_status'], 'derived')
+        self.assertEqual(level_compare['n_obs'], 24)
+        self.assertEqual(level_compare['value']['sales_area_level'], 1230)
+        self.assertEqual(level_compare['value']['land_level'], 615)
+        self.assertEqual([key['key'] for key in level_compare['compare_keys']],
+                         ['sales_area_index', 'land_index'])
+        self.assertEqual(lag['data_status'], 'derived')
+        self.assertEqual(lag['n_obs'], 24)
+
     def test_housing_diffusion_analytics_from_city_data(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / 'h.db'); self._db(path)
@@ -354,6 +423,8 @@ class PayloadContractTests(unittest.TestCase):
         by_title = {item['title']: item for item in block['positioning'] + block['analyses']}
         for title in ('商品房销售面积累计同比', '土地出让收入累计同比',
                       '销售与房价扩散领先滞后', '销售与土地收入领先滞后',
+                      '销售面积与土地收入同比对比', '销售面积与土地收入累计值对比',
+                      '销售面积与土地收入领先滞后',
                       '销售额与土地收入24月滚动相关', '土地财政依赖度'):
             self.assertIn(title, by_title)
             for field in ('method','sample_start','sample_end','n_obs','data_status'):

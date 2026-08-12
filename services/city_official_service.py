@@ -39,17 +39,26 @@ CITY_SOURCES = {
         'https://tjj.changzhou.gov.cn/class/OEJQMFCO?pageIndex=1',
         'https://tjj.changzhou.gov.cn/class/OEJQMFCO?pageIndex=2',
         'https://tjj.changzhou.gov.cn/class/OEJQMFCO?pageIndex=3']},
+    '无锡': {'region_code': '320200', 'indexes': [
+        'https://www.wuxi.gov.cn/zfxxgk/szfxxgkml/tjsjjjd/ndtjgb/index.shtml']},
 }
 
 BULLETIN_TITLE = '国民经济和社会发展统计公报'
+# 苏州等少数城市在早年把同一份年度官方汇总文件命名为“经济和社会发展概况”。
+# 必须同时带城市名和年份，不能因放宽一个标题词把年度计划、区县报道混进来。
+BULLETIN_TITLE_ALIASES = (BULLETIN_TITLE, '经济和社会发展概况')
 # 公报正文里这三项都是"指标名 + 数字 + 亿元"的直陈句
 # 2015 年前公报把同一指标写作"公共财政预算收入/支出"，是同口径的旧称
 INDICATOR_PATTERNS = {
     # 各市写法不一：深圳 2017 年前用"本市/全市生产总值"，合肥用"全年生产总值（GDP）"，
     # 都与地区生产总值同口径。
     'nominal_gdp': r'地区生产总值|(?:本市|全市|全年)生产总值|生产总值（GDP）',
+    'primary_industry_value': r'第一产业(?:实现)?增加值',
+    'secondary_industry_value': r'第二产业(?:实现)?增加值',
+    'tertiary_industry_value': r'第三产业(?:实现)?增加值',
     'general_budget_revenue': r'(?:一般)?公共财政预算收入|一般公共预算收入',
     'general_budget_expenditure': r'(?:一般)?公共财政预算支出|一般公共预算支出',
+    'tax_revenue': r'(?:其中)?税收收入',
 }
 # 指标名前 30 字内出现这些词就说明主语不是"全市"：
 # 人均/占比是换算口径；开发区、园区、各区县是市内局部；全省是上级口径。
@@ -59,9 +68,17 @@ DISQUALIFY_BEFORE = ('人均', '占', '比重', '相当于', '折合', '开发�
                      '新区', '示范区', '各区', '城区', '县级', '全省', '省级', '市本级')
 # 这十城任一年的总量都落在这个区间内，超出即判为抽取错误
 VALUE_BOUNDS = {'nominal_gdp': (500.0, 60000.0),
+                'primary_industry_value': (1.0, 2000.0),
+                'secondary_industry_value': (50.0, 50000.0),
+                'tertiary_industry_value': (50.0, 50000.0),
                 'general_budget_revenue': (50.0, 12000.0),
-                'general_budget_expenditure': (50.0, 15000.0)}
+                'general_budget_expenditure': (50.0, 15000.0),
+                'tax_revenue': (30.0, 10000.0)}
 MAX_YOY_JUMP = 0.40   # 相邻年份变动超过 40% 视为抽错，整条丢弃
+GDP_INDICATOR_CODES = frozenset((
+    'nominal_gdp', 'primary_industry_value',
+    'secondary_industry_value', 'tertiary_industry_value',
+))
 
 
 def fetch(url, timeout=30):
@@ -93,7 +110,7 @@ def find_bulletins(index_html, base_url, city):
     for match in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
                              index_html, re.S):
         title = re.sub(r'<[^>]+>', '', match.group(2)).strip()
-        if BULLETIN_TITLE not in title or city not in title:
+        if not any(label in title for label in BULLETIN_TITLE_ALIASES) or city not in title:
             continue
         year = re.search(r'(19|20)\d{2}', title)
         if not year:
@@ -215,7 +232,7 @@ def store_rows(conn, rows, region_codes=None, data_status='official',
       source_name TEXT, source_url TEXT, parser_notes TEXT, updated_at TEXT,
       UNIQUE(country_code, region_code, indicator_code, period))''')
     now = datetime.now().isoformat()
-    counts = {'gdp': 0, 'fiscal': 0}
+    counts = {'gdp': 0, 'fiscal': 0, 'skipped_lower_priority': 0}
     for row in rows:
         city = row['city']
         region_code = region_codes[city]
@@ -225,7 +242,15 @@ def store_rows(conn, rows, region_codes=None, data_status='official',
         # 早年公报常以整数关口表述（如苏州 2011"达到10500亿元"），如实标注
         if row['value'] >= 1000 and float(row['value']).is_integer():
             notes += '公报原文即为整数表述，未提供小数位。'
-        if row['indicator_code'] == 'nominal_gdp':
+        if row['indicator_code'] in GDP_INDICATOR_CODES:
+            existing = conn.execute('''SELECT data_status FROM gdp_region_observations
+              WHERE country_code='CN' AND region_code=? AND indicator_code=? AND period=?''',
+              (region_code, row['indicator_code'], row['period'])).fetchone()
+            # 镜像永远只补空缺或刷新镜像自身，不能覆盖统计局/城市官网官方值。
+            if (data_status == 'official_mirror' and existing and
+                    existing[0] != 'official_mirror'):
+                counts['skipped_lower_priority'] += 1
+                continue
             conn.execute('''INSERT INTO gdp_region_observations
               (country_code,region_code,region_name,indicator_code,period,value,unit,
                data_status,source_name,source_url,parser_notes,updated_at)
@@ -234,10 +259,18 @@ def store_rows(conn, rows, region_codes=None, data_status='official',
               DO UPDATE SET value=excluded.value,data_status=excluded.data_status,
                             source_name=excluded.source_name,source_url=excluded.source_url,
                             parser_notes=excluded.parser_notes,updated_at=excluded.updated_at''',
-              (region_code, city, 'nominal_gdp', row['period'], row['value'], '亿元',
+              (region_code, city, row['indicator_code'], row['period'], row['value'], '亿元',
                data_status, source_name, row['source_url'], notes, now))
             counts['gdp'] += 1
         else:
+            existing = conn.execute('''SELECT data_status FROM regional_fiscal_observations
+              WHERE country_code='CN' AND government_scope='city_total' AND region_code=?
+              AND indicator_code=? AND period=?''',
+              (region_code, row['indicator_code'], row['period'])).fetchone()
+            if (data_status == 'official_mirror' and existing and
+                    existing[0] != 'official_mirror'):
+                counts['skipped_lower_priority'] += 1
+                continue
             _upsert(conn, {
                 'country_code': 'CN', 'government_scope': 'city_total',
                 'region_code': region_code, 'region_name': city,

@@ -52,6 +52,11 @@ class AnjukeParserTests(unittest.TestCase):
     def test_extra_city_uses_reconnaissance_slug(self):
         self.assertEqual(city_market_url('常州'), 'https://cz.anjuke.com/market/')
         self.assertEqual(city_market_url('苏州'), 'https://suzhou.anjuke.com/market/')
+        self.assertEqual(city_market_url('武汉'), 'https://wuhan.anjuke.com/market/')
+        self.assertEqual(city_market_url('长沙'), 'https://cs.anjuke.com/market/')
+        self.assertEqual(city_market_url('成都'), 'https://chengdu.anjuke.com/market/')
+        self.assertEqual(city_market_url('杭州'), 'https://hangzhou.anjuke.com/market/')
+        self.assertEqual(city_market_url('福州'), 'https://fz.anjuke.com/market/')
         self.assertEqual(city_history_url('厦门', 2010),
                          'https://www.anjuke.com/fangjia/xm2010/')
 
@@ -169,6 +174,8 @@ class AnjukeParserTests(unittest.TestCase):
             finally:
                 conn.close()
             payload = build_anjuke_payload(db_path)
+            self.assertEqual(len(payload['cards']), 15)
+            self.assertEqual(len(payload['yearly_history_by_city']), 15)
             self.assertEqual(payload['yearly_history_by_city']['北京'][0]['source_grain'],
                              'monthly_year_end')
             self.assertEqual(payload['yearly_history_by_city']['上海'][0]['avg_price'], 22491)
@@ -177,6 +184,36 @@ class AnjukeParserTests(unittest.TestCase):
             self.assertEqual(shanghai['data_status'], 'listing_year_snapshot')
             self.assertEqual(shanghai['period'], '2010-12')
             self.assertIsNone(shanghai['mom_pct'])
+            wuhan = next(card for card in payload['cards'] if card['city'] == '武汉')
+            self.assertEqual(wuhan['data_status'], 'missing')
+
+    def test_older_current_year_ranking_does_not_override_newer_monthly_point(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, 'listing.db')
+            conn = connect(db_path)
+            try:
+                ensure_tables(conn)
+                conn.execute('''INSERT INTO anjuke_city_listings
+                    (city,period,avg_price,data_status,source_url)
+                    VALUES (?,?,?,?,?)''',
+                    ('杭州', '2026-08', 28554, 'listing_reference',
+                     'https://www.anjuke.com/fangjia/hangzhou2026/'))
+                conn.execute('''INSERT INTO anjuke_city_yearly_rankings
+                    (city,year,snapshot_period,avg_price,source_change_pct,data_status,
+                     source_url,detail_url,fetched_at,raw_cached)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    ('杭州', 2026, '2026-07', 28572, -0.21, 'listing_year_snapshot',
+                     'https://www.anjuke.com/fangjia/',
+                     'https://www.anjuke.com/fangjia/hangzhou2026/',
+                     '2026-07-16', 'synthetic.html'))
+                conn.commit()
+            finally:
+                conn.close()
+            payload = build_anjuke_payload(db_path)
+            latest = payload['yearly_history_by_city']['杭州'][-1]
+            self.assertEqual(latest['period'], '2026-08')
+            self.assertEqual(latest['avg_price'], 28554)
+            self.assertEqual(latest['source_grain'], 'monthly_year_end')
 
 
 class AnjukeYearlyRankingIntegrationTests(unittest.TestCase):

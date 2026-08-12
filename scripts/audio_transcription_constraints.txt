@@ -1,0 +1,10 @@
+# Versions shared with /home/simurghnobackup/zcui/venvs/reddit_env on 2026-07-21.
+# Keep the module-local vendor directory from shadowing the research environment
+# with incompatible transitive releases.
+huggingface-hub==1.10.1
+numpy==2.4.4
+packaging==26.0
+protobuf==6.33.6
+PyYAML==6.0.3
+setuptools==80.10.2
+tokenizers==0.22.2

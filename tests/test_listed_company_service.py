@@ -6,6 +6,8 @@ import unittest
 from services.listed_company_service import (
     parse_city, parse_province, ensure_tables, upsert_company,
     upsert_observation, SOURCE_CNINFO, SOURCE_EASTMONEY, _market_symbol,
+    _select_report_period, _concentration_summary, _parse_profit_history_records,
+    _build_city_annual_history, _upsert_fetch_status,
 )
 
 
@@ -46,6 +48,33 @@ class AddressParsingTests(unittest.TestCase):
         self.assertEqual(_market_symbol('000001'), 'SZ000001')
         self.assertEqual(_market_symbol('300750'), 'SZ300750')
         self.assertEqual(_market_symbol('830799'), 'BJ830799')
+        self.assertEqual(_market_symbol('920799'), 'BJ920799')
+        self.assertEqual(_market_symbol('900901'), 'SH900901')
+
+    def test_report_period_selector_uses_latest_full_year_for_flows(self):
+        rows = [
+            {'REPORT_DATE': '2026-06-30 00:00:00'},
+            {'REPORT_DATE': '2025-12-31 00:00:00'},
+            {'REPORT_DATE': '2026-03-31 00:00:00'},
+            {'REPORT_DATE': '2024-12-31 00:00:00'},
+        ]
+        self.assertEqual(_select_report_period(rows), '2026-06-30')
+        self.assertEqual(_select_report_period(rows, annual_only=True), '2025-12-31')
+
+    def test_multi_year_profit_parser_keeps_only_full_year_records(self):
+        rows = [
+            {'REPORT_DATE': '2025-12-31', 'TOTAL_OPERATE_INCOME': 100.0,
+             'PARENT_NETPROFIT': 10.0},
+            {'REPORT_DATE': '2025-09-30', 'TOTAL_OPERATE_INCOME': 80.0,
+             'PARENT_NETPROFIT': 8.0},
+            {'REPORT_DATE': '2024-12-31', 'TOTAL_OPERATE_INCOME': 90.0,
+             'PARENT_NETPROFIT': None},
+        ]
+        parsed = _parse_profit_history_records(rows, company_type=4)
+        self.assertEqual([row['period'] for row in parsed],
+                         ['2024-12-31', '2025-12-31'])
+        self.assertEqual(parsed[0]['values'], {'revenue': 90.0})
+        self.assertEqual(parsed[1]['values']['net_profit'], 10.0)
 
 
 class StorageDisciplineTests(unittest.TestCase):
@@ -98,6 +127,53 @@ class StorageDisciplineTests(unittest.TestCase):
             ('000001',)).fetchall()
         self.assertEqual(rows, [(123.0,)])
 
+    def test_fetch_status_is_idempotent_and_updates_result(self):
+        for status, records in (('error', 0), ('ok', 10)):
+            _upsert_fetch_status(
+                self.conn, '000001', 'profit_history', '2021-12-31',
+                '2025-12-31', status, records, None,
+                '2026-07-30T00:00:00')
+        rows = self.conn.execute(
+            'SELECT status,records_stored FROM listed_company_fetch_status').fetchall()
+        self.assertEqual(rows, [('ok', 10)])
+
+
+class ConcentrationTests(unittest.TestCase):
+    def test_concentration_summary_reports_shares_hhi_and_coverage(self):
+        rows = [
+            {'code': 'a', 'name': '甲', 'value': 70e8},
+            {'code': 'b', 'name': '乙', 'value': 20e8},
+            {'code': 'c', 'name': '丙', 'value': 10e8},
+            {'code': 'd', 'name': '零值', 'value': 0},
+        ]
+        result = _concentration_summary(rows, company_count=5)
+        self.assertEqual(result['n_obs'], 3)
+        self.assertEqual(result['coverage_pct'], 60.0)
+        self.assertEqual(result['top1_share_pct'], 70.0)
+        self.assertEqual(result['top5_share_pct'], 100.0)
+        self.assertEqual(result['hhi'], 5400.0)
+        self.assertEqual(result['top_companies'][0]['name'], '甲')
+        self.assertEqual(result['top_companies'][0]['value_yi'], 70.0)
+
+    def test_annual_history_distinguishes_available_and_balanced_samples(self):
+        annual = {
+            'revenue': {
+                'a': {'2021': {'value': 100e8}, '2022': {'value': 120e8}},
+                'b': {'2022': {'value': 80e8}},
+            },
+            'net_profit': {
+                'a': {'2021': {'value': 10e8}, '2022': {'value': 12e8}},
+                'b': {'2022': {'value': 8e8}},
+            },
+        }
+        result = _build_city_annual_history(['a', 'b'], annual, ['2021', '2022'])
+        self.assertEqual(result['available'][0]['revenue_coverage'], 1)
+        self.assertEqual(result['available'][1]['revenue_coverage'], 2)
+        self.assertEqual(result['available'][1]['revenue_yi'], 200.0)
+        self.assertEqual(result['balanced_company_count'], 1)
+        self.assertEqual(result['balanced'][1]['revenue_yi'], 120.0)
+        self.assertEqual(result['balanced'][1]['profit_margin_pct'], 10.0)
+
 
 class AggregationTests(unittest.TestCase):
     """聚合口径：陈旧报表不与当期混加；市值是行情快照不受报告期下限约束。"""
@@ -106,21 +182,33 @@ class AggregationTests(unittest.TestCase):
         self.conn = sqlite3.connect(':memory:')
         ensure_tables(self.conn)
         now = '2026-07-29T00:00:00'
-        for code, name, city in (('000001', '甲公司', '深圳'),
-                                 ('000002', '乙公司', '深圳'),
-                                 ('600000', '丙公司', '上海')):
+        for code, name, city, register_city in (
+                ('000001', '甲公司', '深圳', '上海'),
+                ('000002', '乙公司', '深圳', '深圳'),
+                ('600000', '丙公司', '上海', '上海')):
             upsert_company(self.conn, {
                 'code': code, 'name': name, 'org_id': None, 'category': 'A股',
                 'register_address': None, 'office_address': None,
-                'register_city': city, 'register_province': None,
+                'register_city': register_city, 'register_province': None,
                 'office_city': city, 'office_province': None,
                 'industry': '制造业', 'listed_date': None}, now)
-        # 甲：当期报表；乙：停在 2013 年应被剔除；丙：当期
-        rows = [('000001', 'revenue', '2026-03-31', 100e8),
+        self.conn.execute('''CREATE TABLE gdp_region_observations (
+            country_code TEXT, region_name TEXT, indicator_code TEXT,
+            period TEXT, value REAL)''')
+        self.conn.executemany(
+            'INSERT INTO gdp_region_observations VALUES (?,?,?,?,?)',
+            [('CN', '深圳', 'nominal_gdp', '2025', 1000.0),
+             ('CN', '上海', 'nominal_gdp', '2024', 2000.0)])
+        # 甲：2025 完整年度；2026Q1 是累计流量，不得替代年度值。
+        # 乙：停在 2013 年应被剔除；丙：2025 完整年度。
+        rows = [('000001', 'revenue', '2025-12-31', 100e8),
+                ('000001', 'net_profit', '2025-12-31', 10e8),
+                ('000001', 'revenue', '2026-03-31', 40e8),
                 ('000001', 'market_cap', '2026-07-28', 500e8),
-                ('000002', 'revenue', '2013-09-30', 999e8),
+                ('000002', 'revenue', '2013-12-31', 999e8),
                 ('000002', 'market_cap', '2026-07-28', 30e8),
-                ('600000', 'revenue', '2026-03-31', 200e8),
+                ('600000', 'revenue', '2025-12-31', 200e8),
+                ('600000', 'net_profit', '2025-12-31', 20e8),
                 ('600000', 'market_cap', '2026-07-28', 800e8)]
         for code, ind, period, value in rows:
             upsert_observation(self.conn, code, None, ind, period, value,
@@ -151,11 +239,30 @@ class AggregationTests(unittest.TestCase):
         # 乙公司 2013 年的 999 亿营收不得进入合计
         self.assertAlmostEqual(shenzhen['totals_yi']['revenue'], 100.0, places=2)
         self.assertEqual(shenzhen['coverage']['revenue'], 1)
+        self.assertEqual(shenzhen['report_periods']['revenue']['start'], '2025-12-31')
+        self.assertEqual(shenzhen['report_periods']['revenue']['end'], '2025-12-31')
+        self.assertAlmostEqual(shenzhen['derived']['listed_revenue_to_gdp'], 10.0)
+        self.assertEqual(shenzhen['concentration']['market_cap']['n_obs'], 2)
+        self.assertAlmostEqual(
+            shenzhen['concentration']['market_cap']['top1_share_pct'], 94.34)
+        self.assertEqual(
+            shenzhen['concentration']['market_cap']['top_companies'][0]['name'],
+            '甲公司')
+        self.assertEqual(shenzhen['annual_history']['periods'], ['2025'])
+        self.assertEqual(shenzhen['annual_history']['balanced_company_count'], 1)
+        self.assertEqual(shenzhen['annual_history']['balanced'][0]['profit_margin_pct'], 10.0)
         # 市值是行情快照，两家都要算上
         self.assertAlmostEqual(shenzhen['totals_yi']['market_cap'], 530.0, places=2)
         self.assertEqual(shenzhen['coverage']['market_cap'], 2)
         self.assertIn('000002', payload['stale_excluded'])
         self.assertEqual(payload['period_floor'], '2025-06-30')
+        # 上海营收为 2025 年、GDP 为 2024 年，年份不一致时不得生成比率。
+        self.assertNotIn('listed_revenue_to_gdp', by_city['上海']['derived'])
+        scopes = {row['city']: row for row in payload['scope_comparison']}
+        self.assertEqual(scopes['深圳']['office_count'], 2)
+        self.assertEqual(scopes['深圳']['register_count'], 1)
+        self.assertEqual(scopes['深圳']['delta'], 1)
+        self.assertEqual(scopes['上海']['delta'], -1)
 
     def test_city_filter_and_ordering(self):
         import tempfile, os
