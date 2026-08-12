@@ -10,7 +10,7 @@
 <style>
 :root{--bg:#07111f;--panel:#0d1728;--panel2:#111d31;--bd:#22324b;--text:#e5edf7;--muted:#8ea0b8;--dim:#b8c6d8;--blue:#4f8fff;--green:#00d4aa;--red:#ff5b78;--yellow:#f5a623}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-.wrap{max-width:1200px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.wrap{max-width:1320px;margin:0 auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
 h1{font-size:20px;margin:0 0 6px}.sub,.muted{color:var(--muted);font-size:12px;line-height:1.7}
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{min-height:34px;background:var(--panel2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:7px 12px;text-decoration:none;font:inherit;font-size:12px;cursor:pointer;display:inline-flex;align-items:center}
 .btn:hover{border-color:var(--blue)}.btn.primary{background:rgba(79,143,255,.15);border-color:rgba(79,143,255,.5)}.btn:disabled{opacity:.5}
@@ -28,8 +28,12 @@ a.source-link{color:#9ec2ff;text-decoration:none}
 .tip b{color:var(--dim);font-size:10px}.tip i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:6px}.legend span{display:inline-flex;align-items:center;gap:5px}.legend i{width:12px;height:3px;border-radius:2px;display:inline-block}
 .empty{padding:16px;border:1px dashed var(--bd);border-radius:6px;color:var(--muted);font-size:12px}
-@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.crosswalk{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}.crosswalk a{display:block;color:var(--text);text-decoration:none;background:var(--panel);border:1px solid var(--bd);border-radius:7px;padding:11px}.crosswalk a:hover{border-color:var(--blue)}.crosswalk b{font-size:12px}.crosswalk span{display:block;color:var(--muted);font-size:10px;line-height:1.6;margin-top:4px}
+.section{margin:16px 0 22px;border:1px solid var(--bd);border-radius:9px;background:rgba(13,23,40,.55);padding:15px}.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:4px}.section-head h2{margin:0;font-size:15px}.section-summary{color:var(--muted);font-size:10.5px}.section .grid{margin:12px 0}.charts2,.charts3{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.charts3{grid-template-columns:repeat(3,minmax(0,1fr))}.charts2 .chart,.charts3 .chart{margin:0}.formula{margin-top:5px;color:#6f829d;font-size:9px;line-height:1.45}.range-control{display:flex;gap:5px}.range-control button{min-height:28px;border:1px solid var(--bd);border-radius:5px;background:var(--panel2);color:var(--muted);padding:4px 9px;font-size:10px;cursor:pointer}.range-control button.active{border-color:var(--blue);color:#fff;background:rgba(79,143,255,.14)}
+@media(max-width:1100px){.charts3{grid-template-columns:1fr}}@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}.charts2,.crosswalk{grid-template-columns:1fr}}@media(max-width:640px){.grid{grid-template-columns:1fr}.section{padding:11px}.section-head{align-items:flex-start;flex-direction:column;gap:3px}}
 </style>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
 </head>
 <body><div id="root"></div>
 <script type="text/babel">
@@ -47,18 +51,21 @@ function Chart({title,data,series,unit='',digits=2}){
   const W=640,H=190,L=50,R=12,T=12,B=22,vals=[];
   series.forEach(s=>pts.forEach(d=>{if(typeof d[s.key]==='number')vals.push(d[s.key])}));
   let mn=Math.min(...vals),mx=Math.max(...vals);if(mn===mx){mn-=1;mx+=1}
-  const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(v-mn)/(mx-mn));
-  const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
-  const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const i=Math.round((x-L)/(W-L-R)*(pts.length-1));setHover(Math.max(0,Math.min(pts.length-1,i)))};
+  const times=pts.map(d=>Date.parse(d.period)),minTime=times[0],maxTime=times[times.length-1];
+  const sxTime=t=>L+(W-L-R)*((t-minTime)/Math.max(1,maxTime-minTime)), sy=v=>T+(H-T-B)*(1-(v-mn)/(mx-mn));
+  // A missing observation in one series must not break every other line on the union date grid.
+  const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sxTime(times[i]).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}});return dd.trim()};
+  const nearestIndex=target=>{let lo=0,hi=times.length-1;while(lo<hi){const mid=Math.floor((lo+hi)/2);if(times[mid]<target)lo=mid+1;else hi=mid}if(lo>0&&Math.abs(times[lo-1]-target)<Math.abs(times[lo]-target))return lo-1;return lo};
+  const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const ratio=Math.max(0,Math.min(1,(x-L)/(W-L-R)));setHover(nearestIndex(minTime+ratio*(maxTime-minTime)))};
   const hp=hover===null?null:pts[hover];
-  const tipLeft=hover===null?0:Math.max(10,Math.min(90,sx(hover)/W*100));
+  const tipLeft=hover===null?0:Math.max(10,Math.min(90,sxTime(times[hover])/W*100));
   return <div className="chart"><div className="chart-title">{title}</div>
     <div style={{position:'relative'}}>
     <svg viewBox={`0 0 ${W} ${H}`} className="chartsvg" preserveAspectRatio="none" onMouseMove={onMove} onMouseLeave={()=>setHover(null)}>
       {[mn,(mn+mx)/2,mx].map((t,i)=><g key={i}><line x1={L} x2={W-R} y1={sy(t)} y2={sy(t)} stroke="rgba(34,50,75,.7)" strokeWidth="0.5"/><text x={L-6} y={sy(t)+3} fill="#8ea0b8" fontSize="9" textAnchor="end">{fmt(t)}</text></g>)}
       {series.map(s=><path key={s.key} d={pathOf(s)} fill="none" stroke={s.color} strokeWidth="1.6"/>)}
-      {hp&&<g><line x1={sx(hover)} x2={sx(hover)} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
-        {series.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sx(hover)} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
+      {hp&&<g><line x1={sxTime(times[hover])} x2={sxTime(times[hover])} y1={T} y2={H-B} stroke="#8ea0b8" strokeWidth="0.6" strokeDasharray="3,3"/>
+        {series.map(s=>typeof hp[s.key]==='number'?<circle key={s.key} cx={sxTime(times[hover])} cy={sy(hp[s.key])} r="3.2" fill={s.color} stroke="#07111f" strokeWidth="1.2"/>:null)}</g>}
       <text x={L} y={H-6} fill="#8ea0b8" fontSize="9">{pts[0].period}</text>
       <text x={W-R} y={H-6} fill="#8ea0b8" fontSize="9" textAnchor="end">{pts[pts.length-1].period}</text>
     </svg>
@@ -67,41 +74,70 @@ function Chart({title,data,series,unit='',digits=2}){
     <div className="legend">{series.map(s=><span key={s.key}><i style={{background:s.color}}/>{s.label}</span>)}{unit&&<span className="muted">单位：{unit}</span>}</div>
   </div>;
 }
+function filterYears(rows,years){
+  if(!years||!rows.length)return rows;
+  const latest=new Date(rows[rows.length-1].period);const cutoff=new Date(latest);cutoff.setFullYear(cutoff.getFullYear()-years);
+  return rows.filter(row=>new Date(row.period)>=cutoff);
+}
+function MetricGrid({cards}){return <div className="grid">{(cards||[]).map(c=><div className="metric" key={c.label}>
+  <div className="metric-label">{c.label} <span className={'badge '+(c.data_status==='official'||c.data_status==='derived'?'':'missing')}>{c.data_status}</span></div>
+  {c.value!==null&&c.value!==undefined?<div className="metric-value">{fmt(c.value,['千人','人','百万美元'].includes(c.unit)?0:2)}<span style={{fontSize:12}}> {c.unit}</span></div>:<div className="metric-missing">{c.warning||'—'}</div>}
+  <div className="metric-meta">期数：{c.period||'—'}<br/>{c.source_url?<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">FRED 系列页</a>:'—'}</div>
+  {c.formula&&<div className="formula">{c.formula}</div>}
+</div>)}</div>}
+function MacroSection({group,children}){return <section className="section"><div className="section-head"><h2>{group.title}</h2><div className="section-summary">{group.summary}</div></div><MetricGrid cards={group.cards}/>{children}</section>}
 function App(){
-  const [p,setP]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false);
+  const [p,setP]=useState(null),[msg,setMsg]=useState(null),[busy,setBusy]=useState(false),[years,setYears]=useState(10);
   async function load(){const r=await fetch('/api/us-macro/data');setP(await r.json())}
   async function update(){
     setBusy(true);
     try{
       const r=await fetch('/api/us-macro/update',{method:'POST'});
-      const j=await r.json();setMsg(j.message||j.status);
+      const j=await r.json();if(!r.ok)throw new Error(j.error||`HTTP ${r.status}`);setMsg(j.message||j.status);
       const t=setInterval(async()=>{
         const js=await (await fetch('/api/jobs')).json();
         const job=js.jobs&&js.jobs.us_macro;
         if(job&&job.status!=='running'){clearInterval(t);setBusy(false);setMsg(job.status==='done'?'更新完成':'更新失败:'+(job.error||''));load()}
       },3000);
-    }catch(e){setBusy(false);setMsg('请求失败:'+e)}
+    }catch(e){setBusy(false);setMsg('请求失败:'+(e.message||e))}
   }
   useEffect(()=>{load()},[]);
   if(!p)return <div className="wrap"><div className="empty">加载中…</div></div>;
-  // 全量历史(后端已对超长日频降采样)；两图各自按 period 合并
-  const labor=mergeSeries({UNRATE:p.series.UNRATE||[],JTSQUR:p.series.JTSQUR||[]});
-  const rates=mergeSeries({FEDFUNDS:p.series.FEDFUNDS||[],DGS10:p.series.DGS10||[]});
+  const group=code=>(p.groups||[]).find(g=>g.code===code)||{cards:[],title:code,summary:''};
+  const windowed=rows=>filterYears(rows,years);
+  const laborRates=windowed(mergeSeries({UNRATE:p.series.UNRATE||[],U6RATE:p.series.U6RATE||[]}));
+  const participation=windowed(mergeSeries({CIVPART:p.series.CIVPART||[],EMRATIO:p.series.EMRATIO||[]}));
+  const payroll=windowed(mergeSeries({PAYEMS_MOM:p.series.PAYEMS_MOM||[]}));
+  const claims=windowed(mergeSeries({ICSA:p.series.ICSA||[]}));
+  const jolts=windowed(mergeSeries({JTSJOL:p.series.JTSJOL||[],JTSLDL:p.series.JTSLDL||[]}));
+  const laborFlow=windowed(mergeSeries({JTSHIR:p.series.JTSHIR||[],JTSQUR:p.series.JTSQUR||[]}));
+  const laborQuality=windowed(mergeSeries({AHE_YOY:p.series.AHE_YOY||[],PRODUCTIVITY_YOY:p.series.PRODUCTIVITY_YOY||[]}));
+  const inflation=windowed(mergeSeries({CPI_YOY:p.series.CPI_YOY||[],CORE_CPI_YOY:p.series.CORE_CPI_YOY||[],CORE_PCE_YOY:p.series.CORE_PCE_YOY||[]}));
+  const growth=windowed(mergeSeries({REAL_GDP_QOQ_AR:p.series.REAL_GDP_QOQ_AR||[],INDPRO_YOY:p.series.INDPRO_YOY||[],RETAIL_YOY:p.series.RETAIL_YOY||[]}));
+  const policyRates=windowed(mergeSeries({DFF:p.series.DFF||[],SOFR:p.series.SOFR||[],DPRIME:p.series.DPRIME||[]}));
+  const rates=windowed(mergeSeries({DGS3MO:p.series.DGS3MO||[],DGS2:p.series.DGS2||[],DGS5:p.series.DGS5||[],DGS10:p.series.DGS10||[],DGS30:p.series.DGS30||[]}));
+  const curve=windowed(mergeSeries({T10Y2Y:p.series.T10Y2Y||[]}));
+  const inflationExpectation=windowed(mergeSeries({T10YIE:p.series.T10YIE||[]}));
+  const mortgage=windowed(mergeSeries({MORTGAGE30US:p.series.MORTGAGE30US||[]}));
+  const fiscalFlow=windowed(mergeSeries({FGRECPT:p.series.FGRECPT||[],FGEXPND:p.series.FGEXPND||[],FED_CURRENT_BALANCE:p.series.FED_CURRENT_BALANCE||[]}));
+  const fiscalYear=windowed(mergeSeries({FYFSD:p.series.FYFSD||[]}));
+  const debt=windowed(mergeSeries({GFDEBTN:p.series.GFDEBTN||[]}));
+  const debtRatio=windowed(mergeSeries({GFDEGDQ188S:p.series.GFDEGDQ188S||[]}));
+  const interest=windowed(mergeSeries({A091RC1Q027SBEA:p.series.A091RC1Q027SBEA||[]}));
   return <div className="wrap">
     <div className="top"><div><h1>美国宏观 (FRED)</h1>
-      <div className="sub">失业率 / JOLTS 离职率 / 联邦基金利率 / 10年期美债 · 来源：{p.source_name} · 覆盖 {p.coverage.earliest||'—'} ~ {p.coverage.latest||'—'}（{p.coverage.records||0} 条，全部 official）</div></div>
-      <div className="actions">
+      <div className="sub">就业 · 通胀 · 增长 · 政府收支与债务 · 完整利率曲线 · 来源：{p.source_name} · 总覆盖 {p.coverage.earliest||'—'} 至 {p.coverage.latest||'—'}（{p.coverage.records||0} 条原始 observation）</div></div>
+      <div className="actions"><div className="range-control" aria-label="图表时间窗口">{[[5,'5年'],[10,'10年'],[0,'全部']].map(([value,label])=><button key={label} className={years===value?'active':''} onClick={()=>setYears(value)}>{label}</button>)}</div>
         <button className="btn primary" disabled={busy} onClick={update}>{busy?'更新中…':'更新数据'}</button>
         <a className="btn" href="/">首页</a></div></div>
     {msg&&<div className="banner">{msg}</div>}
     {(p.warnings||[]).map((w,i)=><div key={i} className="banner">{w}</div>)}
-    <div className="grid">{p.cards.map(c=><div className="metric" key={c.label}>
-      <div className="metric-label">{c.label} <span className={'badge '+(c.data_status==='official'?'':'missing')}>{c.data_status}</span></div>
-      {c.value!==null&&c.value!==undefined?<div className="metric-value">{fmt(c.value)}<span style={{fontSize:12}}> {c.unit}</span></div>:<div className="metric-missing">{c.warning||'—'}</div>}
-      <div className="metric-meta">期数：{c.period||'—'}<br/>{c.source_url?<a className="source-link" href={c.source_url} target="_blank" rel="noreferrer">FRED 系列页</a>:'—'}</div>
-    </div>)}</div>
-    <Chart title="劳动力市场：失业率(1948起) vs JOLTS 离职率(2000起)，月度" data={labor} series={[{key:'UNRATE',label:'失业率',color:'var(--red)'},{key:'JTSQUR',label:'JOLTS 离职率',color:'var(--green)'}]} unit="%"/>
-    <Chart title="利率：联邦基金利率(1954起，月) vs 10年期美债收益率(1962起，日频降采样)" data={rates} series={[{key:'FEDFUNDS',label:'联邦基金利率(月)',color:'var(--yellow)'},{key:'DGS10',label:'10Y 美债(日)',color:'var(--blue)'}]} unit="%"/>
+    <MacroSection group={group('labor')}><div className="charts3"><Chart title="U-3 与 U-6 失业率" data={laborRates} series={[{key:'UNRATE',label:'U-3',color:'var(--red)'},{key:'U6RATE',label:'U-6',color:'var(--yellow)'}]} unit="%"/><Chart title="劳动参与率与就业人口比" data={participation} series={[{key:'CIVPART',label:'参与率',color:'var(--yellow)'},{key:'EMRATIO',label:'就业人口比',color:'var(--green)'}]} unit="%"/><Chart title="非农就业月增（derived）" data={payroll} series={[{key:'PAYEMS_MOM',label:'月增',color:'var(--blue)'}]} unit="千人" digits={0}/><Chart title="首次申领失业救济（周度）" data={claims} series={[{key:'ICSA',label:'首次申领',color:'var(--red)'}]} unit="人" digits={0}/><Chart title="JOLTS 职位空缺与裁员解雇" data={jolts} series={[{key:'JTSJOL',label:'职位空缺',color:'var(--green)'},{key:'JTSLDL',label:'裁员解雇',color:'var(--red)'}]} unit="千人" digits={0}/><Chart title="JOLTS 招聘率与主动离职率" data={laborFlow} series={[{key:'JTSHIR',label:'招聘率',color:'var(--blue)'},{key:'JTSQUR',label:'主动离职率',color:'var(--yellow)'}]} unit="%"/><Chart title="工资与劳动生产率同比（derived）" data={laborQuality} series={[{key:'AHE_YOY',label:'平均时薪',color:'var(--green)'},{key:'PRODUCTIVITY_YOY',label:'劳动生产率',color:'var(--blue)'}]} unit="%"/></div></MacroSection>
+    <MacroSection group={group('inflation')}><Chart title="CPI、核心 CPI 与核心 PCE 同比（derived）" data={inflation} series={[{key:'CPI_YOY',label:'CPI同比',color:'var(--yellow)'},{key:'CORE_CPI_YOY',label:'核心CPI同比',color:'var(--red)'},{key:'CORE_PCE_YOY',label:'核心PCE同比',color:'var(--green)'}]} unit="%"/></MacroSection>
+    <MacroSection group={group('growth')}><Chart title="增长动能：实际 GDP 环比年化（季度）/ 工业产出与零售同比（月度）" data={growth} series={[{key:'REAL_GDP_QOQ_AR',label:'实际GDP环比年化',color:'var(--blue)'},{key:'INDPRO_YOY',label:'工业产出同比',color:'var(--green)'},{key:'RETAIL_YOY',label:'零售销售同比',color:'var(--yellow)'}]} unit="%"/></MacroSection>
+    <MacroSection group={group('fiscal')}><div className="charts3"><Chart title="联邦经常性收入、支出与差额（BEA 季调年率）" data={fiscalFlow} series={[{key:'FGRECPT',label:'收入',color:'var(--green)'},{key:'FGEXPND',label:'支出',color:'var(--red)'},{key:'FED_CURRENT_BALANCE',label:'差额',color:'var(--yellow)'}]} unit="十亿美元"/><Chart title="财政年度盈余/赤字（财政部/OMB）" data={fiscalYear} series={[{key:'FYFSD',label:'盈余/赤字',color:'var(--red)'}]} unit="百万美元" digits={0}/><Chart title="联邦公共债务总额" data={debt} series={[{key:'GFDEBTN',label:'公共债务',color:'var(--blue)'}]} unit="百万美元" digits={0}/><Chart title="联邦公共债务占 GDP" data={debtRatio} series={[{key:'GFDEGDQ188S',label:'债务/GDP',color:'var(--yellow)'}]} unit="%"/><Chart title="联邦政府利息支付（季调年率）" data={interest} series={[{key:'A091RC1Q027SBEA',label:'利息支付',color:'var(--red)'}]} unit="十亿美元"/></div></MacroSection>
+    <MacroSection group={group('financial')}><div className="charts3"><Chart title="政策、隔夜融资与银行优惠利率（日频对齐）" data={policyRates} series={[{key:'DFF',label:'有效联邦基金(日)',color:'var(--yellow)'},{key:'SOFR',label:'SOFR(日)',color:'var(--green)'},{key:'DPRIME',label:'优惠贷款(日)',color:'var(--red)'}]} unit="%"/><Chart title="美国国债完整期限曲线（按真实日期对齐）" data={rates} series={[{key:'DGS3MO',label:'3M',color:'#f59e0b'},{key:'DGS2',label:'2Y',color:'#22c55e'},{key:'DGS5',label:'5Y',color:'#06b6d4'},{key:'DGS10',label:'10Y',color:'#4f8fff'},{key:'DGS30',label:'30Y',color:'#a78bfa'}]} unit="%"/><Chart title="10Y－2Y 国债期限利差" data={curve} series={[{key:'T10Y2Y',label:'期限利差',color:'var(--red)'}]} unit="百分点"/><Chart title="10年期盈亏平衡通胀率" data={inflationExpectation} series={[{key:'T10YIE',label:'市场通胀预期',color:'var(--yellow)'}]} unit="%"/><Chart title="30 年固定房贷利率" data={mortgage} series={[{key:'MORTGAGE30US',label:'房贷利率',color:'var(--purple,#a78bfa)'}]} unit="%"/></div></MacroSection>
+    <div className="crosswalk"><a href="/dashboard"><b>中国货币与信用</b><span>M0/M1/M2、社融与贷款结构；对应美国货币信用模块仍可继续扩展。</span></a><a href="/china-rates"><b>中国利率与汇率</b><span>LPR、SHIBOR、人民币中间价；与美国利率曲线只做结构对照，不等同口径。</span></a><a href="/fiscal-debt"><b>中国财政与政府债务</b><span>一般公共预算、政府性基金和中央/地方债务；与美国联邦财政分开展示。</span></a></div>
     <div className="muted">{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
   </div>;
 }

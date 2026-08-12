@@ -4,12 +4,16 @@ import json
 import re
 import sqlite3
 import time
+import unicodedata
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from urllib.parse import urljoin
 
 
 MOF_LOCAL_DEBT_INDEX = 'https://zwgls.mof.gov.cn/tjsj/'
+MOF_LOCAL_DEBT_BACKUP_INDEX = 'https://yss.mof.gov.cn/zhuantilanmu/dfzgl/sjtj/'
+MOF_CENTRAL_DEBT_INDEX = 'https://gks.mof.gov.cn/tongjishuju/'
 KNOWN_LOCAL_DEBT_URLS = [
     {'url': 'https://zwgls.mof.gov.cn/tjsj/202606/t20260611_3991502.htm', 'title': '2026年4月地方政府债券发行和债务余额情况'},
     {'url': 'https://zwgls.mof.gov.cn/tjsj/202605/t20260508_3989284.htm', 'title': '2026年3月地方政府债券发行和债务余额情况'},
@@ -25,10 +29,19 @@ MOF_CENTRAL_DEBT_TITLE = '2024年中央政府月度收支及融资数据和季�
 # 财政部国库司中央政府季度债务余额 PDF（SDDS 口径）。新年度/季度 PDF 上线后在此追加一条即可。
 MOF_CENTRAL_DEBT_PDFS = [
     {'url': MOF_CENTRAL_DEBT_PDF, 'title': MOF_CENTRAL_DEBT_TITLE,
-     'periods': ['2024-03', '2024-06', '2024-09', '2024-12'], 'published': '2025-11-01'},
+     'periods': ['2024-03', '2024-06', '2024-09', '2024-12'],
+     'monthly_periods': [f'2024-{month:02d}' for month in range(1, 13)],
+     'published': '2025-11-01'},
     {'url': 'https://gks.mof.gov.cn/tongjishuju/202603/P020260325523419801269.pdf',
      'title': '2025年中央政府月度收支及融资数据和季度债务余额情况',
-     'periods': ['2025-03', '2025-06', '2025-09', '2025-12'], 'published': '2026-03-25'},
+     'periods': ['2025-03', '2025-06', '2025-09', '2025-12'],
+     'monthly_periods': [f'2025-{month:02d}' for month in range(1, 13)],
+     'published': '2026-03-25'},
+    {'url': 'https://gks.mof.gov.cn/tongjishuju/202607/P020260727589495727652.pdf',
+     'title': '2026年6月中央政府收支及融资数据和一季度债务余额情况',
+     'periods': ['2026-03'],
+     'monthly_periods': [f'2026-{month:02d}' for month in range(1, 7)],
+     'published': '2026-07-27'},
 ]
 
 LOCAL_DEBT_FIELDS = {
@@ -53,6 +66,8 @@ LOCAL_DEBT_FIELDS = {
     'local_general_bond_avg_remaining_maturity': ('一般债券剩余平均年限', '年', 'official'),
     'local_special_bond_avg_remaining_maturity': ('专项债券剩余平均年限', '年', 'official'),
     'local_bond_avg_interest_rate': ('地方政府债券平均利率', '%', 'official'),
+    'local_bond_avg_issue_rate': ('地方政府债券年初至今平均发行利率', '%', 'official'),
+    'local_bond_avg_issue_term': ('地方政府债券年初至今平均发行期限', '年', 'official'),
     'local_general_bond_avg_interest_rate': ('一般债券平均利率', '%', 'official'),
     'local_special_bond_avg_interest_rate': ('专项债券平均利率', '%', 'official'),
 }
@@ -132,9 +147,9 @@ FISCAL_SOURCE_REGISTRY = {
         'source_name': '财政部国库司',
         'source_type': 'mof_central_government_debt_sdds',
         'source_label': '财政部国库司：中央政府收支、融资和季度债务余额',
-        'entry_url': MOF_LOCAL_DEBT_INDEX,
+        'entry_url': MOF_CENTRAL_DEBT_INDEX,
         'candidate_paths': ['债务管理司 / 统计数据 / 中央政府月度收支及融资数据和季度债务余额情况'],
-        'parser_notes': '解析财政部官方 PDF 中“中央政府债务余额（季度数据）”；债务余额与债券余额分别保存，不与央行对政府债权混用。'
+        'parser_notes': '解析财政部官方 PDF 中中央政府合并口径月度收支、融资和季度债务余额；债务余额与债券余额分别保存，不与央行对政府债权混用。'
     },
     'lgfv_placeholder': {
         'source_name': 'Wind/Choice/中债/交易所等待接入',
@@ -414,7 +429,7 @@ def fetch_url(url, timeout=25):
 def normalize_text(html):
     text = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html or '', flags=re.I | re.S)
     text = re.sub(r'<[^>]+>', ' ', text)
-    text = html_lib.unescape(text).replace('\xa0', ' ')
+    text = unicodedata.normalize('NFKC', html_lib.unescape(text)).replace('\xa0', ' ').replace(',', '')
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'(?<=\d)\s+(?=\d)', '', text)
     text = re.sub(r'(?<=\d)\.\s+(?=\d)', '.', text)
@@ -436,13 +451,28 @@ def first(pattern, text, flags=0):
     return n(m.group(1)) if m else None
 
 
-def discover_local_debt_links(limit=48):
-    links = []
-    for page_url in [MOF_LOCAL_DEBT_INDEX, urljoin(MOF_LOCAL_DEBT_INDEX, 'index_1.htm')]:
+def discover_local_debt_links(limit=120, max_pages=20):
+    """深扫财政部地方债月报存档；单页失败不遮蔽其他年份。"""
+    page_urls = []
+    for index_url in (MOF_LOCAL_DEBT_INDEX, MOF_LOCAL_DEBT_BACKUP_INDEX):
+        page_urls.append(index_url)
+        page_urls.extend(urljoin(index_url, f'index_{i}.htm') for i in range(1, max_pages))
+
+    def fetch_page(page_url):
         try:
-            html = fetch_url(page_url)
+            return page_url, fetch_url(page_url, timeout=10)
         except Exception:
-            continue
+            return page_url, ''
+
+    pages = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(fetch_page, page_url) for page_url in page_urls]
+        for future in as_completed(futures):
+            page_url, page_html = future.result()
+            pages[page_url] = page_html
+    links = []
+    for page_url in page_urls:
+        html = pages.get(page_url, '')
         for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.I | re.S):
             href, title_html = m.group(1), m.group(2)
             title = normalize_text(title_html)
@@ -491,29 +521,55 @@ def _extract_central_debt_row(lines, label, expected_count, title):
     raise RuntimeError(f'未从财政部 PDF 解析出 {label} 行: {title}')
 
 
-def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
-                                      periods=('2024-03', '2024-06', '2024-09', '2024-12'),
-                                      published='2025-11-01',
-                                      title=MOF_CENTRAL_DEBT_TITLE):
-    """解析财政部国库司 PDF 第2页“中央政府债务余额（季度数据）”。
-    支持可变季度数（年中 PDF 可能只含已发布的 1-2 个季度）。原始单位十亿元，×10 转亿元。"""
+def _extract_sdds_row(lines, labels, expected_count, title, allow_trailing_missing=False):
+    """Extract one monthly SDDS row and convert the PDF's billions to 亿元.
+
+    The official PDF has a text layer with stable English row labels, while
+    the Chinese layer can be encoded differently depending on the archive
+    year.  Accepting a small list of label variants keeps the parser explicit
+    without relying on OCR or positional guesses.
+    """
+    labels = [labels] if isinstance(labels, str) else list(labels)
+    numeric = r'[+-]?(?:\d+(?:\.\d*)?|\.\d+)'
+    for label in labels:
+        pattern = re.compile(rf'^{re.escape(label)}\s+(.+)$')
+        for line in lines:
+            match = pattern.match(line)
+            if not match:
+                continue
+            tokens = match.group(1).split()
+            valid_count = len(tokens) <= expected_count if allow_trailing_missing else len(tokens) == expected_count
+            if not valid_count or not all(re.fullmatch(numeric, token) for token in tokens):
+                raise RuntimeError(
+                    f'PDF {label} 行月份数异常({title})：解析到 {len(tokens)}，需要 {expected_count}'
+                )
+            values = [float(token) * 10 for token in tokens]
+            return values + [None] * (expected_count - len(values))
+    raise RuntimeError(f'未从财政部 PDF 解析出 {" / ".join(labels)} 行: {title}')
+
+
+def _central_pdf_text(content, title):
     try:
         from pypdf import PdfReader
     except ImportError as exc:
         raise RuntimeError('解析中央政府债务 PDF 需要 pypdf') from exc
-    periods = list(periods)
-    n = len(periods)
-    content, final_url = fetch_binary(url)
     reader = PdfReader(io.BytesIO(content))
     text = '\n'.join(page.extract_text() or '' for page in reader.pages)
+    if not text.strip():
+        raise RuntimeError(f'财政部中央政府 PDF 没有可解析的文本层: {title}')
+    return text
+
+
+def _central_debt_records_from_text(text, periods, published, title, source_url):
+    periods = list(periods)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     section_start = next((i for i, line in enumerate(lines)
                           if line.startswith('Central Government Debt') or '中央政府债务余额（季度数据）' in line), None)
     if section_start is None:
         raise RuntimeError(f'未从财政部 PDF 解析出中央政府季度债务余额: {title}')
     table_lines = lines[section_start:]
-    debt_values = _extract_central_debt_row(table_lines, 'Debt', n, title)
-    bond_values = _extract_central_debt_row(table_lines, 'Bonds', n, title)
+    debt_values = _extract_central_debt_row(table_lines, 'Debt', len(periods), title)
+    bond_values = _extract_central_debt_row(table_lines, 'Bonds', len(periods), title)
     if any(bond > debt for debt, bond in zip(debt_values, bond_values)):
         raise RuntimeError(f'PDF 债券余额大于债务余额，拒绝落库: {title}')
     notes = f'解析财政部官方 PDF“中央政府债务余额（季度数据）”（{title}）；原始单位十亿元，×10 转亿元。'
@@ -537,7 +593,7 @@ def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
                 'frequency': 'quarterly',
                 'source_name': '财政部国库司',
                 'source_type': 'mof_central_government_debt_sdds',
-                'source_url': final_url,
+                'source_url': source_url,
                 'source_title': title,
                 'published_date': published,
                 'parser_notes': notes,
@@ -548,13 +604,127 @@ def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
     return records
 
 
+CENTRAL_OPERATION_ROWS = {
+    'central_government_revenue_monthly': (('Revenue',), '中央政府合并收入（当月）'),
+    'central_government_general_budget_revenue_monthly': (
+        ("Central Government's General Public Budget Revenue",), '中央政府一般公共预算收入（当月）'),
+    'central_government_managed_funds_revenue_monthly': (
+        ('Central Government-managed Funds Revenue',), '中央政府性基金收入（当月）'),
+    'central_government_state_capital_revenue_monthly': (
+        ("Central Government's State Captial Operations Revenue",
+         "Central Government's State Capital Operations Revenue"), '中央国有资本经营收入（当月）'),
+    'central_government_expenditure_monthly': (('Expenditure',), '中央政府合并支出（当月）'),
+    'central_government_general_budget_expenditure_monthly': (
+        ("Central Level General Public Budget Expenditure",), '中央本级一般公共预算支出（当月）'),
+    'central_government_managed_funds_expenditure_monthly': (
+        ('Central Level Government-managed Funds Expenditure',), '中央本级政府性基金支出（当月）'),
+    'central_government_state_capital_expenditure_monthly': (
+        ("Central Level State Captial Operations Expenditure",
+         "Central Level State Capital Operations Expenditure"), '中央本级国有资本经营支出（当月）'),
+    'central_government_transfer_to_local_monthly': (
+        ('Transfer Payments From Central Government To Local Governments',), '中央对地方转移支付（当月）'),
+    'central_government_balance_monthly': (('Balance',), '中央政府合并收支差额（当月）'),
+    'central_government_financing_monthly': (('Financing',), '中央政府融资（当月）'),
+    'central_government_domestic_financing_monthly': (
+        ('Domestic Financing By Maturity',), '中央政府国内融资（按期限，当月）'),
+    'central_government_foreign_financing_monthly': (
+        ('Foreign Financing By Maturity',), '中央政府国外融资（按期限，当月）'),
+    'central_government_bond_financing_monthly': (('Bonds',), '中央政府债券融资（当月）'),
+    'central_government_domestic_currency_financing_monthly': (
+        ('Domestic Currency',), '中央政府本币融资（当月）'),
+    'central_government_foreign_currency_financing_monthly': (
+        ('Foreign Currency',), '中央政府外币融资（当月）'),
+    'central_government_domestic_creditor_financing_monthly': (
+        ('Domestic Creditors',), '中央政府境内债权人融资（当月）'),
+    'central_government_external_creditor_financing_monthly': (
+        ('External Creditors',), '中央政府境外债权人融资（当月）'),
+}
+
+# 这两个明细行在旧版 PDF 中对没有发生额的年末月份留空，而不是写 0；
+# 允许尾部缺失并保留为 missing，不能把它们硬填成 0。
+CENTRAL_OPERATION_ROWS_ALLOW_TRAILING_MISSING = {
+    'central_government_state_capital_revenue_monthly',
+    'central_government_foreign_financing_monthly',
+    'central_government_foreign_currency_financing_monthly',
+    'central_government_external_creditor_financing_monthly',
+}
+
+
+def _central_operations_records_from_text(text, monthly_periods, published, title, source_url):
+    monthly_periods = list(monthly_periods)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    section_start = next((i for i, line in enumerate(lines)
+                          if line.startswith('Central Government Revenue And Expenditure')
+                          or '中央政府收支（月度数据）' in line), None)
+    if section_start is None:
+        raise RuntimeError(f'未从财政部 PDF 解析出中央政府月度收支: {title}')
+    table_lines = lines[section_start:]
+    notes = (
+        f'解析财政部官方 PDF“中央政府月度收支及融资数据”（{title}）；'
+        '原始单位十亿元，×10 转亿元；收入和支出为中央政府合并口径，已消除三本预算间重复转移支付；'
+        '融资数据不含国债本金偿还。'
+    )
+    records = []
+    for code, (labels, name) in CENTRAL_OPERATION_ROWS.items():
+        values = _extract_sdds_row(
+            table_lines, labels, len(monthly_periods), title,
+            allow_trailing_missing=code in CENTRAL_OPERATION_ROWS_ALLOW_TRAILING_MISSING)
+        for period, value in zip(monthly_periods, values):
+            if value is None:
+                continue
+            records.append({
+                'module_code': 'government_debt_overview',
+                'debt_line': 'central_government_operations',
+                'indicator_code': code,
+                'indicator_name': name,
+                'value': value,
+                'unit_raw': '十亿元',
+                'unit_display': '亿元',
+                'scale_factor': 10,
+                'period': period,
+                'date': period + '-01',
+                'frequency': 'monthly',
+                'source_name': '财政部国库司',
+                'source_type': 'mof_central_government_debt_sdds',
+                'source_url': source_url,
+                'source_title': title,
+                'published_date': published,
+                'parser_notes': notes,
+                'raw_text': f'{period} {name}: {value / 10} 十亿元',
+                'formula': None,
+                'data_status': 'official',
+            })
+    return records
+
+
+def parse_central_government_sdds_pdf(url, periods, monthly_periods, published, title):
+    """Parse both pages of one official central-government SDDS PDF once."""
+    content, final_url = fetch_binary(url)
+    text = _central_pdf_text(content, title)
+    return (
+        _central_debt_records_from_text(text, periods, published, title, final_url)
+        + _central_operations_records_from_text(text, monthly_periods, published, title, final_url)
+    )
+
+
+def parse_central_government_debt_pdf(url=MOF_CENTRAL_DEBT_PDF,
+                                      periods=('2024-03', '2024-06', '2024-09', '2024-12'),
+                                      published='2025-11-01',
+                                      title=MOF_CENTRAL_DEBT_TITLE):
+    """解析财政部国库司 PDF 第2页“中央政府债务余额（季度数据）”。
+    支持可变季度数（年中 PDF 可能只含已发布的 1-2 个季度）。原始单位十亿元，×10 转亿元。"""
+    content, final_url = fetch_binary(url)
+    return _central_debt_records_from_text(
+        _central_pdf_text(content, title), periods, published, title, final_url)
+
+
 def update_central_government_debt(db_path):
     # 解析所有已配置的财政部中央债 PDF（2024、2025…），失败的单个 PDF 跳过不影响其它
     records, parse_errors = [], []
     for cfg in MOF_CENTRAL_DEBT_PDFS:
         try:
-            records.extend(parse_central_government_debt_pdf(
-                cfg['url'], cfg['periods'], cfg['published'], cfg['title']))
+            records.extend(parse_central_government_sdds_pdf(
+                cfg['url'], cfg['periods'], cfg['monthly_periods'], cfg['published'], cfg['title']))
         except Exception as exc:
             parse_errors.append({'url': cfg['url'], 'title': cfg['title'], 'error': str(exc)})
     if not records:
@@ -630,8 +800,8 @@ def update_central_government_debt(db_path):
             'source_urls': source_urls}
 
 
-def parse_local_debt_page(url):
-    html = fetch_url(url)
+def parse_local_debt_text(html, url=''):
+    """解析财政部地方债月报正文；仅取年初至今口径和月末余额。"""
     text = normalize_text(html)
     title_match = re.search(r'((?:20\d{2})年(?:\d{1,2})月地方政府债券发行和债务余额情况)', text)
     title = title_match.group(1) if title_match else '地方政府债券发行和债务余额情况'
@@ -644,27 +814,47 @@ def parse_local_debt_page(url):
     if m:
         published = m.group(1).replace('年', '-').replace('月', '-').replace('日', '')
 
-    month_section = re.search(r'（一）当月发行情况。(.*?)(?:（二）|1-\s*\d+月\s*发行情况)', text)
-    ytd_section = re.search(r'（二）.*?发行情况。(.*?)(?:（\s*三\s*）|还本付息情况)', text)
+    month_section = re.search(r'[（(]一[）)]当月发行情况[。.](.*?)(?:[（(]二[）)]|1-\s*\d+月\s*发行情况)', text)
+    ytd_section = re.search(r'[（(]二[）)].*?发行情况[。.](.*?)(?:[（(]\s*三\s*[）)]|还本付息情况)', text)
     repay_section = re.search(r'还本付息情况。(.*?)(?:二、全国地方政府债务余额情况|全国地方政府债务余额情况)', text)
     balance_section = re.search(r'全国地方政府债务余额情况(.*?)(?:注\s*:|附件下载|相关文章|$)', text)
     month = month_section.group(1) if month_section else text
     ytd = ytd_section.group(1) if ytd_section else text
     repay = repay_section.group(1) if repay_section else text
     balance = balance_section.group(1) if balance_section else text
+    # 2019-era pages may omit the (一)/(二) sub-headings. Anchor the cumulative
+    # section on the explicit calendar phrase so the first monthly issuance is
+    # never mistaken for YTD.
+    year, month_number = period.split('-')
+    ytd_marker = re.search(rf'{year}年1-{int(month_number)}月全国发行地方政府债券', text)
+    if ytd_marker:
+        ytd_end = re.search(r'(?:[（(]三[）)]|二、全国地方政府债务余额情况)',
+                            text[ytd_marker.start():])
+        end = ytd_marker.start() + ytd_end.start() if ytd_end else len(text)
+        ytd = text[ytd_marker.start():end]
+    elif not ytd_section and int(month_number) != 1:
+        # Without either a cumulative heading or an explicit 1-N month anchor,
+        # the page only supports current-month issuance. Do not label it YTD.
+        ytd = ''
 
     data = {
         'period': period,
         'source_url': url,
+        'source_name': '财政部预算司' if 'yss.mof.gov.cn' in url else '财政部债务管理司',
         'source_title': title,
         'published_date': published,
         'parser_notes': '解析自财政部债务管理司“地方政府债券发行和债务余额情况”月度原文：发行情况、还本付息情况、债务余额情况。',
         'data_status': 'official',
         'derived_from_ytd_diff': False,
         'local_bond_issuance_current_month': first(r'全国发行地方政府债券合计\s*(\d+\.?\d*)\s*亿元', month),
-        'local_new_bond_issuance_ytd': first(r'全国发行新增地方政府债券\s*(\d+\.?\d*)\s*亿元', ytd),
-        'local_refinancing_bond_issuance_ytd': first(r'全国发行再融资债券\s*(\d+\.?\d*)\s*亿元', ytd),
-        'local_bond_issuance_ytd': first(r'全国发行地方政府债券合计\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_new_bond_issuance_ytd': first(
+            r'(?:全国)?发行(?:新增地方政府债券|新增债券)\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_refinancing_bond_issuance_ytd': first(
+            r'(?:全国)?发行(?:置换债券和)?再融资债券\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_bond_issuance_ytd': first(
+            r'全国发行地方政府债券(?:合计)?\s*(\d+\.?\d*)\s*亿元', ytd),
+        'local_bond_avg_issue_term': first(r'地方政府债券平均发行期限\s*(\d+\.?\d*)\s*年', ytd),
+        'local_bond_avg_issue_rate': first(r'地方政府债券平均发行利率\s*(\d+\.?\d*)\s*%', ytd),
         'official_principal_repayment_ytd': first(r'地方政府债券到期偿还本金\s*(\d+\.?\d*)\s*亿元', repay),
         'official_refinancing_repayment_ytd': first(r'发行再融资债券偿还本金\s*(\d+\.?\d*)\s*亿元', repay),
         'official_fiscal_funds_repayment_ytd': first(r'安排财政资金等偿还本金\s*(\d+\.?\d*)\s*亿元', repay),
@@ -691,6 +881,10 @@ def parse_local_debt_page(url):
         data['local_special_bond_issuance_ytd'] = n(m.group(2))
 
     return data
+
+
+def parse_local_debt_page(url):
+    return parse_local_debt_text(fetch_url(url), url)
 
 
 def _latest_ytd(conn, field, period):
@@ -752,7 +946,7 @@ def upsert_local_debt_record(conn, rec):
         ''', (
             'debt_rollover_pressure', 'local_government_debt', field, name, value, unit, unit, 1,
             rec['period'], rec['period'] + '-01', 'monthly',
-            '财政部债务管理司', 'mof_local_debt', rec['source_url'], rec['source_title'], rec['published_date'],
+            rec.get('source_name') or '财政部债务管理司', 'mof_local_debt', rec['source_url'], rec['source_title'], rec['published_date'],
             rec['parser_notes'], status, derived, 0, 0, 0, '',
             f"{name}: {value} {unit}",
             ('official_principal_repayment_ytd - previous_month_official_principal_repayment_ytd' if derived else None),
@@ -765,16 +959,26 @@ def upsert_local_debt_record(conn, rec):
     return new_records, updated_records
 
 
-def update_fiscal_debt(db_path, limit=48):
+def update_fiscal_debt(db_path, limit=120):
     warnings = []
     new_records = updated_records = 0
     try:
         links = discover_local_debt_links(limit=limit)
         with connect(db_path) as conn:
             ensure_fiscal_tables(conn)
-            for item in reversed(links):
+            def fetch_record(item):
+                return parse_local_debt_page(item['url'])
+
+            ordered_links = list(reversed(links))
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                future_by_url = {item['url']: executor.submit(fetch_record, item)
+                                 for item in ordered_links}
+                # Fetch concurrently, but write oldest-to-newest so a missing
+                # current-month principal can safely use the prior YTD value.
+                completed = [(item, future_by_url[item['url']]) for item in ordered_links]
+            for item, future in completed:
                 try:
-                    rec = parse_local_debt_page(item['url'])
+                    rec = future.result()
                     if not rec:
                         continue
                     n_new, n_upd = upsert_local_debt_record(conn, rec)
@@ -856,6 +1060,10 @@ def build_fiscal_debt_payload(db_path):
             "SELECT * FROM fiscal_debt_observations WHERE debt_line='central_government_debt' ORDER BY period, indicator_code"
         ).fetchall()]
         central_records = rows_to_wide(central_rows)
+        central_operation_rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM fiscal_debt_observations WHERE debt_line='central_government_operations' ORDER BY period, indicator_code"
+        ).fetchall()]
+        central_operation_records = rows_to_wide(central_operation_rows)
         gap_rows = [dict(r) for r in conn.execute('SELECT * FROM fiscal_gap_observations ORDER BY period').fetchall()]
         bond_rows = [dict(r) for r in conn.execute('SELECT * FROM bond_maturity_schedule ORDER BY maturity_date LIMIT 500').fetchall()]
         scenario_count = conn.execute('SELECT COUNT(*) FROM fiscal_debt_scenario_runs').fetchone()[0]
@@ -864,7 +1072,7 @@ def build_fiscal_debt_payload(db_path):
     if not local_records:
         warnings.append('地方政府债务月度原文抓取待执行，未生成 mock 数据')
     warnings += [
-        '中央政府季度债务余额已接入财政部官方 PDF；国债还本和付息数据仍待接入。',
+        '中央政府季度债务余额及月度收支、融资已接入财政部官方 SDDS PDF；国债还本和付息数据仍待接入。',
         '城投债数据源待接入，未纳入官方地方政府债务余额。',
         '财政缺口为测算口径，不等于官方赤字定义；当前数据源待接入。',
     ]
@@ -885,6 +1093,14 @@ def build_fiscal_debt_payload(db_path):
             'required_fields': TREASURY_FIELDS,
             'warnings': ([] if central_records else ['中央政府债务余额数据源待接入。']) +
                         ['国债还本和付息数据源待接入。'],
+        },
+        'central_government_operations': {
+            'data_status': 'official' if central_operation_records else 'missing',
+            'latest_period': latest_record(central_operation_records)['period'] if central_operation_records else None,
+            'records': central_operation_records,
+            'warnings': ([] if central_operation_records else ['中央政府月度收支与融资数据源待接入。']) + [
+                '这是中央政府合并口径，不是全国财政总收入/总支出；融资不含国债本金偿还。'
+            ],
         },
         'lgfv_debt': {
             'data_status': 'missing',
@@ -984,7 +1200,7 @@ def build_fiscal_debt_debug_payload(db_path):
         'required_fiscal_gap_fields': FISCAL_GAP_FIELDS,
         'last_update_logs': logs,
         'warnings': [
-            '中央政府季度债务余额已接入；国债还本和付息数据源待接入。',
+            '中央政府季度债务余额及月度收支、融资已接入财政部官方 SDDS PDF；国债还本和付息数据源待接入。',
             '城投债数据源待接入，未纳入官方地方政府债务余额。',
             '逐只债券到期表未完整接入时，到期还本模块保持 missing，不生成估算。',
         ],

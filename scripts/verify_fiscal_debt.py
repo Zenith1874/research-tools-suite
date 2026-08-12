@@ -14,6 +14,7 @@ def main():
     conn.row_factory = sqlite3.Row
     tables = [
         ('fiscal_debt_observations', 'period'),
+        ('fiscal_budget_observations', 'period'),
         ('pboc_balance_sheet_observations', 'period'),
         ('pboc_gov_bond_omo_observations', 'period'),
     ]
@@ -40,6 +41,39 @@ def main():
     }
     for name, sql in checks.items():
         print(name, conn.execute(sql).fetchone()['n'])
+
+    print('\nFiscal budget indicators')
+    for row in rows(conn, '''SELECT indicator_code,COUNT(*) n,MIN(period) earliest,
+        MAX(period) latest,GROUP_CONCAT(DISTINCT data_status) statuses,
+        SUM(CASE WHEN COALESCE(TRIM(source_url),'')='' THEN 1 ELSE 0 END) missing_source_url
+        FROM fiscal_budget_observations GROUP BY indicator_code ORDER BY indicator_code'''):
+        print(row)
+
+    print('\nFiscal budget data discipline violations')
+    budget_checks = {
+        'duplicate_indicator_period': '''SELECT COUNT(*) n FROM (
+            SELECT indicator_code,period,COUNT(*) c FROM fiscal_budget_observations
+            GROUP BY indicator_code,period HAVING c>1)''',
+        'official_missing_source_url': "SELECT COUNT(*) n FROM fiscal_budget_observations WHERE data_status='official' AND COALESCE(TRIM(source_url),'')=''",
+        'derived_missing_formula': "SELECT COUNT(*) n FROM fiscal_budget_observations WHERE data_status='derived' AND COALESCE(TRIM(formula),'')=''",
+        'scenario_in_official_table': "SELECT COUNT(*) n FROM fiscal_budget_observations WHERE data_status='scenario'",
+        'invalid_status': "SELECT COUNT(*) n FROM fiscal_budget_observations WHERE data_status NOT IN ('official','derived')",
+    }
+    for name, sql in budget_checks.items():
+        print(name, conn.execute(sql).fetchone()['n'])
+
+    annual_periods = {row['period'] for row in conn.execute('''
+        SELECT DISTINCT period FROM fiscal_budget_observations
+        WHERE indicator_code='general_budget_revenue_ytd' AND period LIKE '%-12'
+    ''')}
+    expected_general = {f'{year}-12' for year in range(2010, 2026)}
+    expected_fund = {f'{year}-12' for year in range(2012, 2026)}
+    fund_periods = {row['period'] for row in conn.execute('''
+        SELECT DISTINCT period FROM fiscal_budget_observations
+        WHERE indicator_code='gov_fund_revenue_ytd' AND period LIKE '%-12'
+    ''')}
+    print('missing_general_annual_periods', sorted(expected_general - annual_periods))
+    print('missing_fund_annual_periods', sorted(expected_fund - fund_periods))
 
     print('\nPBOC gov bond OMO')
     for row in rows(conn, '''SELECT period,operation_status,net_purchase_amount,unit,source_title,source_url

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CardCookie 按需监控 · 研究工作台</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <style>
+    :root{color-scheme:dark;--bg:#07101d;--panel:#0c1828;--panel2:#101f33;--line:#223551;--text:#edf4ff;--muted:#92a6c2;--cyan:#27d4c5;--blue:#5c9dff;--green:#61d59c;--yellow:#f2bd5b;--red:#ff727f;--shadow:0 16px 36px rgba(0,0,0,.24)}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(39,212,197,.10),transparent 30%),var(--bg);font:14px/1.55 Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--text)}
+    a{color:#8fc0ff}.shell{width:min(1380px,calc(100% - 32px));margin:0 auto;padding:30px 0 64px}.eyebrow{text-transform:uppercase;letter-spacing:.16em;color:var(--cyan);font-size:12px;font-weight:750}.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:20px}.hero h1{font-size:clamp(28px,4vw,46px);line-height:1.1;margin:8px 0 10px}.hero p{max-width:790px;color:var(--muted);font-size:15px;margin:0}.privacy-pill{white-space:nowrap;border:1px solid rgba(39,212,197,.38);color:var(--cyan);padding:8px 12px;border-radius:999px;background:rgba(39,212,197,.07)}
+    .summary{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:12px;margin:20px 0}.metric,.panel,.target-card{background:linear-gradient(145deg,rgba(16,31,51,.96),rgba(10,23,39,.96));border:1px solid var(--line);box-shadow:var(--shadow);border-radius:14px}.metric{padding:16px 18px;min-height:104px}.metric .label{color:var(--muted);font-size:12px}.metric .value{font-size:22px;font-weight:760;margin:7px 0 2px}.metric .detail{font-size:12px;color:var(--muted)}
+    .status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--muted);box-shadow:0 0 0 4px rgba(146,166,194,.08)}.status-dot.on{background:var(--green);box-shadow:0 0 0 4px rgba(97,213,156,.12)}.status-dot.busy{background:var(--yellow);box-shadow:0 0 0 4px rgba(242,189,91,.12)}
+    .notice{border:1px solid var(--line);border-left:4px solid var(--blue);background:rgba(92,157,255,.08);padding:13px 15px;border-radius:10px;margin:12px 0}.notice.warn{border-left-color:var(--yellow);background:rgba(242,189,91,.07)}.notice.error{border-left-color:var(--red);background:rgba(255,114,127,.08)}
+    .grid{display:grid;grid-template-columns:minmax(340px,.86fr) minmax(0,1.7fr);gap:14px;align-items:start}.panel{padding:20px}.panel h2,.target-section h2{font-size:18px;margin:0 0 4px}.panel-lead{color:var(--muted);margin:0 0 18px}.control-block{border-top:1px solid var(--line);padding-top:15px;margin-top:15px}.control-title{display:block;font-weight:700;margin-bottom:9px}.checks{display:flex;flex-wrap:wrap;gap:9px}.choice{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#0a1626;border-radius:10px;padding:9px 12px;cursor:pointer}.choice:has(input:checked){border-color:rgba(39,212,197,.65);background:rgba(39,212,197,.08)}input[type=checkbox]{accent-color:var(--cyan);width:17px;height:17px}select,input[type=text],input[type=email],input[type=password],input[type=number]{width:100%;border:1px solid var(--line);background:#081422;color:var(--text);border-radius:9px;padding:10px 12px;font:inherit}input::placeholder{color:#657a98}.confirm{display:flex;gap:9px;align-items:flex-start;color:#dce8f8;margin-top:14px}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:16px}.buttons button:first-child{grid-column:1/-1}button{border:0;border-radius:9px;padding:11px 14px;font:700 14px inherit;cursor:pointer;transition:.15s ease;background:#203553;color:var(--text)}button.primary{background:linear-gradient(135deg,#15a99e,#287cc9);color:white}button.stop{background:rgba(255,114,127,.12);border:1px solid rgba(255,114,127,.35);color:#ffacb3}button:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.08)}button:disabled{opacity:.42;cursor:not-allowed}.small-note{font-size:12px;color:var(--muted);margin-top:12px}.small-note strong{color:#dce9fa}
+    details{margin-top:15px;border-top:1px solid var(--line);padding-top:13px}summary{cursor:pointer;color:#bcd1ed;font-weight:650}.email-form{margin-top:13px}.form-grid{display:grid;grid-template-columns:1fr 104px;gap:10px}.field{display:block;min-width:0}.field.wide{grid-column:1/-1}.field-label{display:block;color:var(--muted);font-size:11px;margin:0 0 5px}.toggle-row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.toggle-row .choice{padding:7px 10px;font-size:12px}.email-actions{display:flex;align-items:center;gap:10px;margin-top:12px}.email-actions button{flex:0 0 auto}.config-state{font-size:12px;color:var(--muted)}.config-state.ready{color:var(--green)}.config-warning{font-size:12px;color:#f5cc7e;margin-top:9px;padding:9px 10px;border-radius:8px;background:rgba(242,189,91,.07)}
+    .target-section{min-width:0}.target-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.target-card{padding:18px}.target-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.target-name{font-size:20px;font-weight:760}.badge{font-size:12px;font-weight:750;padding:5px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}.badge.in_stock{color:var(--green);border-color:rgba(97,213,156,.4);background:rgba(97,213,156,.08)}.badge.out_of_stock{color:var(--yellow);border-color:rgba(242,189,91,.4);background:rgba(242,189,91,.08)}.badge.error{color:var(--red);border-color:rgba(255,114,127,.4);background:rgba(255,114,127,.08)}.target-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:15px 0}.mini{background:#081522;border:1px solid #1c2e47;border-radius:9px;padding:9px}.mini span{display:block;font-size:11px;color:var(--muted)}.mini strong{display:block;font-size:17px;margin-top:3px}.offer-list{border-top:1px solid var(--line);padding-top:10px}.offer-row{display:grid;grid-template-columns:1fr .85fr 1fr auto;gap:8px;padding:7px 0;border-bottom:1px dashed rgba(146,166,194,.18);align-items:center}.offer-row.head{color:var(--muted);font-size:11px}.source-line{display:flex;justify-content:space-between;gap:8px;margin-top:10px;font-size:12px;color:var(--muted)}.target-error{margin-top:10px;color:#ffabb3;background:rgba(255,114,127,.08);border-radius:8px;padding:8px 10px;font-size:12px}
+    .records{margin-top:14px}.record-tabs{display:flex;gap:8px;margin-bottom:12px}.tab{padding:7px 12px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted)}.tab.active{color:var(--text);border-color:var(--blue);background:rgba(92,157,255,.1)}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid rgba(34,53,81,.8);vertical-align:top}th{position:sticky;top:0;background:#0d1c2d;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}td{font-size:13px}.empty{text-align:center!important;color:var(--muted);padding:26px!important}.email-sent{color:var(--green)}.email-failed{color:var(--red)}.email-muted{color:var(--muted)}
+    .footer-note{color:var(--muted);font-size:12px;margin-top:16px}.toast{position:fixed;right:20px;bottom:20px;max-width:420px;background:#13253b;border:1px solid #315175;border-radius:10px;padding:12px 15px;box-shadow:var(--shadow);opacity:0;transform:translateY(12px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}.toast.bad{border-color:rgba(255,114,127,.55)}
+    @media(max-width:980px){.summary{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.target-grid{grid-template-columns:1fr}}@media(max-width:620px){.shell{width:min(100% - 20px,1380px)}.hero{display:block}.privacy-pill{display:inline-block;margin-top:12px}.summary{grid-template-columns:1fr}.buttons{grid-template-columns:1fr}.buttons button:first-child{grid-column:auto}.target-kpis{grid-template-columns:1fr 1fr}.offer-row{grid-template-columns:1fr 1fr}.offer-row span:nth-child(4){text-align:right}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <div class="hero">
+    <div>
+      <div class="eyebrow">On-demand monitor</div>
+      <h1>CardCookie 按需监控</h1>
+      <p>只在你明确开启后查询 Walmart 与 Best Buy。每次结果和异常写入本机数据库；首次成功检查只建立基线，后续真实变化才触发邮件。</p>
+    </div>
+    <div class="privacy-pill">默认关闭 · 本机管理</div>
+  </div>
+
+  <section class="summary" aria-label="监控摘要">
+    <div class="metric"><div class="label">运行状态</div><div class="value" id="runtime-value"><span class="status-dot"></span>读取中</div><div class="detail" id="runtime-detail">正在读取本机状态</div></div>
+    <div class="metric"><div class="label">邮件通知</div><div class="value" id="email-value">—</div><div class="detail" id="email-detail">不会显示密码或授权码</div></div>
+    <div class="metric"><div class="label">最近完成</div><div class="value" id="last-value">—</div><div class="detail">所有时间来自本机记录</div></div>
+    <div class="metric"><div class="label">下次检查</div><div class="value" id="next-value">—</div><div class="detail" id="next-detail">关闭时不查询网站</div></div>
+  </section>
+
+  <div id="mail-notice" class="notice warn">正在检查邮件配置…</div>
+  <div class="grid">
+    <aside class="panel">
+      <h2>查询控制</h2>
+      <p class="panel-lead">选择商家和频率，再手动开启。支持 1–3 分钟短时盯盘，每轮每个商家仍只请求一次。</p>
+
+      <div class="control-block">
+        <span class="control-title">要看的商家</span>
+        <div class="checks">
+          <label class="choice"><input type="checkbox" name="target" value="walmart" checked> Walmart</label>
+          <label class="choice"><input type="checkbox" name="target" value="best-buy" checked> Best Buy</label>
+        </div>
+      </div>
+
+      <div class="control-block">
+        <label class="control-title" for="interval">自动检查间隔</label>
+        <select id="interval">
+          <option value="60">每 1 分钟</option>
+          <option value="120">每 2 分钟</option>
+          <option value="180">每 3 分钟</option>
+          <option value="300">每 5 分钟</option>
+          <option value="600" selected>每 10 分钟</option>
+          <option value="1800">每 30 分钟</option>
+          <option value="3600">每 1 小时</option>
+          <option value="21600">每 6 小时</option>
+        </select>
+        <p class="small-note" id="frequency-note">1–3 分钟适合临时抢卡；若出现验证页或 HTTP 403/429，会自动退避 15 分钟。</p>
+      </div>
+
+      <label class="confirm" id="confirm-wrap" hidden>
+        <input id="confirm-email" type="checkbox">
+        <span id="confirm-label">我确认开启后，真实变化会自动发邮件。</span>
+      </label>
+
+      <div class="buttons">
+        <button class="primary" id="start-button">开启监控</button>
+        <button class="stop" id="stop-button" disabled>停止监控</button>
+        <button id="check-button">立即检查一次</button>
+      </div>
+      <p class="small-note"><strong>立即检查一次</strong>永远不发邮件；它适合先确认页面是否可读。停止后不再发起新查询，并保留全部历史。</p>
+
+      <details id="email-config" open>
+        <summary>邮件配置</summary>
+        <div class="email-form">
+          <div class="form-grid">
+            <label class="field wide"><span class="field-label">邮箱服务</span><select id="email-provider"><option value="qq">QQ 邮箱（旧代码预设）</option><option value="custom">其他 SMTP</option></select></label>
+            <label class="field"><span class="field-label">SMTP 服务器</span><input id="email-host" type="text" autocomplete="off" placeholder="smtp.qq.com"></label>
+            <label class="field"><span class="field-label">端口</span><input id="email-port" type="number" min="1" max="65535" inputmode="numeric" placeholder="587"></label>
+            <label class="field wide"><span class="field-label">SMTP 登录账号</span><input id="email-user" type="email" autocomplete="username" placeholder="发件邮箱账号"></label>
+            <label class="field wide"><span class="field-label">发件邮箱</span><input id="email-sender" type="email" autocomplete="email" placeholder="通常与登录账号相同"></label>
+            <label class="field wide"><span class="field-label">收件邮箱</span><input id="email-recipients" type="text" autocomplete="off" placeholder="多个邮箱用逗号分隔"></label>
+            <label class="field wide"><span class="field-label">新授权码或应用密码</span><input id="email-password" type="password" autocomplete="new-password" placeholder="请输入新生成的邮箱授权码"></label>
+          </div>
+          <div class="toggle-row">
+            <label class="choice"><input id="email-starttls" type="checkbox" checked> STARTTLS</label>
+            <label class="choice"><input id="email-ssl" type="checkbox"> SSL 直连</label>
+          </div>
+          <div class="email-actions"><button class="primary" id="save-email-button">保存邮件配置</button><span id="email-config-state" class="config-state">读取中…</span></div>
+          <div class="config-warning">旧代码里的服务器、发件人和收件人可以沿用，但旧明文授权码不会迁移。请先在 QQ 邮箱后台撤销旧授权码，再把新授权码直接填在本机页面。保存不发送邮件。</div>
+        </div>
+      </details>
+    </aside>
+
+    <section class="target-section">
+      <div class="target-grid" id="target-grid"><div class="target-card">读取商家状态…</div></div>
+
+      <div class="panel records">
+        <h2>本机记录</h2>
+        <p class="panel-lead">变化事件适合快速看结论；检查明细保留每次成功、失败与验证页状态。</p>
+        <div class="record-tabs">
+          <button class="tab active" data-view="events">变化事件</button>
+          <button class="tab" data-view="snapshots">检查明细</button>
+        </div>
+        <div class="table-wrap" id="record-table"></div>
+      </div>
+    </section>
+  </div>
+
+  <p class="footer-note">边界：这是个人按需查询工具，不绕过登录、验证码或访问限制。遇到验证页会如实记为失败、自动退避，并保留上次有效状态。</p>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/research-nav.js"></script>
+<script>
+(function(){
+  'use strict';
+  let payload = null;
+  let recordView = 'events';
+  let timer = null;
+  let controlsInitialized = false;
+  let emailSettings = null;
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+  function localTime(value, compact){
+    if(!value) return '尚无';
+    const date = new Date(value);
+    if(Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat('zh-CN', compact ? {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'} : {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(date);
+  }
+  function selectedTargets(){return Array.from(document.querySelectorAll('input[name=target]:checked')).map(el=>el.value)}
+  function toast(message,bad){const el=$('toast');el.textContent=message;el.className='toast show'+(bad?' bad':'');clearTimeout(el._timer);el._timer=setTimeout(()=>el.className='toast',3600)}
+  function availabilityLabel(target){if(target.consecutive_failures>0) return '最近检查异常';if(target.availability==='in_stock')return '有货';if(target.availability==='out_of_stock')return '缺货';return '尚未检查'}
+  function availabilityClass(target){if(target.consecutive_failures>0)return 'error';return target.availability||''}
+  function emailLabel(status){return ({sent:'已发送',failed:'发送失败',baseline:'基线·未发',manual_log_only:'仅记录',not_configured:'未配置',not_sent:'未发送'})[status]||status||'—'}
+  function eventLabel(value){return ({baseline:'首次基线',stock_in:'恢复有货',stock_out:'转为缺货',offers_changed:'价格/库存变化',fetch_failure:'连续失败',recovered:'检查恢复'})[value]||value}
+
+  function renderSummary(){
+    const runtime=payload.runtime,email=payload.email;
+    if(!controlsInitialized||runtime.running){
+      document.querySelectorAll('input[name=target]').forEach(el=>el.checked=(runtime.selected_targets||[]).includes(el.value));
+      if(Array.from($('interval').options).some(option=>Number(option.value)===runtime.interval_seconds)) $('interval').value=String(runtime.interval_seconds);
+      controlsInitialized=true;
+    }
+    const runtimeValue=$('runtime-value');
+    if(runtime.checking){runtimeValue.innerHTML='<span class="status-dot busy"></span>正在检查';$('runtime-detail').textContent=runtime.running?'监控已开启，本轮正在查询':'单次检查中，不会发邮件'}
+    else if(runtime.running){runtimeValue.innerHTML='<span class="status-dot on"></span>监控已开启';$('runtime-detail').textContent=runtime.backoff_reason?('基础每 '+Math.round(runtime.interval_seconds/60)+' 分钟；当前等待 '+Math.round(runtime.effective_wait_seconds/60)+' 分钟'):('每 '+Math.round(runtime.interval_seconds/60)+' 分钟自动检查')}
+    else{runtimeValue.innerHTML='<span class="status-dot"></span>监控已关闭';$('runtime-detail').textContent='不会自动查询，也不会发送邮件'}
+    $('email-value').textContent=email.configured?'已配置':'未配置';
+    $('email-detail').textContent=email.configured?('收件人：'+email.recipients_masked.join('、')):'可先使用仅记录模式';
+    $('last-value').textContent=localTime(runtime.last_cycle_finished_at,true);
+    $('next-value').textContent=runtime.running?(runtime.checking?'本轮进行中':localTime(runtime.next_check_at,true)):'不会检查';
+    $('next-detail').textContent=runtime.running?(runtime.backoff_reason||'停止后立即取消后续轮询'):'关闭时不查询网站';
+    const notice=$('mail-notice'),confirm=$('confirm-wrap');
+    if(email.configured){
+      notice.className='notice';notice.textContent='邮件已就绪：发生真实变化时发送到 '+email.recipients_masked.join('、')+'。首次基线、无变化和手动单次检查不会发邮件。';
+      confirm.hidden=false;$('confirm-label').textContent='我确认开启后，真实变化会自动发送到 '+email.recipients_masked.join('、')+'。';
+      $('start-button').textContent='开启监控并允许变化邮件';
+    }else{
+      notice.className='notice warn';notice.textContent='邮件尚未配置：现在仍可开启“仅记录”监控，变化会保存在本机，但不会发送邮件。缺少：'+(email.missing||[]).join('、');
+      confirm.hidden=true;$('confirm-email').checked=false;$('start-button').textContent='开启监控（仅记录）';
+    }
+    $('start-button').disabled=runtime.running||runtime.checking;
+    $('stop-button').disabled=!runtime.running;
+    $('check-button').disabled=runtime.running||runtime.checking;
+    document.querySelectorAll('input[name=target],#interval').forEach(el=>el.disabled=runtime.running||runtime.checking);
+  }
+
+  function renderTargets(){
+    $('target-grid').innerHTML=payload.targets.map(target=>{
+      const offers=(target.offers||[]).map(item=>'<div class="offer-row"><span>$'+Number(item.value).toFixed(2)+'</span><span>'+Number(item.discount_pct).toFixed(2).replace(/\.00$/,'')+'%</span><span>$'+Number(item.price).toFixed(2)+'</span><span>×'+esc(item.quantity)+'</span></div>').join('');
+      const max=target.max_discount_pct==null?'—':Number(target.max_discount_pct).toFixed(2).replace(/\.00$/,'')+'%';
+      return '<article class="target-card"><div class="target-head"><div><div class="target-name">'+esc(target.brand)+'</div><div class="small-note">最近成功：'+esc(localTime(target.last_success_at,true))+'</div></div><span class="badge '+availabilityClass(target)+'">'+esc(availabilityLabel(target))+'</span></div>'+
+        '<div class="target-kpis"><div class="mini"><span>价格组合</span><strong>'+(target.offer_count==null?'—':esc(target.offer_count))+'</strong></div><div class="mini"><span>页面卡片数</span><strong>'+(target.inventory_units==null?'—':esc(target.inventory_units))+'</strong></div><div class="mini"><span>最高折扣</span><strong>'+max+'</strong></div></div>'+
+        (offers?'<div class="offer-list"><div class="offer-row head"><span>面值</span><span>折扣</span><span>售价</span><span>数量</span></div>'+offers+'</div>':'<div class="small-note">'+(target.availability==='out_of_stock'?'页面明确显示缺货。':'点击“立即检查一次”建立本机基线。')+'</div>')+
+        (target.last_error?'<div class="target-error">连续失败 '+esc(target.consecutive_failures)+' 次：'+esc(target.last_error)+'</div>':'')+
+        '<div class="source-line"><span>最近尝试：'+esc(localTime(target.last_attempt_at,true))+'</span><a href="'+esc(target.source_url)+'" target="_blank" rel="noopener">查看来源</a></div></article>';
+    }).join('');
+  }
+
+  function renderRecords(){
+    document.querySelectorAll('.tab').forEach(button=>button.classList.toggle('active',button.dataset.view===recordView));
+    if(recordView==='events'){
+      const rows=(payload.events||[]).map(row=>'<tr><td>'+esc(localTime(row.created_at,false))+'</td><td>'+esc(row.target_slug==='best-buy'?'Best Buy':'Walmart')+'</td><td>'+esc(eventLabel(row.event_type))+'</td><td>'+esc(row.summary)+'</td><td class="'+(row.email_status==='sent'?'email-sent':row.email_status==='failed'?'email-failed':'email-muted')+'">'+esc(emailLabel(row.email_status))+(row.email_error?'<br><small>'+esc(row.email_error)+'</small>':'')+'</td></tr>').join('');
+      $('record-table').innerHTML='<table><thead><tr><th>时间</th><th>商家</th><th>事件</th><th>记录</th><th>邮件</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5" class="empty">尚无变化事件。首次成功检查后会在这里建立基线。</td></tr>')+'</tbody></table>';
+    }else{
+      const rows=(payload.snapshots||[]).map(row=>'<tr><td>'+esc(localTime(row.checked_at,false))+'</td><td>'+esc(row.target_slug==='best-buy'?'Best Buy':'Walmart')+'</td><td>'+esc(row.fetch_status==='success'?'成功':row.fetch_status)+'</td><td>'+esc(row.availability==='in_stock'?'有货':row.availability==='out_of_stock'?'缺货':'—')+'</td><td>'+(row.inventory_units==null?'—':esc(row.inventory_units))+'</td><td>'+(row.max_discount_pct==null?'—':esc(row.max_discount_pct)+'%')+'</td><td>'+esc(row.error||'—')+'</td></tr>').join('');
+      $('record-table').innerHTML='<table><thead><tr><th>时间</th><th>商家</th><th>结果</th><th>状态</th><th>卡片数</th><th>最高折扣</th><th>说明</th></tr></thead><tbody>'+(rows||'<tr><td colspan="7" class="empty">尚无检查记录。</td></tr>')+'</tbody></table>';
+    }
+  }
+  function render(){renderSummary();renderTargets();renderRecords()}
+
+  function applyQqPreset(){
+    $('email-host').value='smtp.qq.com';$('email-port').value='587';$('email-ssl').checked=false;$('email-starttls').checked=true;
+  }
+  function renderEmailSettings(settings){
+    emailSettings=settings;
+    const hasHost=Boolean(settings.host),provider=hasHost?settings.provider:'qq';
+    $('email-provider').value=provider==='qq'?'qq':'custom';
+    if(!hasHost&&provider==='qq')applyQqPreset();
+    else{$('email-host').value=settings.host||'';$('email-port').value=String(settings.port||587);$('email-ssl').checked=Boolean(settings.use_ssl);$('email-starttls').checked=Boolean(settings.starttls)&&!settings.use_ssl}
+    $('email-user').value=settings.user||'';$('email-sender').value=settings.sender||settings.user||'';$('email-recipients').value=(settings.recipients||[]).join(', ');
+    $('email-password').value='';$('email-password').placeholder=settings.password_set?'已保存；留空保持不变':'请输入新生成的邮箱授权码';
+    const state=$('email-config-state');state.textContent=settings.configured?'配置完整':'还缺：'+(settings.missing||[]).join('、');state.className='config-state'+(settings.configured?' ready':'');
+  }
+  async function loadEmailSettings(){
+    try{const response=await fetch('/api/cardcookie-monitor/email-settings',{cache:'no-store'});const data=await response.json();if(!response.ok)throw new Error(data.error||'读取邮件配置失败');renderEmailSettings(data)}
+    catch(error){$('email-config-state').textContent='读取失败：'+error.message;$('email-config-state').className='config-state';$('save-email-button').disabled=true}
+  }
+
+  async function load(silent){
+    try{
+      const response=await fetch('/api/cardcookie-monitor/status',{cache:'no-store'});
+      const data=await response.json();
+      if(!response.ok)throw new Error(data.error||'读取失败');
+      payload=data;render();
+      clearTimeout(timer);timer=setTimeout(()=>load(true),data.runtime.running||data.runtime.checking?2500:10000);
+    }catch(error){if(!silent)toast(error.message,true);$('mail-notice').className='notice error';$('mail-notice').textContent='无法读取监控状态：'+error.message;['start-button','stop-button','check-button'].forEach(id=>$(id).disabled=true)}
+  }
+  async function post(path,body){
+    const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||'操作失败');return data;
+  }
+  $('start-button').addEventListener('click',async()=>{
+    const targets=selectedTargets();if(!targets.length){toast('请至少选择一个商家',true);return}
+    if(payload&&payload.email.configured&&!$('confirm-email').checked){toast('请先确认遮罩显示的邮件收件人',true);return}
+    try{$('start-button').disabled=true;const result=await post('/api/cardcookie-monitor/start',{targets:targets,interval_seconds:Number($('interval').value),confirm_email:$('confirm-email').checked});toast(result.message);await load(true)}catch(error){toast(error.message,true);await load(true)}
+  });
+  $('stop-button').addEventListener('click',async()=>{try{const result=await post('/api/cardcookie-monitor/stop',{});toast(result.message);await load(true)}catch(error){toast(error.message,true)}});
+  $('check-button').addEventListener('click',async()=>{const targets=selectedTargets();if(!targets.length){toast('请至少选择一个商家',true);return}try{$('check-button').disabled=true;const result=await post('/api/cardcookie-monitor/check-now',{targets:targets});toast(result.message);await load(true)}catch(error){toast(error.message,true);await load(true)}});
+  $('email-provider').addEventListener('change',()=>{if($('email-provider').value==='qq')applyQqPreset()});
+  $('email-ssl').addEventListener('change',()=>{if($('email-ssl').checked)$('email-starttls').checked=false});
+  $('email-starttls').addEventListener('change',()=>{if($('email-starttls').checked)$('email-ssl').checked=false});
+  $('save-email-button').addEventListener('click',async()=>{
+    const button=$('save-email-button');
+    try{button.disabled=true;const result=await post('/api/cardcookie-monitor/email-settings',{provider:$('email-provider').value,host:$('email-host').value,port:Number($('email-port').value),use_ssl:$('email-ssl').checked,starttls:$('email-starttls').checked,user:$('email-user').value,sender:$('email-sender').value,recipients:$('email-recipients').value,password:$('email-password').value});toast(result.message);renderEmailSettings(result.settings);await load(true)}
+    catch(error){toast(error.message,true)}finally{button.disabled=false}
+  });
+  document.querySelectorAll('.tab').forEach(button=>button.addEventListener('click',()=>{recordView=button.dataset.view;renderRecords()}));
+  load(false);loadEmailSettings();
+})();
+</script>
+</body>
+</html>

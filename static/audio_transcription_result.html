@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>语音任务结果 · Research Tools Suite</title>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
+<style>
+:root{--bg:#07111f;--panel:#0c192b;--panel2:#102039;--bd:#223651;--text:#e8eef8;--muted:#91a2bb;--blue:#6da5ff;--green:#4dd6aa;--yellow:#f5bd61;--red:#ff7b91}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1120px;margin:0 auto;padding:24px 20px 70px}.hero{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.eyebrow{color:var(--blue);font-size:11px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.hero h1{font-size:24px;line-height:1.35;margin:6px 0 7px;word-break:break-word}.sub{color:var(--muted);font-size:12px;line-height:1.7}.actions,.view-tools,.downloads{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:36px;border:1px solid var(--bd);border-radius:7px;background:var(--panel2);color:var(--text);padding:8px 12px;font:inherit;font-size:12px;text-decoration:none;cursor:pointer}.btn:hover,.btn:focus-visible{border-color:#4e7fb9;outline:none}.btn.primary{border-color:#477fcf;background:#17447e}.btn.active{border-color:var(--blue);background:#17385f;color:#fff}.btn:disabled{opacity:.45;cursor:not-allowed}.status-card,.panel{margin-top:18px;border:1px solid var(--bd);border-radius:10px;background:var(--panel);padding:17px}.status-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.badge{display:inline-flex;border:1px solid var(--bd);border-radius:999px;padding:4px 9px;font-size:10px}.badge.completed{border-color:#2f896f;color:#a9f0d9}.badge.running,.badge.queued{border-color:#3f6da8;color:#bdd6ff}.badge.failed,.badge.interrupted{border-color:#8d4f5d;color:#ffc0cb}.progress{height:7px;margin:12px 0 9px;border-radius:8px;background:#15263b;overflow:hidden}.progress span{display:block;height:100%;background:linear-gradient(90deg,#4d8fff,#4dd6aa);transition:width .25s}.meta-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:13px}.meta{border:1px solid #1c304a;border-radius:7px;background:#091627;padding:10px}.meta-label{display:block;color:var(--muted);font-size:10px;margin-bottom:5px}.meta-value{display:block;color:#dce7f6;font-size:12px;line-height:1.45;word-break:break-word}.error{margin-top:11px;color:#ffc0cb;font-size:12px;line-height:1.65}.notice{margin-top:11px;color:#b9c8db;font-size:11px;line-height:1.7}.toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:15px}.view-tools input,.view-tools select{min-height:36px;border:1px solid var(--bd);border-radius:7px;background:#081426;color:var(--text);padding:7px 10px;font:inherit;font-size:12px}.view-tools input{min-width:210px}.turn-list{display:grid;gap:10px}.turn{display:grid;grid-template-columns:112px minmax(0,1fr);gap:15px;border:1px solid #1d314a;border-radius:8px;background:#091627;padding:14px}.turn-side{font-size:10px;color:var(--muted);line-height:1.65}.speaker{display:inline-flex;border:1px solid currentColor;border-radius:999px;padding:3px 7px;font-size:10px;font-weight:700;margin-bottom:7px}.turn-time{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.turn-text{font-size:14px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}.turn-translation{margin-top:8px;border-top:1px solid #1b2d44;padding-top:8px;color:#bfe1ff}.empty{padding:30px 15px;border:1px dashed var(--bd);border-radius:8px;color:var(--muted);font-size:12px;text-align:center}.section-title{margin:0;font-size:15px}.downloads{margin-top:12px}.privacy{margin-top:16px;color:#6f829d;font-size:10px;line-height:1.7}.hidden{display:none!important}@media(max-width:820px){.hero,.toolbar{align-items:stretch;flex-direction:column}.meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.turn{grid-template-columns:1fr;gap:8px}.view-tools input{min-width:0;flex:1}.actions{justify-content:flex-start}}@media print{body{background:#fff;color:#111}.research-nav-shell,.actions,.view-tools,.downloads,.privacy{display:none!important}.wrap{max-width:none;padding:0}.status-card,.panel,.turn,.meta{background:#fff;border-color:#bbb}.sub,.meta-label,.turn-side,.notice{color:#444}.meta-value,.turn-text{color:#111}.turn-translation{color:#173d61}.panel{padding:0;border:0}.turn-list{gap:7px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="hero">
+    <div>
+      <div class="eyebrow">Audio Transcript</div>
+      <h1 id="title">正在读取语音任务…</h1>
+      <div id="subtitle" class="sub">该页面只从本机私有任务目录读取结果。</div>
+    </div>
+    <div class="actions">
+      <a class="btn" href="/audio-transcription">返回语音工作台</a>
+      <button id="print" class="btn" type="button">打印 / 保存 PDF</button>
+    </div>
+  </header>
+
+  <section class="status-card" aria-live="polite">
+    <div class="status-row"><strong id="stage">正在连接…</strong><span id="badge" class="badge queued">排队中</span></div>
+    <div class="progress"><span id="progress-bar" style="width:0%"></span></div>
+    <div id="status-detail" class="sub">正在读取任务状态。</div>
+    <div id="error" class="error hidden"></div>
+    <div id="meta" class="meta-grid"></div>
+  </section>
+
+  <section id="viewer" class="panel hidden">
+    <div class="toolbar">
+      <div class="view-tools" role="group" aria-label="转录显示方式">
+        <button class="btn" type="button" data-mode="original">原文</button>
+        <button class="btn" type="button" data-mode="translated">译文</button>
+        <button class="btn active" type="button" data-mode="bilingual">双语</button>
+        <select id="speaker-filter" aria-label="按说话人筛选"><option value="">全部说话人</option></select>
+        <input id="search" type="search" placeholder="搜索转录内容" aria-label="搜索转录内容">
+      </div>
+      <button id="copy" class="btn" type="button">复制当前视图</button>
+    </div>
+    <div id="turns" class="turn-list"></div>
+  </section>
+
+  <section id="download-panel" class="panel hidden">
+    <h2 class="section-title">保留下载与审计文件</h2>
+    <div class="notice">直接查看是主要入口；需要字幕、归档或方法审计时再下载对应文件。</div>
+    <div id="downloads" class="downloads"></div>
+  </section>
+  <div class="privacy">转录、译文与任务元数据默认仅允许服务器本机访问；浏览器响应禁止缓存。匿名说话人标签不代表真实身份。</div>
+</main>
+
+<script>
+(function(){
+  'use strict';
+  const match=location.pathname.match(/^\/audio-transcription\/results\/([0-9a-f]{32})\/?$/);
+  const jobId=match&&match[1];
+  const $=id=>document.getElementById(id);
+  const title=$('title'),subtitle=$('subtitle'),stage=$('stage'),badge=$('badge'),bar=$('progress-bar'),detail=$('status-detail'),errorNode=$('error'),meta=$('meta'),viewer=$('viewer'),turnsNode=$('turns'),downloadPanel=$('download-panel'),downloads=$('downloads'),speakerFilter=$('speaker-filter'),search=$('search');
+  let transcript=null,job=null,mode='bilingual',pollTimer=null;
+  function esc(value){return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function statusLabel(value){return({queued:'排队中',running:'处理中',completed:'已完成',failed:'失败',interrupted:'已中断'})[value]||value||'未知';}
+  function clock(value){let seconds=Math.max(0,Number(value)||0),hours=Math.floor(seconds/3600),minutes=Math.floor((seconds%3600)/60),rest=seconds%60;return(hours?String(hours).padStart(2,'0')+':':'')+String(minutes).padStart(2,'0')+':'+rest.toFixed(1).padStart(4,'0');}
+  function duration(value){const seconds=Math.round(Number(value)||0),hours=Math.floor(seconds/3600),minutes=Math.floor((seconds%3600)/60),rest=seconds%60;return(hours?hours+' 小时 ':'')+(minutes?minutes+' 分钟 ':'')+rest+' 秒';}
+  function speakerColor(name){const digits=Number((String(name).match(/\d+/)||['0'])[0]);return'hsl('+((digits*67+198)%360)+' 75% 72%)';}
+  async function jsonFetch(url){const response=await fetch(url,{cache:'no-store'});let body={};try{body=await response.json();}catch(e){}if(!response.ok)throw new Error(body.error||('HTTP '+response.status));return body;}
+  function metaCard(label,value){return'<div class="meta"><span class="meta-label">'+esc(label)+'</span><span class="meta-value">'+esc(value||'-')+'</span></div>';}
+  function updateStatus(){
+    const progress=job.progress&&Number(job.progress.percent)||0,runtime=job.runtime||{},audit=job.audit||{};
+    title.textContent=job.original_filename||'语音任务结果';document.title=(job.original_filename||'语音任务')+' · 转录结果';
+    subtitle.textContent='任务 '+job.job_id.slice(0,8)+' · 创建于 '+String(job.created_at||'').replace('T',' ').replace('Z',' UTC');
+    stage.textContent=job.stage_detail||statusLabel(job.status);badge.textContent=statusLabel(job.status);badge.className='badge '+esc(job.status);bar.style.width=Math.max(0,Math.min(100,progress))+'%';detail.textContent='当前阶段：'+(job.stage||'-')+' · '+Math.round(progress)+'%';
+    errorNode.classList.toggle('hidden',!job.error);errorNode.textContent=job.error||'';
+    meta.innerHTML=metaCard('检测语言',job.detected_language||'处理中')+metaCard('音频时长',job.duration_seconds?duration(job.duration_seconds):'处理中')+metaCard('匿名说话人',job.speaker_count?job.speaker_count+' 位':'处理中')+metaCard('运行主机',runtime.host?(runtime.host+' · GPU '+runtime.gpu_index):'等待选择')+metaCard('远端清理',audit.remote_cleanup_verified?'已确认':(job.status==='completed'?'待确认':'任务完成后确认'));
+  }
+  function hasTranslation(){return Boolean(transcript&&(transcript.turns||[]).some(turn=>Object.prototype.hasOwnProperty.call(turn,'translated_text')));}
+  function renderTurns(){
+    if(!transcript)return;const translated=hasTranslation();if(!translated&&mode!=='original')mode='original';document.querySelectorAll('[data-mode]').forEach(button=>{const unavailable=!translated&&button.dataset.mode!=='original';button.disabled=unavailable;button.classList.toggle('active',button.dataset.mode===mode);});
+    const query=search.value.trim().toLocaleLowerCase(),speaker=speakerFilter.value;const rows=(transcript.turns||[]).filter(turn=>(!speaker||turn.speaker===speaker)&&(!query||(String(turn.text||'')+' '+String(turn.translated_text||'')).toLocaleLowerCase().includes(query)));
+    if(!rows.length){turnsNode.innerHTML='<div class="empty">当前筛选条件下没有匹配的发言。</div>';return;}
+    turnsNode.innerHTML=rows.map(turn=>{const original='<div class="turn-text">'+esc(turn.text)+'</div>',translation='<div class="turn-text turn-translation">'+esc(turn.translated_text||'')+'</div>';let content=original;if(mode==='translated')content=translation;if(mode==='bilingual')content=original+translation;return'<article class="turn"><div class="turn-side"><span class="speaker" style="color:'+speakerColor(turn.speaker)+'">'+esc(turn.speaker)+'</span><div class="turn-time">'+clock(turn.start)+' – '+clock(turn.end)+'</div></div><div>'+content+'</div></article>';}).join('');
+  }
+  function renderDownloads(){const outputs=job.outputs||{},items=[['bundle','下载全部 ZIP','primary'],['txt','原文 TXT',''],['srt','原文 SRT',''],['vtt','原文 VTT',''],['translated_txt','译文 TXT',''],['bilingual_srt','双语 SRT',''],['bilingual_vtt','双语 VTT',''],['json','完整审计 JSON','']];downloads.innerHTML=items.filter(item=>outputs[item[0]]).map(item=>'<a class="btn '+item[2]+'" href="/api/audio/jobs/'+jobId+'/download?format='+item[0]+'">'+item[1]+'</a>').join('');downloadPanel.classList.remove('hidden');}
+  function showTranscript(){
+    const speakers=Array.from(new Set((transcript.turns||[]).map(turn=>turn.speaker))).sort();speakerFilter.innerHTML='<option value="">全部说话人</option>'+speakers.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join('');mode=hasTranslation()?'bilingual':'original';viewer.classList.remove('hidden');renderTurns();renderDownloads();
+  }
+  async function load(){
+    if(!jobId){title.textContent='任务地址无效';detail.textContent='请从研究语音工作台打开结果页。';badge.textContent='无效';badge.className='badge failed';return;}
+    try{const data=await jsonFetch('/api/audio/jobs/'+jobId+'/result');job=data.job||{};transcript=data.transcript||null;updateStatus();if(transcript){showTranscript();if(pollTimer){clearTimeout(pollTimer);pollTimer=null;}}else if(job.status==='queued'||job.status==='running'){pollTimer=setTimeout(load,1800);}}
+    catch(fetchError){title.textContent='无法读取语音任务';detail.textContent=fetchError.message;badge.textContent='读取失败';badge.className='badge failed';errorNode.textContent='结果仅允许从运行研究工具服务的本机访问。';errorNode.classList.remove('hidden');}
+  }
+  document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{mode=button.dataset.mode;renderTurns();}));speakerFilter.addEventListener('change',renderTurns);search.addEventListener('input',renderTurns);$('print').addEventListener('click',()=>window.print());$('copy').addEventListener('click',async()=>{if(!transcript)return;const visible=(transcript.turns||[]).filter(turn=>(!speakerFilter.value||turn.speaker===speakerFilter.value));const text=visible.map(turn=>{const head='['+clock(turn.start)+' – '+clock(turn.end)+'] '+turn.speaker;return mode==='original'?head+'\n'+turn.text:(mode==='translated'?head+'\n'+(turn.translated_text||''):head+'\n'+turn.text+'\n'+(turn.translated_text||''));}).join('\n\n');try{await navigator.clipboard.writeText(text);$('copy').textContent='已复制';setTimeout(()=>$('copy').textContent='复制当前视图',1500);}catch(e){$('copy').textContent='复制失败';}});load();
+})();
+</script>
+</body>
+</html>

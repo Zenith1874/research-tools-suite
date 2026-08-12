@@ -227,6 +227,23 @@ def update_china_rates(db_path, backfill=False):
                      o.get('source_url') or page_url,   # LPR 逐篇公告有各自正文 URL
                      f'{label}历史数据(中国货币网)', f'官方接口 {api_url}', None, now))
                 inserted += cur.rowcount
+        # 人民币实际有效汇率(BIS via FRED,月度;与货币网各源相互独立,失败不影响)
+        try:
+            from services.us_macro_service import fetch_series
+            for o in fetch_series('RBCNBIS'):
+                cur = conn.execute('''INSERT INTO china_rates_observations (
+                    indicator_code,indicator_name,period,value,unit,frequency,data_status,
+                    source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(indicator_code,period) DO UPDATE SET
+                    value=excluded.value, updated_at=excluded.updated_at''',
+                    ('REER_CNY_BIS', '人民币实际有效汇率(BIS,2020=100)', o['period'], o['value'],
+                     '指数', 'monthly', 'official', 'BIS via FRED', SOURCE_TYPE,
+                     'https://fred.stlouisfed.org/series/RBCNBIS', 'FRED RBCNBIS',
+                     'BIS 实际广义有效汇率;升值=指数升', None, now))
+                inserted += cur.rowcount
+        except Exception as exc:
+            errors.append(f'REER: {exc}')
         conn.commit()
     return {'success': not errors or inserted > 0, 'started_at': started,
             'finished_at': datetime.now().isoformat(), 'records_upserted': inserted,

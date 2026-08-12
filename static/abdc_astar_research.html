@@ -40,12 +40,12 @@ a:hover{text-decoration:underline}
 .btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
 .btn-primary:hover{opacity:.9}
 
-.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto;position:sticky;top:0;z-index:60;background:var(--bg)}
+.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--bd);overflow-x:auto;position:sticky;top:var(--research-nav-height,0px);z-index:60;background:var(--bg)}
 .tab{padding:11px 16px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 .tab:hover{color:var(--text)}
 .tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}
 
-#filterBar{position:sticky;top:var(--tabs-height);z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
+#filterBar{position:sticky;top:calc(var(--research-nav-height,0px) + var(--tabs-height));z-index:55;background:var(--bg);box-shadow:0 4px 10px -6px rgba(0,0,0,.6)}
 .pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 14px;color:var(--dim);font-size:12.5px}
 .pbtn{background:var(--s2);border:1px solid var(--bd);color:var(--text);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12.5px}
 .pbtn:hover:not(:disabled){border-color:var(--blue);background:var(--ld)}
@@ -67,7 +67,8 @@ a:hover{text-decoration:underline}
 .card{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:16px 18px;margin-bottom:12px}
 .card-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}
 .card-title{font-size:15px;font-weight:600;line-height:1.45;color:#f1f5f9}
-.card-title a{color:#f1f5f9}
+.card-title a{color:#f1f5f9;text-decoration:none}
+.card-title a:hover{color:var(--blue);text-decoration:underline}
 .card-journal{display:inline-block;font-size:12px;font-weight:700;color:var(--yellow);background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.25);border-radius:5px;padding:2px 9px;margin-top:6px}
 .list-badge{display:inline-block;font-size:10px;font-weight:800;border-radius:4px;padding:2px 6px;margin-left:5px;letter-spacing:.3px}
 .lb-ft50{background:rgba(0,212,170,.16);color:var(--green);border:1px solid rgba(0,212,170,.35)}
@@ -92,7 +93,7 @@ a:hover{text-decoration:underline}
 .card-foot .why{color:var(--muted);flex:1}
 
 table{width:100%;border-collapse:collapse;font-size:12.5px}
-th{text-align:left;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--bd);position:sticky;top:56px;background:var(--bg)}
+th{text-align:left;color:var(--muted);font-weight:600;padding:9px 10px;border-bottom:1px solid var(--bd);position:sticky;top:calc(var(--research-nav-height,0px) + var(--tabs-height));background:var(--bg)}
 td{padding:9px 10px;border-bottom:1px solid rgba(30,45,69,.5);vertical-align:top}
 tr:hover td{background:var(--s1)}
 
@@ -116,6 +117,8 @@ tr:hover td{background:var(--s1)}
 .footer{padding:18px 22px;font-size:11px;color:var(--muted);border-top:1px solid var(--bd);line-height:1.7}
 pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:14px;font-size:11.5px;color:var(--dim);overflow:auto;max-height:600px}
 </style>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
 </head>
 <body>
 
@@ -134,6 +137,7 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
 </div>
 
 <div class="kpis" id="kpis"></div>
+<div id="naNote" style="margin:6px 0 2px;padding:8px 11px;border-left:3px solid #9b6b20;background:rgba(245,166,35,.06);color:#c9b58a;font-size:11px;line-height:1.7;border-radius:4px"></div>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="runUpdate('recent',30)">更新最近 30 天</button>
@@ -179,14 +183,30 @@ const RELATED_CHIPS = [
   ['ft50','★ FT50'],['utd24','★ UTD24'],
   ['AI_in_organizations','AI / Organizations'],['remote_work','WFH / RTO'],
   ['NLP','Digital trace / NLP'],['OB / HR','OB / HR'],
-  ['Information Systems','IS'],['Operations / Supply Chain','OM / Supply chain'],
+  ['Information Systems','IS'],['Management / Strategy','Management'],
+  ['Operations / Supply Chain','OM / Supply chain'],
   ['Marketing','Marketing / reviews'],['labor_market','Job postings / labor'],
+  ['Computational Social Science','计算社会科学'],
 ];
+
+const NAV_FIELD_MAP = {
+  'information-systems':'Information Systems',
+  'management':'Management / Strategy',
+  'marketing':'Marketing',
+  'ob-hr':'OB / HR',
+  'computational-social-science':'Computational Social Science',
+};
+const NAV_FIELD_SLUGS = Object.fromEntries(Object.entries(NAV_FIELD_MAP).map(([slug,field])=>[field,slug]));
 
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),5000)}
 async function getJSON(u){const r=await fetch(API+u);return r.json()}
-async function postJSON(u,b){const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+async function postJSON(u,b){
+  const r=await fetch(API+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+  const data=await r.json();
+  if(!r.ok){toast(data.error||`请求失败 (HTTP ${r.status})`);return Object.assign({success:false,blocked:true},data)}
+  return data;
+}
 
 function relClass(s){s=s||0;return s>=60?'rel-hi':(s>=35?'rel-mid':'rel-lo')}
 
@@ -214,6 +234,19 @@ async function loadStatus(){
     ];
     document.getElementById('kpis').innerHTML = kpis.map(k=>
       `<div class="kpi${k[2]?' hl':''}"><div class="kpi-v">${k[1]==null?'—':k[1]}</div><div class="kpi-l">${k[0]}</div></div>`).join('');
+    // 缺摘要说明：区分“元数据 API 未返回”与“出版社页面确实不存在”。
+    const naEl = document.getElementById('naNote');
+    if(naEl && dbg.articles_without_abstract){
+      const checked = dbg.articles_without_abstract_checked_metadata_apis
+        || dbg.articles_without_abstract_confirmed_unavailable || 0;
+      const review = dbg.articles_without_abstract_publisher_review_pending||0;
+      const tops = (dbg.articles_without_abstract_top_journals||[]).slice(0,5).map(j=>j.journal_title).join('、');
+      const pct = Math.round(checked/dbg.articles_without_abstract*100);
+      naEl.innerHTML = `缺摘要 ${dbg.articles_without_abstract} 篇中，约 ${checked}（${pct}%）已查询 OpenAlex / Crossref / Semantic Scholar，但这些 API 当时未返回摘要。`
+        + `${review?`其中 ${review} 篇属于出版社页面/授权接口待逐篇复核，不能标成“无摘要”。`:''}`
+        + `${tops?`高频期刊包括 ${tops}。`:''}`
+        + `本工具不抓付费全文；发现公开摘要页后可经来源核验补录。`;
+    }
   }catch(e){
     document.getElementById('modePill').className='pill pill-err';
     document.getElementById('modePill').textContent='后端未连接';
@@ -293,7 +326,7 @@ function buildArticleParams(){
   const chip=STATE.relatedChip;
   if(chip && chip!=='all' && chip!=='related'){
     if(['AI_in_organizations','remote_work','labor_market'].includes(chip)) p.set('topic',chip);
-    else if(chip==='NLP') p.set('method','NLP');
+    else if(chip==='NLP' || chip==='Computational Social Science') p.set('method','NLP');
     else if(chip==='ft50') p.set('list','ft50');
     else if(chip==='utd24') p.set('list','utd24');
     else p.set('broad_area',chip);
@@ -367,6 +400,18 @@ function gotoPage(delta){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
+function articleHref(a){
+  if(a && a.doi) return `https://doi.org/${a.doi}`;
+  return (a && (a.landing_page_url||a.url)) || '';
+}
+function articleTitleLink(a){
+  const href=articleHref(a);
+  const title=esc((a&&a.title)||'未命名文章');
+  return href
+    ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${title}</a>`
+    : title;
+}
+
 function articleCard(a){
   const cls=a.classification||{};
   const topics=(cls.research_topic||[]).map(t=>`<span class="tag tag-topic">${esc(t)}</span>`).join('');
@@ -376,14 +421,17 @@ function articleCard(a){
   const area=cls.broad_area?`<span class="tag tag-area">${esc(cls.broad_area)}</span>`:'';
   const rel=cls.relevance_score||0;
   const authors=(a.authors||[]).slice(0,5).join(', ')+((a.authors||[]).length>5?' 等':'');
+  const missingLabel = a.abstract_review_status==='publisher_page_review_pending'
+    ? '出版社页面/授权接口待复核 · 当前仅基于标题和元数据'
+    : '元数据源暂无摘要（abstract missing）· 仅基于标题和元数据';
   const absHtml = a.abstract
     ? `<div class="card-abstract">${esc(a.abstract.slice(0,600))}${a.abstract.length>600?'…':''}</div>`
-    : `<div class="card-abstract"><span class="abs-missing">无公开摘要（abstract missing）· 仅基于标题和元数据</span></div>`;
-  const doiUrl = a.doi?`https://doi.org/${esc(a.doi)}`:(a.url||'#');
+    : `<div class="card-abstract"><span class="abs-missing">${missingLabel}</span></div>`;
+  const doiUrl = articleHref(a)||'#';
   return `<div class="card" onclick="this.classList.toggle('open')">
     <div class="card-top">
       <div style="flex:1">
-        <div class="card-title">${esc(a.title)}</div>
+        <div class="card-title">${articleTitleLink(a)}</div>
         <div><span class="card-journal">${esc(a.journal_title||'未知期刊')}</span>${a.is_ft50?'<span class="list-badge lb-ft50">FT50</span>':''}${a.is_utd24?'<span class="list-badge lb-utd24">UTD24</span>':''}</div>
         <div class="card-meta">${esc(a.publication_date||'')} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}${cls.semantic_relevance!=null?' · 🧠语义 '+Math.round(cls.semantic_relevance):''}</div>
         <div class="card-authors">${esc(authors)}</div>
@@ -394,7 +442,7 @@ function articleCard(a){
     <div class="tag-row">${area}${topics}${methods}${dts}${theories}</div>
     <div class="card-foot" onclick="event.stopPropagation()">
       <span class="why">${esc(cls.classification_notes||'')}</span>
-      <a href="${doiUrl}" target="_blank">查看原文 ↗</a>
+      <a href="${esc(doiUrl)}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a>
       ${a.openalex_id?`<a href="https://openalex.org/${esc(a.openalex_id)}" target="_blank">OpenAlex</a>`:''}
       <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
       <a href="#" onclick="findSimilar(${a.id});return false">🔗 找相似</a>
@@ -403,7 +451,13 @@ function articleCard(a){
   </div>`;
 }
 
-function setChip(k){STATE.relatedChip=k; STATE.journalFilter=null; render();}
+function setChip(k){
+  STATE.relatedChip=k; STATE.journalFilter=null;
+  const url=new URL(window.location.href), slug=NAV_FIELD_SLUGS[k];
+  if(slug) url.searchParams.set('field',slug); else url.searchParams.delete('field');
+  history.replaceState(null,'',url.pathname+url.search+url.hash);
+  render();
+}
 function applyFilters(){
   STATE.filters.q=document.getElementById('q').value.trim();
   STATE.filters.min_relevance=document.getElementById('minrel').value.trim();
@@ -536,13 +590,13 @@ async function renderDebug(){
 // ── 操作 ──
 async function runUpdate(mode,days){
   const body={mode:mode,days:days,abdc_version:'latest'};
-  toast('已启动：'+mode+'（219 个 A* 期刊，预计数分钟，可在 Debug 看进度）');
   const r=await postJSON('/api/abdc/astar/update',body);
+  if(r.blocked)return;
   toast(r.message||'已启动');
   setTimeout(loadStatus,8000);
 }
 async function reclassify(){const r=await postJSON('/api/abdc/astar/classify',{});toast(r.message||'已启动')}
-async function enrich(){toast('Semantic Scholar 补全已启动（按批进行，约 1-2 分钟）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
+async function enrich(){toast('Semantic Scholar 全量补全已启动（按批进行，只处理未查验队列）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
 async function saveArticle(id){const r=await postJSON('/api/abdc/astar/save',{article_id:id});toast(r.success?'已保存到阅读列表':'保存失败')}
 
 // ── 语义搜索 ──────────────────────────────────────────────────────────────
@@ -589,14 +643,14 @@ async function runSemantic(){
 function semanticCards(arts){
   return arts.map(a=>`<div class="card">
     <div class="card-top"><div style="flex:1">
-      <div class="card-title">${esc(a.title)}</div>
+      <div class="card-title">${articleTitleLink(a)}</div>
       <div><span class="card-journal">${esc(a.journal_title||'')}</span></div>
       <div class="card-meta">${esc(a.publication_date||'')}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
       <div class="card-authors">${esc((a.authors||[]).join(', '))}</div>
     </div><span class="relscore rel-high" title="语义相似度">${(a.similarity*100).toFixed(0)}</span></div>
     <div class="card-abstract">${esc(a.abstract||'')}${(a.abstract||'').length>=400?'…':''}</div>
     <div class="card-foot">
-      <a href="${a.doi?'https://doi.org/'+esc(a.doi):(a.url||'#')}" target="_blank">查看原文 ↗</a>
+      <a href="${esc(articleHref(a)||'#')}" target="_blank" rel="noopener noreferrer">查看原文 ↗</a>
       <a href="#" onclick="copyBibtex(${a.id},this);return false">BibTeX</a>
       <a href="#" onclick="findSimilar(${a.id});return false">🔗 找相似</a>
       <a href="#" onclick="saveArticle(${a.id});return false">保存</a>
@@ -660,6 +714,8 @@ window.addEventListener('scroll', ()=>{
   });
 }, {passive:true});
 
+const initialField = new URLSearchParams(window.location.search).get('field');
+if(initialField && NAV_FIELD_MAP[initialField]) STATE.relatedChip=NAV_FIELD_MAP[initialField];
 loadStatus();
 render();
 </script>
