@@ -218,6 +218,78 @@ class AffiliationDBTests(unittest.TestCase):
         self.assertEqual(1, len(rows))
         self.assertEqual('Real University', rows[0]['display_name'])
 
+    def test_rate_limited_batch_is_retried_after_backoff(self):
+        self.seed([('W1', 'one', 'AMJ', 2023)])
+        works = [work('W1', [authorship('X', 'A1', [institution('I1', 'U')])])]
+
+        class Limited(FakeSession):
+            def __init__(self, works, fail_times):
+                super().__init__(works)
+                self.fail_times = fail_times
+
+            def get(self, url, params=None, headers=None, timeout=None):
+                if self.fail_times > 0:
+                    self.fail_times -= 1
+                    return SimpleNamespace(status_code=429, headers={'Retry-After': '0'},
+                                           raise_for_status=lambda: None, json=lambda: {})
+                return super().get(url, params=params, headers=headers, timeout=timeout)
+
+        session = Limited(works, fail_times=2)
+        stats = backfill_affiliations(self.conn, limit=10, session=session, delay=0)
+        self.assertEqual(0, stats['errors'], "a 429 that later succeeds is not an error")
+        self.assertEqual(1, stats['recorded'])
+
+    def test_persistent_rate_limiting_stops_the_run_instead_of_burning_requests(self):
+        self.seed([(f'W{i}', f'title {i}', 'AMJ', 2024) for i in range(1, 400)])
+
+        class AlwaysLimited:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, *a, **k):
+                self.calls += 1
+                return SimpleNamespace(status_code=429, headers={'Retry-After': '0'},
+                                       raise_for_status=lambda: None, json=lambda: {})
+
+        session = AlwaysLimited()
+        stats = backfill_affiliations(self.conn, limit=400, session=session, delay=0)
+        self.assertTrue(stats['stopped_early'])
+        self.assertIsNotNone(stats['stop_reason'])
+        self.assertEqual(5, stats['errors'], "the circuit breaker opens after 5 failed batches")
+        # 8 batches of ids exist; without the breaker every one would be attempted.
+        self.assertLess(stats['errors'], 8)
+        pending = self.conn.execute(
+            "SELECT COUNT(*) FROM astar_articles WHERE affiliation_status IS NULL").fetchone()[0]
+        self.assertEqual(399, pending, "an aborted run leaves everything resumable")
+
+    def test_daily_budget_exhaustion_stops_immediately_without_retrying(self):
+        """A Retry-After of hours is the daily budget, not a burst to ride out."""
+        self.seed([(f'W{i}', f'title {i}', 'AMJ', 2024) for i in range(1, 300)])
+
+        class BudgetGone:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, *a, **k):
+                self.calls += 1
+                return SimpleNamespace(
+                    status_code=429,
+                    headers={'Retry-After': '60561', 'x-ratelimit-limit': '1000',
+                             'x-ratelimit-remaining': '0'},
+                    raise_for_status=lambda: None,
+                    json=lambda: {'message': 'Insufficient budget. Resets at midnight UTC'})
+
+        session = BudgetGone()
+        stats = backfill_affiliations(self.conn, limit=300, session=session, delay=0)
+        self.assertTrue(stats['stopped_early'])
+        self.assertIn('budget exhausted', stats['stop_reason'])
+        self.assertEqual(1, session.calls,
+                         "a spent daily budget must cost exactly one request, not a retry storm")
+        self.assertEqual(0, stats['errors'])
+        pending = self.conn.execute(
+            "SELECT COUNT(*) FROM astar_articles WHERE affiliation_status IS NULL").fetchone()[0]
+        self.assertEqual(299, pending)
+
     def test_coverage_reports_unchecked_rows_as_pending(self):
         self.seed([('W1', 'one', 'AMJ', 2023), ('W2', 'two', 'ASQ', 2023)])
         works = [work('W1', [authorship('X', 'A1', [institution('I1', 'U')])])]

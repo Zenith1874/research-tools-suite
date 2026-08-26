@@ -58,8 +58,10 @@ python scripts/backfill_astar_affiliations.py --coverage
 # A bounded batch.
 python scripts/backfill_astar_affiliations.py --limit 500
 
-# The full corpus; rerun until pending reaches zero.
-python scripts/backfill_astar_affiliations.py --limit 140000
+# One daily window's worth (~1,000 requests). Rerun after midnight UTC
+# until --coverage reports zero pending; the run stops itself when the
+# budget is gone.
+python scripts/backfill_astar_affiliations.py --limit 45000
 
 # Inspect what was recovered.
 python scripts/backfill_astar_affiliations.py --top 25 --since 2020
@@ -84,6 +86,46 @@ A consistent SQLite online backup was taken before the first write:
 `data/backups/astar_20260826_pre_affiliation/pboc_data.db` (1.04 GB, 136,318 articles).
 The migration is additive — one new table, two nullable columns, four indexes.
 
+### The binding constraint: OpenAlex is metered
+
+The full-corpus run stopped at **37.1% coverage**, and the reason is not this code.
+OpenAlex now meters by daily request budget:
+
+```
+x-ratelimit-limit: 1000          requests/day on the free tier
+x-ratelimit-remaining: 0
+Retry-After: 60561               resets at midnight UTC
+{"error":"Rate limit exceeded","message":"Insufficient budget. This request costs
+ $0.0001 but you only have $0 remaining. Resets at midnight UTC."}
+```
+
+The run completed 990 successful batches and then every one of the following 1,714
+batches was refused. That matches the 1,000/day limit exactly.
+
+Two consequences:
+
+1. **The remaining 85,691 pending articles need ~1,714 more requests**, which is two more
+   daily windows on the free tier, or about **$0.17** of prepaid budget in one run.
+2. **This budget is shared with the radar's own updates.** The daily incremental queries
+   one request per A* journal (219 journals), so an ordinary day sits well inside 1,000 —
+   but a backfill run can starve it. The 2026-08-26 backfill consumed the whole day's
+   budget, so that day's scheduled A* update would have been refused.
+
+The first version of this backfill handled the refusal badly: it logged each 429 and moved
+straight to the next batch at full speed, spending 1,714 requests on responses it could not
+use. Fixed in three parts:
+
+- A 429 carrying a `Retry-After` under 15 minutes is a burst limit: wait the stated
+  interval (the server's number, not our own exponential guess) and retry, up to 5 times.
+- A `Retry-After` above that threshold is the daily budget: **stop the run immediately**.
+  Sleeping until midnight UTC inside a run is not backoff. This now costs exactly one
+  request to discover, verified by test.
+- Five consecutive failed batches from any cause open a circuit breaker and end the run.
+
+An aborted run leaves every unprocessed row `pending`, so the next window resumes cleanly.
+
+### Live results
+
 First bounded live run, 500 articles in 10 requests, zero errors:
 
 | Outcome | Count |
@@ -98,10 +140,29 @@ First bounded live run, 500 articles in 10 requests, zero errors:
 687 distinct institutions from 500 articles is the shape to expect: the corpus is wide, so
 per-school counts only become meaningful once the backfill is complete.
 
-13 tests in `tests/test_astar_affiliations.py` cover parsing (ROR, ORCID, dual affiliation,
+State after the 2026-08-26 window closed:
+
+| | |
+|---|---:|
+| articles checked | 50,627 / 136,318 (**37.1%**) |
+| `recorded` | 45,425 |
+| `authors_no_institution` | 3,115 |
+| `no_authorships` | 1,422 |
+| `no_openalex_id` | 627 |
+| `not_found` | 38 |
+| **still `pending`** | **85,691** |
+| affiliation rows | 181,627 |
+| distinct institutions | 9,414 |
+
+Per-school counts must not be read yet. At 37% coverage the counts are a sample of the
+corpus with no reason to be uniform across schools or years, so a school's total today is a
+floor, not a measurement.
+
+16 tests in `tests/test_astar_affiliations.py` cover parsing (ROR, ORCID, dual affiliation,
 author with no institution), the status vocabulary, idempotent re-recording, resumability,
-the failed-batch and not-found paths, and that a profile counts **distinct articles** rather
-than authorship rows — two co-authors at one school is one article, not two.
+the failed-batch and not-found paths, rate-limit retry, circuit breaking, daily-budget abort,
+and that a profile counts **distinct articles** rather than authorship rows — two co-authors
+at one school is one article, not two.
 
 ## Reading the counts
 
@@ -110,6 +171,17 @@ depends on how much of the backfill has run, so it must be read alongside
 `affiliation_coverage`. A* journal coverage is also not the same as business-school
 research strength: the corpus is ABDC A* only, and a school's non-A* output is invisible to
 it by construction.
+
+## Next window
+
+```bash
+# After midnight UTC, until --coverage reports zero pending.
+python scripts/backfill_astar_affiliations.py --limit 45000
+python scripts/backfill_astar_affiliations.py --coverage
+```
+
+Two more windows finish the corpus. Run it when the day's scheduled A* update has already
+gone out, or the backfill will take the budget the radar needs.
 
 ## Not done yet
 
