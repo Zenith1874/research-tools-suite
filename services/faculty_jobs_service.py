@@ -1184,6 +1184,41 @@ def ensure_faculty_jobs_tables(db_path=None):
                     "not overwritten and derived values are marked in location_evidence."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=54").fetchone():
+            # Link schools to the A* corpus and reclassify. Best-effort: the A*
+            # database is a separate store and its absence must not block the
+            # faculty schema from initialising.
+            try:
+                from services.faculty_school_astar_evidence import (
+                    open_astar, refresh_astar_school_evidence)
+                astar_path = ROOT / "pboc_data.db"
+                if astar_path.exists():
+                    astar_conn = open_astar(str(astar_path))
+                    try:
+                        stats = refresh_astar_school_evidence(conn, astar_conn)
+                    finally:
+                        astar_conn.close()
+                    for row in conn.execute(
+                            "SELECT id FROM business_schools WHERE is_current=1").fetchall():
+                        refresh_school_classification(conn, row["id"])
+                    tiers = dict(conn.execute(
+                        "SELECT COALESCE(business_research_tier,'NULL'), COUNT(*) "
+                        "FROM business_schools GROUP BY 1").fetchall())
+                    note = (
+                        f"Linked {stats['institutions_linked']} institutions to the A* corpus "
+                        f"({stats['above_threshold']} above the publication-footprint threshold) "
+                        f"at {stats['coverage']['checked_pct']}% affiliation coverage, window "
+                        f"{stats['coverage']['window']}. Tiers now "
+                        f"T1={tiers.get('T1', 0)} T2={tiers.get('T2', 0)} T3={tiers.get('T3', 0)} "
+                        f"T4={tiers.get('T4', 0)} Unclassified={tiers.get('Unclassified', 0)}.")
+                else:
+                    note = "A* corpus not present; publication-footprint evidence not linked."
+            except Exception as exc:  # pragma: no cover - defensive
+                note = f"A* publication-footprint link skipped: {str(exc)[:200]}"
+                LOG.warning("astar school evidence link failed: %s", exc)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (54, now_utc(), note))
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:

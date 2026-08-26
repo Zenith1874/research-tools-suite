@@ -66,7 +66,8 @@ def classify_business_school(conn, school_id):
 
     verified = [item for item in evidence if _confidence(item.get("confidence")) > 0]
     types = {str(item.get("evidence_type") or "") for item in verified}
-    high_research = bool(types & {"UTD24_publication_footprint", "FT50_publication_footprint", "recognized_research_ranking"})
+    high_research = bool(types & {"UTD24_publication_footprint", "FT50_publication_footprint",
+                                  "recognized_research_ranking", "astar_publication_footprint"})
     phd = "business_phd_program" in types
     accreditation = bool(types & {"AACSB", "EQUIS", "AMBA"})
     research_network = bool(types & {"U15", "Russell_Group", "LERU", "German_U15", "Carnegie"})
@@ -74,6 +75,15 @@ def classify_business_school(conn, school_id):
         tier, score, confidence = "T1", 90, "High"
     elif phd and accreditation and research_network:
         tier, score, confidence = "T2", 75, "Medium"
+    elif high_research and accreditation:
+        # Added 2026-08-26. Without this the ladder is unusable: T3 and above
+        # all require business_phd_program evidence, which exists for 3 of 1,029
+        # schools and has no available source, so 920 accredited schools sat on
+        # T4 no matter how much they publish. A verified A* publication
+        # footprint plus accreditation is real research evidence and reaches T2;
+        # T1 still requires the full accreditation + PhD + research triple, so
+        # the top tier is not reachable on publication evidence alone.
+        tier, score, confidence = "T2", 70, "Medium"
     elif phd and accreditation:
         tier, score, confidence = "T3", 60, "Medium"
     elif accreditation:
@@ -82,6 +92,7 @@ def classify_business_school(conn, school_id):
         tier, score, confidence = "Unclassified", None, "Low"
     reasons = []
     if high_research: reasons.append("verified publication/ranking evidence")
+    if high_research and not phd: reasons.append("no business PhD evidence available for this school")
     if phd: reasons.append("verified business PhD evidence")
     if accreditation: reasons.append("verified accreditation evidence")
     if research_network: reasons.append("verified research-network or Carnegie evidence")

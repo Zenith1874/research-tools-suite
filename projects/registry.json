@@ -316,7 +316,9 @@
         "scripts/*faculty*job*.py",
         "tests/test_faculty_jobs*.py",
         "tests/fixtures/faculty_jobs/**",
-        "projects/academic_career/**"
+        "projects/academic_career/**",
+        "services/faculty_school_astar_evidence.py",
+        "tests/test_faculty_school_astar_evidence.py"
       ],
       "tracked_data": [
         "data/faculty_job_taxonomy.json",
