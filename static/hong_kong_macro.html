@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>香港宏观 · 研究工作台</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <style>
+    :root { --bg:#0b1020; --panel:#121a2e; --panel2:#17223a; --line:#2a3858; --ink:#e9efff; --muted:#93a3c4; --accent:#7dd3fc; --good:#5eead4; --warn:#fbbf24; --bad:#fb7185; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:linear-gradient(145deg,#0b1020 0%,#101b31 60%,#0c1425 100%); color:var(--ink); font:14px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+    .hk-wrap { max-width:1480px; margin:0 auto; padding:34px 28px 70px; }
+    .hk-hero { display:flex; justify-content:space-between; gap:24px; align-items:flex-end; border-bottom:1px solid var(--line); padding-bottom:24px; }
+    h1 { margin:0 0 7px; font-size:34px; letter-spacing:-.03em; }
+    h2 { margin:0; font-size:21px; }
+    h3 { margin:0 0 6px; font-size:16px; }
+    .eyebrow { color:var(--accent); font-size:12px; letter-spacing:.13em; text-transform:uppercase; }
+    .sub { color:var(--muted); max-width:900px; margin:0; }
+    .toolbar { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    button,.button { border:1px solid #3b5078; background:#1b2a48; color:var(--ink); border-radius:8px; padding:9px 13px; min-height:40px; cursor:pointer; text-decoration:none; font:inherit; }
+    button:hover,.button:hover { border-color:var(--accent); background:#203657; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .hk-controls { margin:20px 0; display:flex; gap:14px; align-items:center; flex-wrap:wrap; color:var(--muted); }
+    .hk-controls label { display:flex; align-items:center; gap:6px; }
+    input,select { background:#0e172a; color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:8px; min-height:40px; }
+    .tabs { display:flex; gap:8px; overflow:auto; border-bottom:1px solid var(--line); margin-bottom:22px; }
+    .tab { border:0; border-radius:8px 8px 0 0; background:transparent; color:var(--muted); white-space:nowrap; }
+    .tab.active { color:var(--ink); background:var(--panel2); border-bottom:2px solid var(--accent); }
+    .statusbar { margin:18px 0; padding:12px 14px; background:rgba(18,26,46,.78); border:1px solid var(--line); border-radius:9px; color:var(--muted); }
+    .statusbar.good { color:var(--good); } .statusbar.warn { color:var(--warn); } .statusbar.bad { color:var(--bad); }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:24px; }
+    .card,.chart-card,.source-panel,.linkage-panel { background:rgba(18,26,46,.9); border:1px solid var(--line); border-radius:11px; padding:15px; box-shadow:0 8px 30px rgba(0,0,0,.12); }
+    .card-label { color:var(--muted); font-size:12px; min-height:37px; } .card-value { font-size:23px; margin:4px 0; }
+    .card-meta,.caption { color:var(--muted); font-size:12px; }
+    .group { margin:28px 0 36px; } .group-head { display:flex; justify-content:space-between; gap:15px; align-items:end; margin-bottom:13px; }
+    .group-description { color:var(--muted); margin:4px 0 0; }
+    .charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:14px; }
+    .chart-card { min-width:0; } .chart-card p { color:var(--muted); margin:2px 0 8px; font-size:12px; }
+    svg.chart { width:100%; height:220px; display:block; overflow:visible; }
+    .chart-empty { height:220px; display:grid; place-items:center; color:var(--muted); border:1px dashed var(--line); border-radius:8px; }
+    .legend { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; font-size:12px; color:var(--muted); }
+    .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; }
+    .source-table { width:100%; border-collapse:collapse; font-size:12px; } .source-table th,.source-table td { padding:8px 7px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    .source-table th { color:var(--muted); font-weight:500; } .source-table a { color:var(--accent); }
+    .badge { display:inline-block; padding:2px 7px; border-radius:999px; font-size:11px; background:#334155; } .badge.success { color:var(--good); background:#123d3b; } .badge.failed,.badge.blocked { color:var(--bad); background:#4a1e2b; } .badge.partial,.badge.not_attempted { color:var(--warn); background:#473a16; }
+    .linkage-panel { margin-top:20px; } .linkage-controls { display:flex; gap:9px; flex-wrap:wrap; align-items:end; margin:14px 0; }
+    .linkage-controls label { display:grid; gap:4px; color:var(--muted); font-size:12px; } .linkage-result { overflow:auto; }
+    .lead-table { border-collapse:collapse; width:100%; font-size:12px; } .lead-table td,.lead-table th { padding:6px 8px; border-bottom:1px solid var(--line); text-align:right; } .lead-table th:first-child,.lead-table td:first-child { text-align:left; }
+    .dimension-panels { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:14px; margin:8px 0 28px; }
+    .data-panel { min-width:0; } .data-panel h2 { margin-top:0; } .data-panel .caption { min-height:34px; }
+    .table-scroll { max-width:100%; overflow:auto; }
+    .mini-table { border-collapse:collapse; width:100%; font-size:12px; } .mini-table th,.mini-table td { padding:6px 7px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    .mini-table th { color:var(--muted); font-weight:500; } .definition-warning { color:var(--warn); margin:8px 0; }
+    .trade-bars { display:grid; gap:7px; margin:12px 0; }
+    .trade-bar-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(100px,2fr) auto; gap:8px; align-items:center; font-size:12px; }
+    .trade-bar-track { height:9px; background:#0e172a; border-radius:999px; overflow:hidden; border:1px solid var(--line); }
+    .trade-bar-fill { height:100%; background:linear-gradient(90deg,#7dd3fc,#5eead4); }
+    .linkage-summary { display:flex; gap:10px; flex-wrap:wrap; margin:10px 0; } .linkage-summary span { padding:8px 10px; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:#0e172a; } .linkage-series { width:100%; height:220px; margin:8px 0 12px; } .linkage-series line,.linkage-series polyline { vector-effect:non-scaling-stroke; }
+    .global-filters { display:flex; gap:9px; flex-wrap:wrap; align-items:end; margin:18px 0 10px; padding:12px; background:rgba(18,26,46,.68); border:1px solid var(--line); border-radius:9px; }
+    .global-filters label { display:grid; gap:4px; color:var(--muted); font-size:12px; min-width:130px; }
+    .global-filters input,.global-filters select { width:100%; min-width:0; }
+    .meta-strip { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 18px; }
+    .meta-chip { padding:6px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); background:#0e172a; font-size:12px; }
+    .legend button { border:0; padding:0; background:transparent; color:var(--muted); font-size:12px; }
+    .legend button.off { opacity:.35; text-decoration:line-through; }
+    .chart-point { cursor:crosshair; }
+    button:focus-visible,.button:focus-visible,input:focus-visible,select:focus-visible,
+    .chart:focus-visible,.linkage-series:focus-visible,summary:focus-visible {
+      outline:3px solid var(--accent); outline-offset:3px;
+    }
+    .chart-source { margin-top:8px; color:var(--muted); font-size:12px; }
+    .chart-source a { color:var(--accent); }
+    pre.debug { white-space:pre-wrap; max-height:430px; overflow:auto; background:#080d18; padding:14px; border-radius:8px; color:#cbd5e1; }
+    .hidden { display:none !important; }
+    @media (max-width:740px) { .hk-wrap { padding:24px 14px 50px; overflow-x:hidden; } .hk-hero { display:block; } .toolbar { justify-content:flex-start; margin-top:15px; } .charts,.dimension-panels { grid-template-columns:minmax(0,1fr); } .linkage-controls { min-width:0; } .linkage-controls label { min-width:0; max-width:100%; flex:1 1 100%; } .linkage-controls label select { width:100%; min-width:0; max-width:100%; } button,.button,input,select { min-height:44px; } .trade-bar-row { grid-template-columns:minmax(0,1fr); } }
+  </style>
+</head>
+<body>
+  <main class="hk-wrap">
+    <header class="hk-hero">
+      <div><div class="eyebrow">Independent Hong Kong macro</div><h1>香港宏观</h1><p class="sub">住房、经济、再出口贸易、储备金融，以及与中国大陆序列的描述性月份联动。香港保持独立 jurisdiction，不并入中国城市经济模块。</p></div>
+      <div class="toolbar"><button id="update">更新官方源</button><button id="debug">调试状态</button><a id="csv-link" class="button" href="/api/hong-kong-macro/export.csv">下载当前筛选 CSV</a><a class="button" href="/api/hong-kong-macro/trade-dimensions.csv">下载贸易维度 CSV</a></div>
+    </header>
+    <div class="hk-controls"><label><input id="full-history" type="checkbox"> 全历史（源站允许时）</label><label>更新起始年 <input id="start-year" type="number" min="2000" max="2100" placeholder="可选"></label><span>写入操作仍受本机/管理令牌权限控制。</span></div>
+    <div class="global-filters" aria-label="香港宏观全局筛选"><label>起始期<input id="filter-start" type="text" inputmode="numeric" placeholder="如 2020-01"></label><label>结束期<input id="filter-end" type="text" inputmode="numeric" placeholder="如 2026-06"></label><label>频率<select id="filter-frequency"><option value="">全部频率</option><option value="monthly">月度</option><option value="quarterly">季度</option><option value="semiannual">半年</option><option value="annual">年度</option></select></label><label>变换<select id="filter-transform"><option value="level">原始/level</option><option value="difference">绝对差（原单位）</option><option value="mom">月环比（%）</option><option value="qoq">季环比（%）</option><option value="yoy">同比（%）</option><option value="rolling_12m">滚动窗口</option><option value="index100">指数化 100</option></select></label><label>指数基期（可选）<input id="filter-base-period" type="text" inputmode="numeric" placeholder="如 2020-01"></label><label>指标（可选）<input id="filter-indicator" type="text" placeholder="如 HK_RVD_PRICE_INDEX"></label><label>来源（可选）<input id="filter-source" type="text" placeholder="source_id"></label><button id="apply-filters">应用筛选</button><button id="reset-filters">重置</button></div>
+    <div id="meta-strip" class="meta-strip" aria-live="polite"></div>
+    <div id="status" class="statusbar">正在读取香港宏观数据…</div>
+    <nav class="tabs" aria-label="香港宏观分区"><button class="tab active" data-tab="overview">总览</button><button class="tab" data-tab="housing">住房</button><button class="tab" data-tab="economy">经济</button><button class="tab" data-tab="re_export">再出口贸易</button><button class="tab" data-tab="reserves_finance">储备与金融</button><button class="tab" data-tab="china_linkage">中国联动</button></nav>
+    <section id="cards" class="cards"></section>
+    <section id="groups"></section>
+    <section id="dimension-panels" class="dimension-panels"></section>
+    <section id="linkage" class="linkage-panel hidden"><h2>香港—中国联动（描述性）</h2><p class="group-description">约定：<code>corr_at_lag(k)=corr(HK_t, Mainland_(t+k))</code>，所以 k&gt;0 表示香港领先大陆。样本不足 60 个月时不报相关系数；结果不作因果、不作预测，也不表示稳定规律。</p><div class="linkage-controls"><label>香港序列<select id="hk-indicator"></select></label><label>大陆序列<select id="cn-indicator"><option value="CN_FIRST_TIER_NEW_HOME_INDEX" selected>一线城市新建商品住宅指数（等权链式）</option><option value="CN_FIRST_TIER_SECOND_HOME_INDEX">一线城市二手住宅指数（等权链式）</option><option value="CN_NATIONAL_SALES_AREA_MONTHLY_DERIVED">全国新建商品房销售面积月度流量（由官方累计值差分）</option><option value="CN_NATIONAL_SALES_VALUE_MONTHLY_DERIVED">全国新建商品房销售额月度流量（由官方累计值差分）</option><option value="CN_NATIONAL_SALES_AREA_YTD_YOY">全国新建商品房销售面积累计同比（非月度流量）</option><option value="CN_NATIONAL_SALES_VALUE_YTD_YOY">全国新建商品房销售额累计同比（非月度流量）</option><option value="CN_CPI_YOY">中国 CPI 同比</option><option value="CN_PPI_YOY">中国 PPI 同比</option><option value="CN_GACC_EXPORT_CNY_MONTH_YOY">中国出口当月同比</option><option value="CN_SAFE_OFFICIAL_RESERVE_ASSETS_TOTAL_USD">中国 SAFE 官方储备资产合计</option></select></label><label>变换<select id="transform"><option value="yoy" selected>yoy (%)</option><option value="level">level</option><option value="difference">difference（原单位）</option><option value="mom">mom (%)</option></select></label><button id="run-linkage">计算 lead-lag</button><button id="save-linkage" disabled>保存当前结果（vintage）</button></div><p class="caption">国家统计局官方销售面积/销售额发布为累计数据。月度流量选项是项目内由同一年度相邻月份累计值差分得到的 derived 序列；缺少上月或 1—2 月合并发布时不拆分、不插值。累计同比选项仍不是单月成交流量。保存按钮只在本机显式点击后写入 lead-lag 结果表。</p><div id="linkage-meta" class="caption"></div><div id="linkage-result" class="linkage-result"></div><section aria-labelledby="saved-linkage-heading"><h3 id="saved-linkage-heading">已保存结果与复现性</h3><div id="saved-linkage" class="table-scroll"><p class="caption">切换到本分区后读取库存；不会写入生产数据库。</p></div></section></section>
+    <section class="source-panel"><h2>来源与完整性</h2><p class="group-description">每个来源分别记录定位、下载/解析、入库、API 返回状态。来源失败不清理旧观测；缺失保持缺失。</p><div id="sources"></div></section>
+    <pre id="debug-output" class="debug hidden"></pre>
+  </main>
+  <script src="/research-nav.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var palette = ['#7dd3fc','#5eead4','#fbbf24','#fb7185','#c4b5fd','#fb923c'];
+    var state = { payload:null, active:'overview', lastLinkage:null, lastLinkageRequest:null, savedLinkage:null, savedLinkageLoading:false, hiddenSeries:{}, tradeTopN:10 };
+    var $ = function (id) { return document.getElementById(id); };
+    function esc(value) { return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
+    function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN', {maximumFractionDigits:2}); }
+    function setStatus(text, kind) { $('status').textContent = text; $('status').className = 'statusbar ' + (kind || ''); }
+    function metric(code) { return (state.payload.metrics || {})[code] || {name:code,unit:''}; }
+    function sourceRecord(code) {
+      var id = metric(code).source_id;
+      return (state.payload.sources || []).find(function (item) { return item.source_id === id; }) || {};
+    }
+    function sampleRows(rows, limit) {
+      rows = rows || [];
+      if (rows.length <= limit) return rows;
+      var output = [], step = (rows.length - 1) / Math.max(1, limit - 1);
+      for (var i = 0; i < limit; i += 1) output.push(rows[Math.round(i * step)]);
+      return output;
+    }
+    function buildQuery() {
+      var q = new URLSearchParams();
+      ['start','end','frequency','transform','base-period','indicator','source'].forEach(function (key) {
+        var param = key === 'base-period' ? 'base_period' : key;
+        var el = $('filter-' + key); if (el && el.value) q.set(param, el.value);
+      });
+      if (state.active && state.active !== 'overview') q.set('group', state.active);
+      if (!$('filter-transform').value) q.set('transform', 'level');
+      // Keep the unfiltered browser landing view bounded. Explicit indicator,
+      // date, frequency, or source requests remain full API queries.
+      if (!q.has('indicator') && !q.has('start') && !q.has('end') && !q.has('frequency') && !q.has('source')) q.set('dashboard', '1');
+      return q;
+    }
+    function restoreUrl() {
+      var q = new URLSearchParams(window.location.search);
+      var mapping = {start:'filter-start', end:'filter-end', frequency:'filter-frequency', transform:'filter-transform', base_period:'filter-base-period', indicator:'filter-indicator', source:'filter-source'};
+      Object.keys(mapping).forEach(function (key) { if (q.has(key) && $(mapping[key])) $(mapping[key]).value = q.get(key); });
+      if (q.get('tab') && document.querySelector('.tab[data-tab="' + CSS.escape(q.get('tab')) + '"]')) {
+        state.active = q.get('tab');
+        document.querySelectorAll('.tab').forEach(function (tab) { tab.classList.toggle('active', tab.dataset.tab === state.active); });
+      }
+    }
+    function syncUrl() {
+      var q = buildQuery();
+      q.delete('dashboard');
+      if (state.active && state.active !== 'overview') q.set('tab', state.active);
+      else q.delete('tab');
+      history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q.toString() : ''));
+    }
+    function syncTransformOptions() {
+      var select = $('filter-transform'), p = state.payload;
+      if (!select || !p) return;
+      var code = $('filter-indicator').value.trim(), frequency = $('filter-frequency').value;
+      var transformByFrequency = {
+        monthly:['level','difference','mom','yoy','rolling_12m','index100'],
+        quarterly:['level','qoq','yoy','rolling_12m','index100'],
+        semiannual:['level','difference','yoy','index100'],
+        annual:['level','difference','yoy','index100']
+      };
+      var allowed = null;
+      if (code && p.metrics && p.metrics[code]) {
+        allowed = p.metrics[code].allowed_transforms || ['level'];
+      } else if (frequency) {
+        var matches = Object.keys(p.metrics || {}).filter(function (item) { return p.metrics[item].frequency === frequency; });
+        allowed = matches.length ? matches.map(function (item) { return p.metrics[item].allowed_transforms || ['level']; }).reduce(function (left, right) { return left.filter(function (item) { return right.indexOf(item) >= 0; }); }) : ['level'];
+      } else {
+        var frequencies = Array.from(new Set(Object.keys(p.metrics || {}).map(function (item) { return p.metrics[item].frequency; })));
+        allowed = frequencies.map(function (item) { return transformByFrequency[item] || ['level']; }).reduce(function (left, right) { return left.filter(function (item) { return right.indexOf(item) >= 0; }); }, ['level','difference','mom','qoq','yoy','rolling_12m','index100']);
+      }
+      Array.from(select.options).forEach(function (option) { option.hidden = allowed.indexOf(option.value) < 0; });
+      if (allowed.indexOf(select.value) < 0) select.value = 'level';
+    }
+    function updateCsvLink() { var q = buildQuery(); q.delete('dashboard'); $('csv-link').href = '/api/hong-kong-macro/export.csv?' + q.toString(); }
+    function groupVisible(group) { return state.active === 'overview' || state.active === group.code; }
+    function chartsForGroup(group) {
+      // Overview is a navigation surface, not a request to draw every chart
+      // in every section. Section tabs reload their complete group payload.
+      return state.active === 'overview' ? (group.charts || []).slice(0, 1) : (group.charts || []);
+    }
+    function drawChart(card, group) {
+      var series = card.series || [], all = [], byCode = {};
+      series.forEach(function (code) {
+        var sourceRows = (state.payload.series[code] || []).filter(function (row) { return row.value != null && !state.hiddenSeries[code]; });
+        sourceRows.forEach(function (row) { all.push(row); });
+        byCode[code] = sampleRows(sourceRows, 180);
+      });
+      if (!all.length) return '<div class="chart-card"><h3>' + esc(card.title) + '</h3><div class="chart-empty">尚无可绘制观测；请查看来源状态。</div></div>';
+      var min = Math.min.apply(null, all.map(function (x) { return Number(x.value); })), max = Math.max.apply(null, all.map(function (x) { return Number(x.value); }));
+      if (min === max) { min -= 1; max += 1; }
+      var periods = Array.from(new Set(all.map(function (x) { return x.period; }))).sort();
+      var latestSummary = series.map(function (code) { var rows = byCode[code] || [], last = rows[rows.length - 1]; return last ? (metric(code).name + ' ' + last.period + ' ' + fmt(last.value) + ' ' + (last.unit || metric(code).unit || '')) : ''; }).filter(Boolean).join('；');
+      var chartSummary = card.title + '；单位 ' + (card.unit || '见各系列') + '；范围 ' + periods[0] + ' 至 ' + periods[periods.length - 1] + '；最新值：' + latestSummary + '。数据点不逐个进入 Tab 顺序，完整数据可下载 CSV。';
+      var width = 700, height = 190, left = 48, right = 10, top = 10, bottom = 26;
+      function x(period) { return left + (periods.length === 1 ? 0 : (periods.indexOf(period) / (periods.length - 1)) * (width-left-right)); }
+      function y(value) { return top + (max - value) / (max-min) * (height-top-bottom); }
+      var svg = '<svg class="chart" tabindex="0" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc(chartSummary) + '"><line x1="' + left + '" y1="' + (height-bottom) + '" x2="' + (width-right) + '" y2="' + (height-bottom) + '" stroke="#2a3858"/><text x="4" y="14" fill="#93a3c4" font-size="11">' + esc(fmt(max)) + '</text><text x="4" y="' + (height-bottom) + '" fill="#93a3c4" font-size="11">' + esc(fmt(min)) + '</text>';
+      series.forEach(function (code, index) { var rows = byCode[code]; var points = rows.map(function (row) { return x(row.period).toFixed(2) + ',' + y(Number(row.value)).toFixed(2); }).join(' '); if (points) { svg += '<polyline fill="none" stroke="' + palette[index % palette.length] + '" stroke-width="2" points="' + points + '"><title>' + esc(metric(code).name || code) + '</title></polyline>'; rows.forEach(function (row) { var source = sourceRecord(code); var tooltip = (metric(code).name || code) + ' · period=' + row.period + (row.source_period_end ? ' · source_period_end=' + row.source_period_end : '') + ' · value=' + fmt(row.value) + ' · unit=' + (row.unit || metric(code).unit || '') + ' · status=' + (row.data_status || '—') + ' · source=' + (row.source_id || source.source_id || '—') + ' · release=' + (row.release_date || metric(code).latest_release_date || 'not_provided') + ' · retrieved=' + (row.retrieved_at || metric(code).retrieved_at || source.last_success_at || '—'); svg += '<circle class="chart-point" aria-hidden="true" cx="' + x(row.period).toFixed(2) + '" cy="' + y(Number(row.value)).toFixed(2) + '" r="3" fill="' + palette[index % palette.length] + '"><title>' + esc(tooltip) + '</title></circle>'; }); } });
+      if (periods.length) { svg += '<text x="' + left + '" y="' + (height-5) + '" fill="#93a3c4" font-size="10">' + esc(periods[0]) + '</text><text x="' + (width-right-45) + '" y="' + (height-5) + '" fill="#93a3c4" font-size="10">' + esc(periods[periods.length-1]) + '</text>'; }
+      svg += '</svg>';
+      var legend = series.map(function (code,index) { var visible = !state.hiddenSeries[code]; return '<button class="legend-toggle' + (visible ? '' : ' off') + '" data-code="' + esc(code) + '" aria-pressed="' + (visible ? 'true' : 'false') + '" aria-label="' + esc((visible ? '隐藏 ' : '显示 ') + (metric(code).name || code)) + '"><i style="background:' + palette[index % palette.length] + '"></i>' + esc(metric(code).name || code) + '</button>'; }).join('');
+      var sources = series.map(function (code) {
+        var m = metric(code), s = sourceRecord(code);
+        return '<div><strong>' + esc(m.name_zh || m.name || code) + '</strong> · ' + esc(code) +
+          '<br>机构：' + esc(m.source_name || s.institution || '—') +
+          ' · 频率：' + esc(m.frequency || '—') + ' · 单位：' + esc(m.unit || '—') +
+          ' · 状态：' + esc(m.latest_status || m.status || '—') +
+          '<br>覆盖：' + esc(m.first_period || '—') + '—' + esc(m.last_period || '—') +
+          ' · 观测发布日期：' + esc(m.latest_release_date || '未提供/未核实') +
+          ' · 来源页更新：' + esc(m.page_last_updated_date || '未提供') +
+          ' · 抓取：' + esc(m.retrieved_at || s.last_success_at || '—') +
+          (m.original_or_derived === 'derived' ? ' · 派生：' + esc(m.formula || '见公式') : '') +
+          (m.source_url ? ' · <a href="' + esc(m.source_url) + '" target="_blank" rel="noopener">官方入口</a>' : '') +
+          (s.raw_sha256 ? ' · hash：' + esc(String(s.raw_sha256).slice(0, 16)) + '…' : '') + '</div>';
+      }).join('<hr>');
+      return '<article class="chart-card"><h3>' + esc(card.title) + '</h3><p>' + esc(card.unit || '') + ' · ' + esc(group.description || '') + '</p>' + svg + '<div class="legend">' + legend + '</div><details class="chart-source"><summary>来源、频率与口径</summary>' + sources + '</details></article>';
+    }
+    function drawLinkageSeries(rows) {
+      if (!rows || !rows.length) return '<div class="chart-empty">没有足够的共同月份可标准化显示。</div>';
+      rows = sampleRows(rows, 180);
+      var width = 700, height = 190, left = 48, right = 10, top = 14, bottom = 26;
+      var min = Math.min.apply(null, rows.map(function (r) { return Math.min(Number(r.hk), Number(r.mainland)); }));
+      var max = Math.max.apply(null, rows.map(function (r) { return Math.max(Number(r.hk), Number(r.mainland)); }));
+      if (min === max) { min -= 1; max += 1; }
+      function x(i) { return left + (rows.length === 1 ? 0 : i / (rows.length - 1) * (width-left-right)); }
+      function y(v) { return top + (max-v) / (max-min) * (height-top-bottom); }
+      var hk = rows.map(function (r,i) { return x(i).toFixed(2) + ',' + y(Number(r.hk)).toFixed(2); }).join(' ');
+      var mainland = rows.map(function (r,i) { return x(i).toFixed(2) + ',' + y(Number(r.mainland)).toFixed(2); }).join(' ');
+      return '<svg class="linkage-series" tabindex="0" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="标准化香港与内地序列；范围 ' + esc(rows[0].period) + ' 至 ' + esc(rows[rows.length-1].period) + '；描述性比较，非因果、非预测"><line x1="' + left + '" y1="' + y(0) + '" x2="' + (width-right) + '" y2="' + y(0) + '" stroke="#2a3858"/><polyline fill="none" stroke="#7dd3fc" stroke-width="2" points="' + hk + '"/><polyline fill="none" stroke="#fbbf24" stroke-width="2" points="' + mainland + '"/><text x="' + left + '" y="' + (height-5) + '" fill="#93a3c4" font-size="10">' + esc(rows[0].period) + '</text><text x="' + (width-right-45) + '" y="' + (height-5) + '" fill="#93a3c4" font-size="10">' + esc(rows[rows.length-1].period) + '</text></svg><div class="legend"><span><i style="background:#7dd3fc"></i>香港（z-score）</span><span><i style="background:#fbbf24"></i>内地（z-score）</span></div>';
+    }
+    function drawCorrelationCurve(rows, title) {
+      var valid = sampleRows((rows || []).filter(function (r) { return r.corr != null; }), 121);
+      if (!valid.length) return '<div class="chart-empty">' + esc(title || '相关曲线') + '：没有达到样本门槛的点。</div>';
+      var width = 700, height = 190, left = 48, right = 10, top = 14, bottom = 28;
+      var min = -1, max = 1;
+      function x(v) { return left + ((Number(v) - Number(valid[0].lag_months)) / Math.max(1, Number(valid[valid.length-1].lag_months) - Number(valid[0].lag_months))) * (width-left-right); }
+      function y(v) { return top + (max - Number(v)) / (max-min) * (height-top-bottom); }
+      var points = valid.map(function (r) { return x(r.lag_months).toFixed(2) + ',' + y(r.corr).toFixed(2); }).join(' ');
+      var dots = valid.map(function (r) { return '<circle class="chart-point" aria-hidden="true" cx="' + x(r.lag_months).toFixed(2) + '" cy="' + y(r.corr).toFixed(2) + '" r="3" fill="#5eead4"><title>lag ' + esc(r.lag_months) + ' · corr ' + esc(Number(r.corr).toFixed(3)) + ' · n=' + esc(r.n_obs) + '</title></circle>'; }).join('');
+      return '<h3>' + esc(title || '相关曲线') + '</h3><svg class="linkage-series" tabindex="0" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + esc((title || '相关曲线') + '；lag ' + valid[0].lag_months + ' 至 ' + valid[valid.length-1].lag_months + '；共 ' + valid.length + ' 个达到样本门槛的点') + '"><line x1="' + left + '" y1="' + y(0) + '" x2="' + (width-right) + '" y2="' + y(0) + '" stroke="#2a3858"/><polyline fill="none" stroke="#5eead4" stroke-width="2" points="' + points + '"/>' + dots + '<text x="' + left + '" y="' + (height-6) + '" fill="#93a3c4" font-size="10">lag ' + esc(valid[0].lag_months) + '</text><text x="' + (width-right-55) + '" y="' + (height-6) + '" fill="#93a3c4" font-size="10">lag ' + esc(valid[valid.length-1].lag_months) + '</text></svg>';
+    }
+    function drawRollingBestLag(summary) {
+      var groups = {};
+      (summary || []).forEach(function (item) {
+        if (!item.best_absolute || item.best_absolute.lag_months == null) return;
+        (groups[item.window_months] = groups[item.window_months] || []).push(item);
+      });
+      var keys = Object.keys(groups).sort(function (a,b) { return Number(a) - Number(b); });
+      if (!keys.length) return '<div class="chart-empty">没有达到门槛的滚动窗口最佳 lag。</div>';
+      keys.forEach(function (key) { groups[key].sort(function (a,b) { return String(a.window_end).localeCompare(String(b.window_end)); }); });
+      var all = keys.reduce(function (out, key) { return out.concat(groups[key]); }, []);
+      var width = 700, height = 190, left = 48, right = 10, top = 14, bottom = 28;
+      var minLag = -24, maxLag = 24, n = Math.max.apply(null, keys.map(function (key) { return groups[key].length; }));
+      function x(i) { return left + (n === 1 ? 0 : i / (n - 1) * (width-left-right)); }
+      function y(v) { return top + (maxLag - Number(v)) / (maxLag-minLag) * (height-top-bottom); }
+      var colors = ['#7dd3fc','#fbbf24','#fb7185','#c4b5fd'];
+      var svg = '<h3>滚动窗口最佳 lag 稳定性</h3><svg class="linkage-series" tabindex="0" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="滚动窗口最佳 lag 稳定性；lag 范围负 24 至正 24；数据点不逐个进入 Tab 顺序"><line x1="' + left + '" y1="' + y(0) + '" x2="' + (width-right) + '" y2="' + y(0) + '" stroke="#93a3c4" stroke-dasharray="4 4"/><text x="4" y="' + (y(maxLag)+4) + '" fill="#93a3c4" font-size="10">+24</text><text x="4" y="' + (y(0)+4) + '" fill="#93a3c4" font-size="10">0</text><text x="4" y="' + (y(minLag)+4) + '" fill="#93a3c4" font-size="10">-24</text>';
+      keys.forEach(function (key, index) {
+        var rows = groups[key], points = rows.map(function (item, i) { return x(i).toFixed(2) + ',' + y(item.best_absolute.lag_months).toFixed(2); }).join(' ');
+        svg += '<polyline fill="none" stroke="' + colors[index % colors.length] + '" stroke-width="2" points="' + points + '"/>';
+        rows.forEach(function (item, i) { var best = item.best_absolute; var tooltip = key + 'm · ' + item.window_start + '—' + item.window_end + ' · lag=' + best.lag_months + ' · corr=' + Number(best.corr).toFixed(3) + ' · n=' + best.n_obs; svg += '<circle class="chart-point" aria-hidden="true" cx="' + x(i).toFixed(2) + '" cy="' + y(best.lag_months).toFixed(2) + '" r="3" fill="' + colors[index % colors.length] + '"><title>' + esc(tooltip) + '</title></circle>'; });
+      });
+      var last = all.sort(function (a,b) { return String(a.window_end).localeCompare(String(b.window_end)); }).slice(-1)[0];
+      svg += '<text x="' + left + '" y="' + (height-6) + '" fill="#93a3c4" font-size="10">' + esc(groups[keys[0]][0].window_start || '—') + '</text><text x="' + (width-right-60) + '" y="' + (height-6) + '" fill="#93a3c4" font-size="10">' + esc(last.window_end || '—') + '</text></svg><div class="legend">' + keys.map(function (key,index) { return '<span><i style="background:' + colors[index % colors.length] + '"></i>滚动 ' + esc(key) + ' 个月</span>'; }).join('') + '</div>';
+      return svg;
+    }
+    function renderTradeDimensions(p) {
+      var rows = p.trade_dimensions || [];
+      var summary = p.trade_dimension_summary || [];
+      var summaryHtml = summary.length ? '<div class="table-scroll"><table class="mini-table"><thead><tr><th>维度</th><th>观测</th><th>覆盖</th><th>最新期</th></tr></thead><tbody>' + summary.map(function (x) { return '<tr><td>' + esc(x.dimension_type) + '</td><td>' + esc(x.n_obs) + '</td><td>' + esc(x.n_dimensions) + ' 个</td><td>' + esc(x.end_period || '—') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="chart-empty">暂无维度观测；请查看 Trade-IDDS 来源状态。</div>';
+      if (!rows.length) return '<article class="card data-panel"><h2>Trade-IDDS 维度</h2><p class="caption">已配置中国大陆原产地、寄运地、出口目的地和 SITC2 商品请求；当前没有可展示观测。</p>' + summaryHtml + '</article>';
+      var latestByType = {};
+      rows.forEach(function (row) { latestByType[row.dimension_type] = !latestByType[row.dimension_type] || row.period > latestByType[row.dimension_type] ? row.period : latestByType[row.dimension_type]; });
+      var current = rows.filter(function (row) { return row.period === latestByType[row.dimension_type]; });
+      var latest = Array.from(new Set(Object.keys(latestByType).map(function (key) { return latestByType[key]; }))).sort().join(' / ');
+      var order = {origin:1, consignment:2, destination:3, origin_top:4, destination_top:5, commodity_sitc2:6};
+      var labels = {origin:'中国内地原产地', consignment:'中国内地寄运地', destination:'中国内地目的地', origin_top:'来源地 Top 10', destination_top:'出口目的地 Top 10', commodity_sitc2:'商品类别 Top 10'};
+      var byType = {};
+      current.forEach(function (row) { (byType[row.dimension_type] = byType[row.dimension_type] || []).push(row); });
+      var topN = Number(state.tradeTopN || 10);
+      var topRows = [];
+      Object.keys(order).sort(function (a,b) { return order[a] - order[b]; }).forEach(function (type) {
+        (byType[type] || []).sort(function (a,b) { return Number(b.value) - Number(a.value); }).slice(0, topN).forEach(function (row) { topRows.push(row); });
+      });
+      var body = topRows.map(function (row) { return '<tr><td>' + esc(labels[row.dimension_type] || row.dimension_type) + '</td><td>' + esc(row.dimension_label || row.dimension_code) + '</td><td>' + esc(fmt(row.value)) + '</td><td>' + esc(row.unit || '') + '</td></tr>'; }).join('');
+      var maxBar = Math.max.apply(null, topRows.map(function (row) { return Number(row.value) || 0; }).concat([1]));
+      var bars = topRows.filter(function (row) { return /_top$|commodity_sitc2/.test(row.dimension_type); }).map(function (row) {
+        var width = Math.max(2, Number(row.value) / maxBar * 100);
+        return '<div class="trade-bar-row"><span>' + esc(labels[row.dimension_type] || row.dimension_type) + '</span><span class="trade-bar-track"><span class="trade-bar-fill" style="width:' + width.toFixed(1) + '%"></span></span><span>' + esc(fmt(row.value)) + ' ' + esc(row.unit || '') + '</span></div>';
+      }).join('');
+      return '<article class="card data-panel"><h2>Trade-IDDS 维度</h2><p class="caption">最新参考期 ' + esc(latest) + '；中国内地原产地、寄运地、出口目的地与跨来源 Top N 分开；金额来自官方维度请求。</p><div class="global-filters"><label>Top N<select id="trade-top-n"><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></label><span class="caption">当前 Top ' + esc(topN) + '；完整历史通过独立端点/CSV 获取。</span></div><div class="trade-bars" aria-label="最新月份贸易维度 Top N 横向条形图">' + (bars || '<div class="chart-empty">暂无 Top N 观测。</div>') + '</div><div class="table-scroll"><table class="mini-table"><thead><tr><th>维度</th><th>代码 / 标签</th><th>货值</th><th>单位</th></tr></thead><tbody>' + body + '</tbody></table></div><details><summary>维度覆盖摘要</summary>' + summaryHtml + '</details></article>';
+    }
+    function renderCsdWebTables(p) {
+      var summary = p.csd_web_table_summary || [], catalog = p.csd_web_table_catalog || [];
+      var options = catalog.map(function (x) { return '<option value="' + esc(x.table_id) + '">' + esc(x.table_id + ' · ' + x.title) + '</option>'; }).join('');
+      var controls = '<div class="global-filters"><label>选择表<select id="csd-table-select">' + options + '</select></label><label>series_code<input id="csd-series-filter" type="text" placeholder="可选"></label><label>statistic<input id="csd-stat-filter" type="text" placeholder="level / yoy"></label><label>维度 key:value<input id="csd-dimension-filter" type="text" placeholder="如 OUTLET_TYPE:12"></label><label>起始期<input id="csd-start-filter" type="text" placeholder="如 2020-01"></label><label>结束期<input id="csd-end-filter" type="text" placeholder="如 2026-06"></label><label><input id="csd-latest-filter" type="checkbox"> 每系列最新</label><button id="load-csd-table">读取独立细表</button><a id="csd-csv-link" class="button" href="#">导出当前细表 CSV</a></div>';
+      if (!summary.length) return '<article class="card data-panel"><h2>CSD Web Table 细表</h2><p class="caption">已登记官方细表；当前没有可展示观测。失败/阻断状态保留在下方来源表。</p>' + controls + '<div id="csd-table-result" class="table-scroll"></div></article>';
+      var body = summary.map(function (x) { return '<tr><td>' + esc(x.table_id) + '</td><td>' + esc(x.n_series) + '</td><td>' + esc(x.n_obs) + '</td><td>' + esc(x.start_period + '—' + x.end_period) + '</td></tr>'; }).join('');
+      return '<article class="card data-panel"><h2>CSD Web Table 细表</h2><p class="caption">细表数据保留 series_code、原始 period、频率、统计量、单位和原始维度 JSON；不把季度/半年/年度值插值为月度。</p><div class="table-scroll"><table class="mini-table"><thead><tr><th>表号</th><th>系列</th><th>观测</th><th>覆盖</th></tr></thead><tbody>' + body + '</tbody></table></div>' + controls + '<div id="csd-table-result" class="table-scroll"></div></article>';
+    }
+    function bindCsdExplorer() {
+      var button = $('load-csd-table'); if (!button) return;
+      button.addEventListener('click', function () {
+        var table = $('csd-table-select').value, target = $('csd-table-result');
+        var params = new URLSearchParams({limit:'80'});
+        [['series_code','csd-series-filter'], ['statistic','csd-stat-filter'], ['dimensions','csd-dimension-filter'], ['start','csd-start-filter'], ['end','csd-end-filter']].forEach(function (pair) { if ($(pair[1]).value) params.set(pair[0], $(pair[1]).value); });
+        if ($('csd-latest-filter').checked) params.set('latest', '1');
+        $('csd-csv-link').href = '/api/hong-kong-macro/csd-web-table/' + encodeURIComponent(table) + '.csv?' + params.toString();
+        target.innerHTML = '<p class="caption">读取中…</p>';
+        fetch('/api/hong-kong-macro/csd-web-table/' + encodeURIComponent(table) + '?' + params.toString(), {cache:'no-store'}).then(function (r) { return r.json(); }).then(function (data) {
+          if (!data.success) throw new Error(data.error || '读取失败');
+          var rows = data.rows || [];
+          target.innerHTML = '<p class="caption">' + esc(data.table.title || table) + ' · 当前页 ' + esc(data.n_rows) + ' / 总计 ' + esc(data.total_rows) + ' · 半年/季度/年度均按官方频率保留。110-01003 是人口增长构成，不是人口存量。</p><table class="mini-table"><thead><tr><th>period</th><th>frequency</th><th>series / 构念</th><th>统计量</th><th>值</th><th>单位</th></tr></thead><tbody>' + rows.map(function (row) { return '<tr><td>' + esc(row.period) + '<br><small>' + esc(row.period_raw || '') + '</small></td><td>' + esc(row.frequency) + '</td><td>' + esc(row.series_label || row.series_code) + '<br><small>' + esc(row.construct_label || row.missing_reason || '构念未核实') + '</small></td><td>' + esc(row.statistic || '—') + '</td><td>' + esc(fmt(row.value)) + '</td><td>' + esc(row.unit || '') + '</td></tr>'; }).join('') + '</tbody></table>';
+        }).catch(function (e) { target.innerHTML = '<p class="definition-warning">细表读取失败：' + esc(e.message) + '</p>'; });
+      });
+    }
+    function renderSavedLinkageInventory(data) {
+      var target = $('saved-linkage'); if (!target) return;
+      var rows = data.snapshots || [];
+      var summary = '完整可复现快照 ' + (data.reproducible_snapshot_count || 0) + ' · legacy 不可复现结果组 ' + (data.legacy_result_group_count || 0) + ' · metadata incomplete ' + (data.metadata_incomplete_count || 0);
+      if (!rows.length) { target.innerHTML = '<p class="caption">' + esc(summary) + '；当前没有已保存结果。</p>'; return; }
+      target.innerHTML = '<p class="caption">' + esc(summary) + '。legacy 组保留历史结果，但缺少 input hash、来源 vintage 或计算版本，不能称为可复现 snapshot。</p><table class="mini-table"><thead><tr><th>snapshot / group</th><th>pair</th><th>计算时间</th><th>行</th><th>复现状态</th><th>详情</th></tr></thead><tbody>' + rows.map(function (row) { return '<tr><td>' + esc(row.snapshot_id || 'legacy') + '</td><td>' + esc(row.hk_indicator_code + ' / ' + row.mainland_indicator_code + ' / ' + row.transform) + '</td><td>' + esc(row.computed_at || '—') + '</td><td>' + esc(row.n_rows) + '</td><td><span class="badge ' + (row.reproducibility_status === 'reproducible_snapshot' ? 'success' : 'partial') + '">' + esc(row.reproducibility_status) + '</span><br><small>' + esc((row.missing_metadata_fields || []).join(', ')) + '</small></td><td><button class="saved-linkage-detail" data-snapshot="' + esc(row.snapshot_id) + '">查看</button></td></tr>'; }).join('') + '</tbody></table><div id="saved-linkage-detail-output"></div>';
+      document.querySelectorAll('.saved-linkage-detail').forEach(function (button) { button.addEventListener('click', function () { var output = $('saved-linkage-detail-output'); output.innerHTML = '<p class="caption">读取详情…</p>'; fetch('/api/hong-kong-macro/lead-lag/saved?snapshot_id=' + encodeURIComponent(button.dataset.snapshot), {cache:'no-store'}).then(function (r) { return r.json(); }).then(function (detail) { output.innerHTML = '<p class="caption">复现状态：' + esc(detail.reproducibility_status) + ' · metadata_complete=' + esc(detail.metadata_complete) + ' · 结果行 ' + esc(detail.n_rows) + '</p><pre class="debug">' + esc(JSON.stringify({metadata:detail.metadata, missing_metadata_fields:detail.missing_metadata_fields}, null, 2)) + '</pre>'; }).catch(function (e) { output.innerHTML = '<p class="definition-warning">详情读取失败：' + esc(e.message) + '</p>'; }); }); });
+    }
+    function loadSavedLinkageInventory(force) {
+      if (state.active !== 'china_linkage' || state.savedLinkageLoading) return;
+      if (state.savedLinkage && !force) { renderSavedLinkageInventory(state.savedLinkage); return; }
+      state.savedLinkageLoading = true;
+      fetch('/api/hong-kong-macro/lead-lag/saved?limit=20', {cache:'no-store'}).then(function (r) { return r.json(); }).then(function (data) { state.savedLinkage = data; renderSavedLinkageInventory(data); }).catch(function (e) { if ($('saved-linkage')) $('saved-linkage').innerHTML = '<p class="definition-warning">保存结果库存读取失败：' + esc(e.message) + '</p>'; }).finally(function () { state.savedLinkageLoading = false; });
+    }
+    function render() {
+      var p = state.payload; if (!p) return;
+      syncTransformOptions();
+      $('cards').innerHTML = (p.cards || []).filter(function (card) { return card.value != null; }).map(function (card) { var detail = '参考期 ' + (card.period || 'missing') + ' · ' + (card.unit || '') + ' · ' + (card.data_status || 'missing') + ' · source=' + (card.source_id || '—') + (card.source_period_end ? ' · 截至 ' + card.source_period_end : '') + (card.release_date ? ' · 观测发布日期 ' + card.release_date : (card.release_date_not_provided ? ' · 观测发布日期未提供' : '')) + (card.source_page_last_updated_date ? ' · 来源页更新 ' + card.source_page_last_updated_date : '') + (card.retrieved_at ? ' · 抓取 ' + card.retrieved_at : '') + (card.freshness ? ' · freshness=' + card.freshness : '') + (card.derived ? ' · derived' : ''); return '<article class="card"><div class="card-label">' + esc(card.label) + '</div><div class="card-value">' + esc(fmt(card.value)) + '</div><div class="card-meta">' + esc(detail) + '</div></article>'; }).join('');
+      $('groups').innerHTML = (p.groups || []).filter(groupVisible).filter(function (g) { return g.code !== 'china_linkage'; }).map(function (group) { return '<section class="group"><div class="group-head"><div><h2>' + esc(group.title) + '</h2><p class="group-description">' + esc(group.description || '') + '</p></div></div><div class="charts">' + chartsForGroup(group).map(function (chart) { return drawChart(chart, group); }).join('') + '</div></section>'; }).join('');
+      $('dimension-panels').innerHTML = renderTradeDimensions(p) + renderCsdWebTables(p);
+      var meta = p.meta || {}, freqLatest = meta.latest_reference_period_by_frequency || {};
+      var writable = meta.client_can_write !== false && meta.access_mode !== 'read_only';
+      $('meta-strip').innerHTML = '<span class="meta-chip">jurisdiction=HK · 中国的对外窗口</span><span class="meta-chip">状态：' + esc(meta.status || 'empty') + '</span><span class="meta-chip">访问：' + esc(meta.access_mode || 'unknown') + '</span><span class="meta-chip">来源：' + esc(meta.source_success_count || 0) + '/' + esc(meta.source_count || 0) + ' 成功</span><span class="meta-chip">最后成功：' + esc(meta.last_success_at || '—') + '</span><span class="meta-chip">有效指标：' + esc(meta.active_indicator_count || (p.coverage || []).length) + '</span><span class="meta-chip">数据库活动行：' + esc(meta.database_active_observation_count || 0) + '</span><span class="meta-chip">当前筛选：' + esc(meta.filtered_observation_count || 0) + ' · 当前绘图：' + esc(meta.plotted_observation_count || 0) + (meta.truncated ? ' · 每序列仅最新 ' + esc(meta.series_limit_per_indicator) + ' 条（已截断）' : ' · 未截断') + '</span><span class="meta-chip">月：' + esc(freqLatest.monthly || '—') + ' · 季：' + esc(freqLatest.quarterly || '—') + ' · 半年：' + esc(freqLatest.semiannual || '—') + ' · 年：' + esc(freqLatest.annual || '—') + '</span><span class="meta-chip">CSD 细表通过独立接口读取</span>';
+      $('update').disabled = !writable;
+      $('update').title = writable ? '' : '当前为只读访问';
+      document.querySelectorAll('.legend-toggle').forEach(function (button) { button.addEventListener('click', function () { var code = button.dataset.code; state.hiddenSeries[code] = !state.hiddenSeries[code]; render(); }); });
+      var tradeTop = $('trade-top-n');
+      if (tradeTop) { tradeTop.value = String(state.tradeTopN || 10); tradeTop.onchange = function () { state.tradeTopN = Number(tradeTop.value) || 10; render(); }; }
+      bindCsdExplorer();
+      $('dimension-panels').classList.toggle('hidden', !(state.active === 'overview' || state.active === 're_export' || state.active === 'economy'));
+      $('linkage').classList.toggle('hidden', state.active !== 'china_linkage');
+      $('sources').innerHTML = '<div style="overflow:auto"><table class="source-table"><thead><tr><th>机构 / 数据集</th><th>状态</th><th>最新参考期 / 新鲜度</th><th>发布元数据</th><th>记录</th><th>入口</th><th>错误</th></tr></thead><tbody>' + (p.sources || []).map(function (s) { return '<tr><td>' + esc(s.institution) + '<br>' + esc(s.dataset_name) + '</td><td><span class="badge ' + esc(s.status) + '">' + esc(s.status) + '</span></td><td>' + esc(s.latest_reference_period || '—') + '<br><span class="badge ' + esc(s.freshness || '') + '">' + esc(s.freshness || '—') + '</span></td><td>观测发布日期：' + esc(s.latest_release_date || s.release_metadata_status || 'missing') + '<br>来源页更新：' + esc(s.page_last_updated_date || 'not_provided') + '<br>发布滞后：' + esc(s.expected_release_lag_days == null ? (s.expected_release_lag_status || 'not_yet_verified') : s.expected_release_lag_days + ' 天') + '</td><td>' + esc(s.record_count == null ? '—' : s.record_count) + '</td><td>' + (s.entry_url ? '<a href="' + esc(s.entry_url) + '" target="_blank" rel="noopener">官方入口</a>' : '—') + '</td><td>' + esc(s.error_message || '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+      var hkOptions = Object.keys(p.metrics || {}).filter(function (code) { return p.metrics[code].frequency === 'monthly' && p.metrics[code].eligible_for_lead_lag && Number(p.metrics[code].n_obs || 0) >= 60 && code.indexOf('HK_RVD_PRIVATE_AVG_') !== 0; });
+      hkOptions.sort(function (a, b) { return (a === 'HK_RVD_PRICE_INDEX' ? -1 : 0) - (b === 'HK_RVD_PRICE_INDEX' ? -1 : 0); });
+      $('hk-indicator').innerHTML = hkOptions.map(function (code) { return '<option value="' + esc(code) + '">' + esc(p.metrics[code].name || code) + '</option>'; }).join('');
+      loadSavedLinkageInventory(false);
+    }
+    function linkageRequest() { return {hk_indicator:$('hk-indicator').value, mainland_indicator:$('cn-indicator').value, transform:$('transform').value, min_overlap:60}; }
+    function linkageRequestMatchesCurrent() {
+      var request = state.lastLinkageRequest, current = linkageRequest();
+      return !!request && ['hk_indicator','mainland_indicator','transform','min_overlap'].every(function (key) { return String(request[key]) === String(current[key]); });
+    }
+    function syncSaveButton() {
+      var writable = state.payload && state.payload.meta && state.payload.meta.access_mode !== 'read_only';
+      var button = $('save-linkage');
+      var nextDisabled = !(writable && state.lastLinkage && state.lastLinkage.success && linkageRequestMatchesCurrent());
+      if (button.disabled !== nextDisabled) button.disabled = nextDisabled;
+    }
+    function wrapDetailedLagTable() {
+      var result = $('linkage-result'); if (!result) return;
+      Array.prototype.slice.call(result.children).forEach(function (node) {
+        if (node.tagName !== 'H3' || node.textContent.indexOf('逐 lag') < 0) return;
+        var table = node.nextElementSibling;
+        if (!table || table.tagName !== 'TABLE') return;
+        var details = document.createElement('details'), summary = document.createElement('summary');
+        summary.textContent = '展开逐 lag 结果（' + table.querySelectorAll('tbody tr').length + ' 行）';
+        details.appendChild(summary); details.appendChild(node); details.appendChild(table); result.insertBefore(details, result.children[Array.prototype.indexOf.call(result.children, node)]);
+      });
+    }
+    function load() { syncUrl(); updateCsvLink(); state.lastLinkage = null; state.lastLinkageRequest = null; syncSaveButton(); setStatus('正在读取香港宏观数据…', 'warn'); fetch('/api/hong-kong-macro/data?' + buildQuery().toString(), {cache:'no-store'}).then(function (r) { return r.json().then(function (p) { if (!r.ok) throw new Error(p.error || 'API ' + r.status); return p; }); }).then(function (p) { state.payload = p; render(); var meta = p.meta || {}; var status = meta.status || 'empty'; var label = status === 'ok' ? '正常' : (status === 'partial' ? '部分可用' : (status === 'stale' ? '数据偏旧' : '无有效观测')); var failed = (meta.failed_sources || []).length; var suffix = failed ? ' · 受影响来源 ' + meta.failed_sources.join(', ') : ''; var plotted = ' · 筛选总计 ' + (meta.filtered_observation_count || 0) + ' 条 · 当前绘图 ' + (meta.plotted_observation_count || 0) + ' 条' + (meta.truncated ? '（每序列最新 ' + meta.series_limit_per_indicator + ' 条，已截断）' : '（未截断）'); setStatus('数据状态：' + label + ' · 生成于 ' + (p.generated_at || '—') + ' · 最新参考期 ' + (meta.latest_reference_period || '—') + plotted + suffix, status === 'ok' ? 'good' : (status === 'partial' || status === 'stale' ? 'warn' : 'bad')); }).catch(function (e) { setStatus('香港宏观 API 读取失败：' + e.message, 'bad'); }); }
+    document.querySelectorAll('.tab').forEach(function (tab) { tab.addEventListener('click', function () { document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); }); tab.classList.add('active'); state.active = tab.dataset.tab; load(); }); });
+    function pollUpdateJob() {
+      fetch('/api/jobs', {cache:'no-store'}).then(function (r) { return r.json(); }).then(function (data) {
+        var job = (data.jobs || {}).hong_kong_macro || {};
+        if (job.status === 'running') { setStatus('香港宏观更新仍在运行；逐源结果尚未完成。', 'warn'); setTimeout(pollUpdateJob, 1000); return; }
+        if (job.status === 'done') { setStatus('香港宏观更新已完成；正在重新读取页面。', 'good'); $('update').disabled = false; load(); return; }
+        if (job.status === 'error') { setStatus('香港宏观更新失败：' + (job.error || '见 /api/jobs'), 'bad'); $('update').disabled = false; return; }
+        setStatus('更新任务状态：' + (job.status || 'unknown'), 'warn'); $('update').disabled = false;
+      }).catch(function (e) { setStatus('更新状态读取失败：' + e.message, 'bad'); $('update').disabled = false; });
+    }
+    $('update').addEventListener('click', function () { var body = {full_history:$('full-history').checked}; if ($('start-year').value) body.start_year = Number($('start-year').value); $('update').disabled = true; setStatus('更新任务已提交；正在轮询逐源结果。', 'warn'); fetch('/api/hong-kong-macro/update', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then(function (r) { return r.json().then(function (result) { if (!r.ok) throw new Error(result.error || 'HTTP ' + r.status); return result; }); }).then(function (result) { if (result.status === 'started') { pollUpdateJob(); } else { setStatus('更新任务响应：' + (result.status || result.message || '未启动'), result.status === 'already_running' ? 'warn' : 'bad'); $('update').disabled = false; } }).catch(function (e) { setStatus('更新请求失败：' + e.message, 'bad'); $('update').disabled = false; }); });
+    $('debug').addEventListener('click', function () { fetch('/api/hong-kong-macro/debug', {cache:'no-store'}).then(function (r) { return r.json(); }).then(function (data) { $('debug-output').textContent = JSON.stringify(data, null, 2); $('debug-output').classList.toggle('hidden'); }); });
+    $('apply-filters').addEventListener('click', function () { load(); });
+    $('filter-indicator').addEventListener('input', syncTransformOptions);
+    $('filter-frequency').addEventListener('change', syncTransformOptions);
+    $('reset-filters').addEventListener('click', function () { ['filter-start','filter-end','filter-base-period','filter-indicator','filter-source'].forEach(function (id) { $(id).value = ''; }); $('filter-frequency').value = ''; $('filter-transform').value = 'level'; load(); });
+    $('run-linkage').addEventListener('click', function () { if (!state.payload) return; var params = new URLSearchParams({hk_indicator:$('hk-indicator').value, mainland_indicator:$('cn-indicator').value, transform:$('transform').value, min_overlap:'60'}); $('linkage-result').textContent = '计算中…'; fetch('/api/hong-kong-macro/lead-lag?' + params.toString(), {cache:'no-store'}).then(function (r) { return r.json().then(function (data) { if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status); return data; }); }).then(function (data) { state.lastLinkage = data; $('save-linkage').disabled = !data.success || state.payload.meta.access_mode === 'read_only'; if (!data.success) { $('linkage-meta').textContent = data.error || data.status || '结果不可用，未保存。'; $('linkage-result').innerHTML = '<div class="chart-empty">当前组合没有达到样本门槛或没有有效数据；请查看定义和来源状态。</div>'; return; } var absolute = data.best_absolute; var positive = data.best_positive; var lead = data.best_hong_kong_lead; var def = data.mainland_definition || {}; var summary = '<div class="linkage-summary"><span>最大绝对相关：' + esc(absolute ? ('lag ' + absolute.lag_months + ' · r=' + Number(absolute.corr).toFixed(3) + ' · n=' + absolute.n_obs) : '不足') + '</span><span>最大正相关：' + esc(positive ? ('lag ' + positive.lag_months + ' · r=' + Number(positive.corr).toFixed(3)) : '不足') + '</span><span>香港领先区间最大绝对相关：' + esc(lead ? ('lag ' + lead.lag_months + ' · r=' + Number(lead.corr).toFixed(3)) : '不足') + '</span></div>'; var rolling = (data.rolling_summary || []).map(function (item) { var best = item.best_absolute; return '<tr><td>' + esc(item.window_months + 'm') + '</td><td>' + esc(item.window_start + '—' + item.window_end) + '</td><td>' + esc(best ? best.lag_months : '—') + '</td><td>' + esc(best ? Number(best.corr).toFixed(3) : '—') + '</td><td>' + esc(best ? best.n_obs : '—') + '</td></tr>'; }).join(''); var rollingCurves = drawRollingBestLag(data.rolling_summary || []) + (data.rolling_windows || []).slice(0, 4).map(function (window) { return drawCorrelationCurve(window.results || [], '滚动 ' + window.window_months + ' 个月 · ' + window.window_start + '—' + window.window_end); }).join(''); $('linkage-meta').textContent = data.sign_convention + ' · ' + data.note + ' · HK n=' + data.hk_n_obs + ' / Mainland n=' + data.mainland_n_obs + ' · transforms: HK=' + data.hk_transform + ', Mainland=' + data.mainland_transform; $('linkage-result').innerHTML = '<p class="caption">' + esc(def.label || '') + '；' + esc((def.cities || []).join('、')) + '；' + esc(def.aggregation || '') + (def.warning ? '；<strong>' + esc(def.warning) + '</strong>' : '') + '</p>' + summary + drawLinkageSeries(data.comparison_series || []) + drawCorrelationCurve(data.results || [], '全样本 -24 至 +24 月相关曲线') + rollingCurves + '<h3>滚动窗口最佳绝对相关</h3><table class="lead-table"><thead><tr><th>窗口</th><th>区间</th><th>最佳 lag</th><th>corr</th><th>n</th></tr></thead><tbody>' + rolling + '</tbody></table><h3>逐 lag 结果</h3><table class="lead-table"><thead><tr><th>lag</th><th>corr</th><th>n</th><th>status</th></tr></thead><tbody>' + (data.results || []).map(function (row) { return '<tr><td>' + esc(row.lag_months) + '</td><td>' + esc(row.corr == null ? '—' : Number(row.corr).toFixed(3)) + '</td><td>' + esc(row.n_obs) + '</td><td>' + esc(row.status) + '</td></tr>'; }).join('') + '</tbody></table>'; }).catch(function (e) { $('linkage-result').textContent = '计算失败：' + e.message; }); });
+    $('save-linkage').addEventListener('click', function () { if (!state.lastLinkage || !state.lastLinkage.success || !state.payload || state.payload.meta.access_mode === 'read_only') return; var button = $('save-linkage'); button.disabled = true; button.textContent = '保存中…'; fetch('/api/hong-kong-macro/lead-lag/save', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({hk_indicator:$('hk-indicator').value, mainland_indicator:$('cn-indicator').value, transform:$('transform').value, min_overlap:60})}).then(function (r) { return r.json().then(function (data) { if (!r.ok || !data.success) throw new Error('HTTP ' + r.status + ' · ' + (data.error || '保存失败')); return data; }); }).then(function (data) { $('linkage-meta').textContent += ' · 已保存 snapshot=' + data.snapshot_id; state.savedLinkage = null; loadSavedLinkageInventory(true); }).catch(function (e) { $('linkage-meta').textContent += ' · 保存失败：' + e.message; }).finally(function () { button.disabled = false; button.textContent = '保存当前结果（vintage）'; }); });
+    $('run-linkage').addEventListener('click', function () { state.lastLinkageRequest = linkageRequest(); syncSaveButton(); });
+    ['hk-indicator','cn-indicator','transform'].forEach(function (id) { $(id).addEventListener('change', syncSaveButton); });
+    new MutationObserver(syncSaveButton).observe($('save-linkage'), {attributes:true, attributeFilter:['disabled']});
+    new MutationObserver(wrapDetailedLagTable).observe($('linkage-result'), {childList:true});
+    restoreUrl();
+    // Let the document reach DOMContentLoaded before the first API response
+    // and SVG render; browser navigation must not be held by dashboard paint.
+    window.addEventListener('load', function () { setTimeout(load, 0); }, {once:true});
+  }());
+  </script>
+</body>
+</html>

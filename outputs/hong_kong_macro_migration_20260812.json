@@ -1,0 +1,178 @@
+{
+  "after": {
+    "active_csd": 85449,
+    "active_hk": 26903,
+    "quick_check": "ok",
+    "superseded_csd": 175055,
+    "superseded_hk": 1277,
+    "user_version": 6
+  },
+  "before": {
+    "active_csd": 85449,
+    "active_hk": 26903,
+    "superseded_csd": 175055,
+    "superseded_hk": 1277
+  },
+  "csd": [
+    {
+      "observations_parsed": 416,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_110-01003_20260812T024534937009.json",
+      "records_written": 416,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "110-01003"
+    },
+    {
+      "observations_parsed": 3275,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_310-31002_20260812T024511390964.json",
+      "records_written": 3275,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "310-31002"
+    },
+    {
+      "observations_parsed": 3275,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_310-31003_20260812T024513886409.json",
+      "records_written": 3275,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "310-31003"
+    },
+    {
+      "observations_parsed": 1680,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_310-31007_20260812T024515761569.json",
+      "records_written": 1680,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "310-31007"
+    },
+    {
+      "observations_parsed": 3930,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_310-33041_20260812T024517853078.json",
+      "records_written": 3930,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "310-33041"
+    },
+    {
+      "observations_parsed": 2870,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_310-33042_20260812T024520056408.json",
+      "records_written": 2870,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "310-33042"
+    },
+    {
+      "observations_parsed": 1965,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_315-37001_20260812T024536732028.json",
+      "records_written": 1965,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "315-37001"
+    },
+    {
+      "observations_parsed": 7989,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_315-37003_20260812T024538644338.json",
+      "records_written": 7989,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "315-37003"
+    },
+    {
+      "observations_parsed": 9703,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_315-37004_20260812T024541432550.json",
+      "records_written": 9703,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "315-37004"
+    },
+    {
+      "observations_parsed": 4390,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_315-37021_20260812T024544116117.json",
+      "records_written": 4390,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "315-37021"
+    },
+    {
+      "observations_parsed": 5389,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_315-37031_20260812T024546319186.json",
+      "records_written": 5389,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "315-37031"
+    },
+    {
+      "observations_parsed": 1384,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_620-67001_20260812T024521673001.json",
+      "records_written": 1384,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "620-67001"
+    },
+    {
+      "observations_parsed": 20825,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_620-67002_20260812T024524829980.json",
+      "records_written": 20825,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "620-67002"
+    },
+    {
+      "observations_parsed": 13775,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_620-67003_20260812T024528266082.json",
+      "records_written": 13775,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "620-67003"
+    },
+    {
+      "observations_parsed": 1034,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_620-67021_20260812T024530200749.json",
+      "records_written": 1034,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "620-67021"
+    },
+    {
+      "observations_parsed": 3492,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_650-80001_20260812T024532275455.json",
+      "records_written": 3492,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "650-80001"
+    },
+    {
+      "observations_parsed": 57,
+      "raw_path": "data/hong_kong_macro_raw/HK_CSD_WEB_650-80005_20260812T024533331141.json",
+      "records_written": 57,
+      "status": "success",
+      "superseded": 0,
+      "table_id": "650-80005"
+    }
+  ],
+  "hkma": {
+    "canonical_rows_written": 0,
+    "excluded_without_canonical_period": 0,
+    "legacy_rows_superseded": 0,
+    "rows_examined": 26
+  },
+  "rvd": {
+    "active_rows_before": 205,
+    "raw_path": "data/hong_kong_macro_raw/HK_RVD_PRIVATE_STOCK_FLOW_20260812T022735353679.xls",
+    "raw_sha256": "9bc21fbc2ea15222738aeb87aeff156dd824dcc3ab210dd731f634bba71305da",
+    "rows_parsed": 206,
+    "rows_written": 206,
+    "source_id": "HK_RVD_PRIVATE_STOCK_FLOW",
+    "status": "success"
+  },
+  "safe": {
+    "page_last_updated_by_year": {
+      "2026": "2026-08-07"
+    },
+    "rows_changed": 0,
+    "rows_examined": 961,
+    "values_unchanged": true
+  },
+  "success": true
+}
