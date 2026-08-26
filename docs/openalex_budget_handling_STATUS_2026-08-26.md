@@ -87,6 +87,17 @@ run costs about $0.27 at $0.0001/request.
 
 Full suite: 869 tests, all passing. `scripts/audit_projects.py`: 6 projects, 0 errors.
 
+## Self-healing backfill
+
+The affiliation backfill now runs as a bounded step in `astar_scheduler_thread`, placed
+**after** the radar update so the radar gets the budget it needs first. It consumes only
+what is left, stops itself when the budget is gone, and leaves the remainder `pending` for
+the next day. The corpus therefore completes over the next few days without a manual run.
+
+`AFFIL_AUTO=0` disables it; `AFFIL_AUTO_LIMIT` bounds one pass (default 40000, still capped
+by the day's real budget). This follows the existing `LLM_AUTO` / `EMB_AUTO` pattern: an
+optional step, wrapped so a failure is logged and never breaks the radar update.
+
 ## Not done
 
 `fetch_crossref` has no equivalent rate-limit handling. Crossref is not metered the same way

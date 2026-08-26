@@ -3505,6 +3505,28 @@ def astar_scheduler_thread(interval_hours=24):
                         log.info(f"A* 自动 LLM 精修：处理 {lr.get('processed', lr)}")
                 except Exception as le:
                     log.warning(f'A* 自动 LLM 精修失败(忽略): {le}')
+            # 机构层增量回填。放在雷达抓取之后，用当日 OpenAlex 预算的剩余部分：
+            # 预算是一个池子，先保证雷达拿到它需要的 ~219 次请求。预算耗尽时
+            # backfill_affiliations 自己停下并把剩余行留作 pending，第二天续跑，
+            # 存量语料因此会在几天内自行补完。AFFIL_AUTO=0 关闭。
+            if os.environ.get('AFFIL_AUTO', '1') != '0':
+                try:
+                    from services.astar_affiliation_service import (
+                        affiliation_coverage, backfill_affiliations)
+                    aconn = sqlite3.connect(DB_PATH, timeout=60)
+                    aconn.row_factory = sqlite3.Row
+                    try:
+                        ar = backfill_affiliations(
+                            aconn, limit=int(os.environ.get('AFFIL_AUTO_LIMIT', 40000)))
+                        cov = affiliation_coverage(aconn)
+                    finally:
+                        aconn.close()
+                    log.info("A* 机构回填：新增 %s 篇/%s 行，覆盖 %s%%%s",
+                             ar.get('recorded'), ar.get('affiliation_rows'),
+                             cov.get('checked_pct'),
+                             f"（{ar['stop_reason']}）" if ar.get('stopped_early') else '')
+                except Exception as ae:
+                    log.warning(f'A* 机构回填失败(忽略): {ae}')
             # 语义向量增量(新文章编码追加，几百篇/天秒级)。EMB_AUTO=0 关闭。
             if os.environ.get('EMB_AUTO', '1') != '0':
                 try:
