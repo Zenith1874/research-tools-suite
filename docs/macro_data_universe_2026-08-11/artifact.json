@@ -1,0 +1,929 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "中美宏观数据宇宙：下一批该做什么",
+    "description": "基于现有项目覆盖与中美官方数据能力，提出从指标库升级为传导链、脉搏层和结构层的可执行路线图。",
+    "generatedAt": "2026-08-11T21:35:00-06:00",
+    "blocks": [
+      {
+        "id": "report_title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# 中美宏观数据宇宙：下一批该做什么"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Executive Summary\n\n- **下一步不该继续平铺指标，而要补齐传导链。** 现有项目已经覆盖中国总量、金融、财政、住房、区域，以及美国劳动力、通胀、增长、财政、利率和市场；新增数据应优先回答‘为什么变化’。\n- **建议建立一个版本底座，再优先设计五个专题：** 居民现金流、订单—库存—利润—投资、信用传导、住房全链条、外部压力。它们既能分别服务中国和美国，又能形成真正有解释力的对标。\n- **高频层随后补电力、能源、物流和经营预期；结构层再补人口、人力资本、创新/AI 与气候资源。** 协调数据库只作为跨国覆盖层，不替代两国本国官方观测。\n- **最适合先落地的是‘居民现金流’。** 它能把收入、消费、储蓄、信贷与住房负担串起来，界面直观，官方来源相对清楚，也能自然接到后续信用与住房模块。"
+      },
+      {
+        "id": "design_principle",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "current_coverage",
+        "body": "## 从‘指标目录’升级成‘宏观传导地图’\n\n现有基础最强的是总量观察，但研究和决策真正需要的是机制链：**收入如何进入消费，订单如何变成库存与投资，金融条件如何传到实体部门，住房如何连接居民、企业与财政，外部需求和资本流动如何回到国内周期。**\n\n因此建议把产品结构改成四层：\n\n1. **共同传导主干：** 居民、企业、信用、住房、财政、外部部门；\n2. **高频脉搏层：** 电力、能源、物流、经营条件与预期；\n3. **长期结构层：** 人口、人力资本、技术/AI、资源与气候；\n4. **协调口径覆盖层：** OECD、IMF、BIS、World Bank，仅用于共同尺度和稳健性检查。"
+      },
+      {
+        "id": "priority_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 规划优先级集中在版本底座和五条传导链\n\n下面的分数是五项 1–5 分规划判断之和：研究价值、对现有缺口的补充度、中美对标价值、官方来源可得性、近期交付可行性。**它只是排 backlog 的辅助工具，不是经济重要性测量，也不是预测。**"
+      },
+      {
+        "id": "priority_chart_block",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "priority_chart"
+      },
+      {
+        "id": "first_wave_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 第一波设计：一个底座加五个专题\n\n这六项不必一次全部开发。建议先冻结版本与发布规则，再把‘居民现金流’做成最小可用专题；其余四项沿同一元数据和比较注册表逐步接入。"
+      },
+      {
+        "id": "first_wave_table_block",
+        "type": "table",
+        "layout": "full",
+        "tableId": "first_wave_table"
+      },
+      {
+        "id": "pulse_and_structure",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 第二层做‘经济脉搏’，第三层做结构变化\n\n**脉搏层**可以用中国全社会用电、港口集装箱、货运与客运、央行企业/银行/储户调查，以及美国 EIA 能源、电力、BTS 货运、Census BTOS 和银行信贷条件，帮助判断转折是否正在发生。高频信号应标明噪声、修订和季节性，不能把单月或双周波动当 GDP 替代品。\n\n**结构层**适合承接人口老龄化、迁移、教育、人力资本、研发、专利、机器人、软件与数字经济、企业 AI 使用、能源转型和气候风险。AI 使用数据应作为技术扩散和组织情境，不直接等同于企业采用成效。"
+      },
+      {
+        "id": "universe_table_block",
+        "type": "table",
+        "layout": "full",
+        "tableId": "universe_table"
+      },
+      {
+        "id": "derived_products",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 数据最终要长成专题产品，而不是一个黑箱总分\n\n可以逐步生成十类透明产品：**需求脉搏、库存周期、劳动—收入—消费三角、工资—价格—生产率三角、信用脉冲、住房脉冲、财政脉冲、外部压力、供应链热度、创新扩散。**\n\n每个产品都应展示组成指标、变换方式、最新观测期、发布日、版本和缺失状态。可以做综合视图，但不建议生成一个不透明的‘中国宏观分’或‘美国宏观分’。"
+      },
+      {
+        "id": "comparison_modes",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 中美对标保留三种模式，再增加一类联动关系\n\n1. **aligned：** 概念、频率、季调和单位处理后可直接比较；\n2. **normalized：** 转为指数=100、占 GDP 比重、人均值、同比或 z-score 后比较周期位置；\n3. **parallel_only：** 制度边界不同，只做并列解释，不输出高低排名；\n4. **linked：** 不比较同名指标，而研究两国之间的贸易、资本、汇率、供应链和需求传导。\n\n第四类尤其适合海关伙伴—商品矩阵、美国贸易与国际收支、人民币/美元压力、行业出口暴露等问题；它能避免把中美做成两块互不相干的仪表盘。"
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Recommended next steps\n\n1. **先建共同底座：** `reference_period`、`release_date`、`vintage`、`is_revision`、`expected_release_date`、`seasonal_basis`、`authority_tier`、`stale_reason`。\n2. **把居民现金流做成第一个专题原型：** 先设计 12–20 个核心概念，不追求一次收齐所有细分。\n3. **同步建立指标对注册表：** 每一对记录 `pairing_mode`、变换、单位、频率、制度 caveat 和主来源。\n4. **第二个专题接订单—库存—利润—投资：** 它最能补足现有总量指标对企业周期解释不足的问题。\n5. **随后接信用、住房、外部部门；最后再做高频 nowcast 或综合指数。** 在版本底座完成前，不启动黑箱预测。"
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Further questions\n\n1. 第一个专题更想服务**日常宏观判断**，还是服务**论文中的机制与事件窗口**？前者重更新频率，后者更重版本与首次发布值。\n2. 居民现金流第一版要不要下沉到**中国城乡/省级与美国州级**，还是先做全国层？\n3. 外部部门要不要把**中美双边贸易伙伴—商品网络**作为独立页面，而不是塞进综合宏观页？\n4. AI/数字化数据是作为长期结构专题，还是直接接到当前 AI 组织研究的事件背景层？"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Caveats and assumptions\n\n- 本报告是 2026 年 8 月 11 日的项目审计与官方来源可行性地图；没有执行新增下载，也没有写入数据库。\n- 优先级分数是显式规划判断，不是统计估计、因果结论或预测；换一个研究问题，排序可以改变。\n- 两国发布频率、季调方法、部门边界、统计制度和修订政策不同；同名不等于同概念。省与州、财政层级、住房土地制度尤其不能做伪对称。\n- 中国部分官方网页/API 可能出现访问限制；应使用可访问的官方发布、表格或镜像并保留来源和缺失状态，不能绕过验证或用搜索摘要代替数据。\n- 高频电力、货运、调查和网络指标噪声较大；任何情景外推都必须与历史观测、输入假设和正式预测明确分开。"
+      }
+    ],
+    "charts": [
+      {
+        "id": "priority_chart",
+        "title": "宏观数据专题规划评分",
+        "subtitle": "五项 1–5 分规划判断之和，满分 25；用于排期，不代表经济重要性。",
+        "intent": "ranking",
+        "question": "哪些数据专题同时具有较高研究价值、缺口补充度、对标价值、官方可得性和近期可交付性？",
+        "rationale": "排序水平条形图适合比较长标签的多项规划总分，并保留五个维度供审计。",
+        "type": "horizontalBar",
+        "dataset": "priority_scores",
+        "sourceId": "priority_synthesis",
+        "encodings": {
+          "x": {
+            "field": "domain",
+            "type": "nominal",
+            "label": "专题"
+          },
+          "y": {
+            "field": "total_score",
+            "type": "quantitative",
+            "label": "规划总分",
+            "unit": "分"
+          },
+          "tooltip": [
+            {
+              "field": "stage",
+              "type": "nominal",
+              "label": "建议阶段"
+            },
+            {
+              "field": "research_value",
+              "type": "quantitative",
+              "label": "研究价值"
+            },
+            {
+              "field": "gap_fit",
+              "type": "quantitative",
+              "label": "缺口补充度"
+            },
+            {
+              "field": "cross_country_value",
+              "type": "quantitative",
+              "label": "中美对标价值"
+            },
+            {
+              "field": "official_access",
+              "type": "quantitative",
+              "label": "官方来源可得性"
+            },
+            {
+              "field": "near_term_delivery",
+              "type": "quantitative",
+              "label": "近期交付可行性"
+            }
+          ]
+        },
+        "valueFormat": "number",
+        "unit": "分",
+        "labels": {
+          "values": "all"
+        },
+        "palette": {
+          "kind": "sequential",
+          "name": "blue"
+        },
+        "settings": {
+          "orientation": "horizontal",
+          "showValues": true,
+          "sort": "descending"
+        },
+        "maxRows": 20,
+        "comparisonContext": {
+          "denominator": "五项规划维度，每项 1–5 分，合计满分 25",
+          "grain": "专题",
+          "unit": "分"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "first_wave_table",
+        "title": "第一波专题蓝图",
+        "subtitle": "每一项同时写清中国增量、美国增量和正确的比较方式。",
+        "dataset": "first_wave_blueprint",
+        "sourceId": "first_wave_synthesis",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "order",
+            "label": "顺序",
+            "format": "number"
+          },
+          {
+            "field": "module",
+            "label": "底座/专题",
+            "type": "text"
+          },
+          {
+            "field": "core_question",
+            "label": "核心问题",
+            "type": "text"
+          },
+          {
+            "field": "china_increment",
+            "label": "中国侧增量",
+            "type": "text"
+          },
+          {
+            "field": "us_increment",
+            "label": "美国侧增量",
+            "type": "text"
+          },
+          {
+            "field": "comparison_mode",
+            "label": "比较方式",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "universe_table",
+        "title": "中美宏观数据宇宙",
+        "subtitle": "先深化现有强项，再补共同主干、高频脉搏和长期结构。",
+        "dataset": "macro_universe",
+        "sourceId": "universe_synthesis",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "order",
+            "label": "顺序",
+            "format": "number"
+          },
+          {
+            "field": "layer",
+            "label": "层级",
+            "type": "text"
+          },
+          {
+            "field": "domain",
+            "label": "专题",
+            "type": "text"
+          },
+          {
+            "field": "project_position",
+            "label": "项目位置",
+            "type": "text"
+          },
+          {
+            "field": "official_source_families",
+            "label": "主要官方来源族",
+            "type": "text"
+          },
+          {
+            "field": "research_use",
+            "label": "主要研究用途",
+            "type": "text"
+          },
+          {
+            "field": "stage",
+            "label": "建议阶段",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "current_coverage",
+        "label": "research-tools-suite：现有中美宏观模块与状态文档",
+        "href": "https://github.com/Zenith1874/research-tools-suite/tree/codex/one-plus-five-migration"
+      },
+      {
+        "id": "priority_synthesis",
+        "label": "规划综合：现有覆盖、研究价值与官方来源可行性",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "id": "macro-universe-priority-synthesis-2026-08-11",
+          "executed_at": "2026-08-11T21:35:00-06:00",
+          "description": "对 13 个候选专题按五个显式规划维度评分并排序。分数由项目审计和官方来源可行性综合形成，不是实证估计。",
+          "tables_used": [],
+          "filters": [
+            "候选范围为本轮中美宏观数据宇宙",
+            "每个维度使用 1–5 的序数规划评分",
+            "不包含预测准确率或经济效应估计"
+          ],
+          "metric_definitions": [
+            "total_score = research_value + gap_fit + cross_country_value + official_access + near_term_delivery",
+            "各分项 1=低，5=高；总分满分 25，仅用于排 backlog"
+          ],
+          "sql": "WITH scored(recommended_order,domain,layer,research_value,gap_fit,cross_country_value,official_access,near_term_delivery,stage) AS (VALUES (1,'发布日历与版本底座','基础设施',5,5,5,4,4,'P0'),(2,'居民现金流与消费','共同主干',5,5,4,5,4,'P1'),(3,'订单—库存—利润—投资','共同主干',5,5,4,5,4,'P1'),(4,'信用传导与部门资产负债表','共同主干',5,5,3,5,3,'P1'),(5,'外部部门与资本流动','共同主干',5,4,4,5,3,'P1'),(6,'住房全链条','共同主干',5,4,3,5,3,'P1'),(7,'电力、能源与物流脉搏','高频脉搏',4,4,3,5,4,'P2'),(8,'人口与人力资本','长期结构',4,3,4,5,4,'P3'),(9,'协调口径覆盖层','协调覆盖',3,2,5,5,4,'P4'),(10,'创新、数字化与 AI 扩散','长期结构',4,4,3,4,3,'P3'),(11,'预期与经营条件','高频脉搏',4,4,2,4,3,'P2'),(12,'区域收敛与空间分化','高频/结构',4,3,2,4,2,'P2'),(13,'气候、资源与能源转型','长期结构',3,3,3,4,2,'P3')) SELECT recommended_order,domain,layer,research_value,gap_fit,cross_country_value,official_access,near_term_delivery,stage,research_value+gap_fit+cross_country_value+official_access+near_term_delivery AS total_score FROM scored ORDER BY total_score DESC,recommended_order;"
+        }
+      },
+      {
+        "id": "first_wave_synthesis",
+        "label": "专题综合：一个版本底座与五条传导链",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "id": "macro-universe-first-wave-blueprint-2026-08-11",
+          "executed_at": "2026-08-11T21:35:00-06:00",
+          "description": "把中国和美国可新增的官方指标组织为六项第一波专题设计。",
+          "tables_used": [],
+          "filters": [
+            "优先官方公开来源",
+            "不重复现有已覆盖总量序列",
+            "保留制度边界和不可比结论"
+          ],
+          "metric_definitions": [
+            "order = 建议设计顺序；0 为共用基础设施"
+          ],
+          "sql": "WITH blueprint(\"order\",module,core_question,china_increment,us_increment,comparison_mode) AS (VALUES (0,'发布日历与版本底座','看到的是哪个参考期、哪次发布和哪次修订？','统一记录发布日、版本、修订、季调与缺失原因','统一记录发布日、版本、修订、季调与缺失原因','基础设施；先于任何综合指数'),(1,'居民现金流','收入能否支撑消费，储蓄和债务在缓冲还是拖累？','人均可支配收入与消费、城乡分项、储蓄代理、住户存贷款和按揭','可支配个人收入、PCE、储蓄率、G.19 消费信贷、债务偿付与拖欠','aligned + normalized + parallel_only'),(2,'订单—库存—利润—投资','企业周期从需求到投资处在哪一段？','工业企业收入/成本/利润/库存/应收、分行业投资、PMI 分项','耐用品订单/出货、制造贸易库存销售、QSS、企业利润与私人投资','aligned + normalized'),(3,'信用传导','宽松或收紧是否真正传到居民与企业？','社融流量、分部门贷款、存款、债券融资、央行企业/银行调查','H.8 银行信用、G.19 消费信贷、Z.1 部门表、SLOOS 与信用利差','以方向、脉冲和占 GDP 比重比较；不硬比存量口径'),(4,'住房全链条','住房如何连接居民、开发商、银行和财政？','销售、开工、竣工、施工、库存、开发资金、房价、土地与财政','许可、开工、竣工、新房销售与库存、建设支出、FHFA 房价与按揭','normalized + parallel_only'),(5,'外部压力','外需、资本流动和汇率压力如何回到国内周期？','伙伴—商品贸易、经常账户、IIP、FDI、证券流、储备、外债与结售汇','Census 贸易、BEA 国际收支/IIP、TIC、美元与行业出口暴露','aligned + normalized + linked')) SELECT * FROM blueprint ORDER BY \"order\";"
+        }
+      },
+      {
+        "id": "universe_synthesis",
+        "label": "数据宇宙综合：共同主干、高频脉搏、长期结构与协调覆盖",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "id": "macro-universe-map-2026-08-11",
+          "executed_at": "2026-08-11T21:35:00-06:00",
+          "description": "把候选数据专题映射到项目现状、官方来源族、研究用途和建议阶段。",
+          "tables_used": [],
+          "filters": [
+            "仅收录有明确研究用途的专题",
+            "协调来源不覆盖本国官方观测",
+            "高频信号不作为 GDP 替代品"
+          ],
+          "metric_definitions": [
+            "order = 路线图阅读顺序，不代表统计排名"
+          ],
+          "sql": "WITH universe(\"order\",layer,domain,project_position,official_source_families,research_use,stage) AS (VALUES (1,'基础设施','发布、版本与修订','新建共用底座','两国各发布机构；ALFRED 可作美国历史版本辅助','实时判断、事件研究、回测、数据新鲜度与修订监控','P0'),(2,'共同主干','居民现金流与消费','新建专题；复用既有价格和利率','中国统计局/央行；美国 BEA/Fed','消费持续性、储蓄缓冲、债务拖累与住房负担','P1'),(3,'共同主干','订单—库存—利润—投资','深化中国企业数据；新建美国企业周期','中国统计局；美国 Census/BEA/Fed','企业周期位置、补库存/去库存、利润与资本开支','P1'),(4,'共同主干','信用传导与资产负债表','深化中国金融；补美国银行/居民/部门表','中国央行；美国 Fed H.8/G.19/Z.1/SLOOS','政策到实体的传导、信用脉冲与部门脆弱性','P1'),(5,'共同主干','住房全链条','深化现有中国住房；新建美国实体链','中国统计局/央行/财政；美国 Census/FHFA/Fed','住房对增长、信用、居民与财政的传导','P1'),(6,'共同主干','外部部门与资本流动','深化现有贸易/结售汇；补完整账户','中国海关/SAFE；美国 Census/BEA/Treasury','外需、资本流动、汇率与双边暴露','P1'),(7,'高频脉搏','电力、能源与物流','新增高频物理活动层','中国能源局/交通部；美国 EIA/BTS','转折识别、供给约束、运输和能源压力','P2'),(8,'高频脉搏','预期与经营条件','补充调查与高频企业状态','中国央行/统计局；美国 Census/Fed','经营预期、招聘、融资、远程工作与技术采用','P2'),(9,'高频/结构','区域收敛与空间分化','深化既有省州面板，不重建','中国省级统计/财政；美国 BEA/Census','区域扩散、迁移、产业结构、财政与住房分化','P2'),(10,'长期结构','人口与人力资本','深化人口与劳动供给','中国统计局/教育卫生部门；美国 Census/BLS/NCES/CDC','老龄化、迁移、教育、健康与潜在增长','P3'),(11,'长期结构','创新、数字化与 AI 扩散','新增结构专题并服务 AI 研究语境','中国工信部/统计局/知识产权；美国 Census/NSF/USPTO','生产率、无形资本、机器人、软件和企业 AI 扩散','P3'),(12,'长期结构','气候、资源与能源转型','新增结构专题','中国能源/生态环境部门；美国 EIA/NOAA/EPA','能源结构、强度、灾害暴露与转型约束','P3'),(13,'协调覆盖','跨国共同尺度','新增 overlay，不替代本国序列','OECD/IMF/BIS/World Bank','共同周期、国际基准、稳健性与长历史补充','P4')) SELECT * FROM universe ORDER BY \"order\";"
+        }
+      },
+      {
+        "id": "bea_api",
+        "label": "U.S. Bureau of Economic Analysis：Developer Resources",
+        "href": "https://www.bea.gov/resources/for-developers"
+      },
+      {
+        "id": "census_eits",
+        "label": "U.S. Census Bureau：Economic Indicators API",
+        "href": "https://www.census.gov/data/developers/data-sets/economic-indicators.html"
+      },
+      {
+        "id": "fed_g19",
+        "label": "Federal Reserve：G.19 Consumer Credit",
+        "href": "https://www.federalreserve.gov/releases/g19/current/default.htm"
+      },
+      {
+        "id": "fed_h8",
+        "label": "Federal Reserve：H.8 Assets and Liabilities of Commercial Banks",
+        "href": "https://www.federalreserve.gov/releases/h8/h8notes.htm"
+      },
+      {
+        "id": "fed_z1",
+        "label": "Federal Reserve：Financial Accounts of the United States (Z.1)",
+        "href": "https://www.federalreserve.gov/releases/z1/preview/html/table_descriptions.htm"
+      },
+      {
+        "id": "eia_open_data",
+        "label": "U.S. Energy Information Administration：Open Data API",
+        "href": "https://www.eia.gov/opendata/index.php/api"
+      },
+      {
+        "id": "bts_tsi",
+        "label": "Bureau of Transportation Statistics：Freight Transportation Services Index",
+        "href": "https://www.bts.gov/taxonomy/term/391"
+      },
+      {
+        "id": "census_btos",
+        "label": "U.S. Census Bureau：Business Trends and Outlook Survey",
+        "href": "https://www.census.gov/hfp/btos/about"
+      },
+      {
+        "id": "pboc_statistics",
+        "label": "中国人民银行：调查统计",
+        "href": "https://www.pbc.gov.cn/diaochatongjisi/116219/index.html"
+      },
+      {
+        "id": "safe_statistics",
+        "label": "国家外汇管理局：统计数据",
+        "href": "https://www.safe.gov.cn/safe/tjsj1/"
+      },
+      {
+        "id": "china_customs",
+        "label": "海关总署：Monthly Statistics",
+        "href": "https://english.customs.gov.cn/statics/report/monthly.html"
+      },
+      {
+        "id": "china_mot",
+        "label": "交通运输部：交通运输数据",
+        "href": "https://www.mot.gov.cn/shuju/"
+      },
+      {
+        "id": "china_nea",
+        "label": "国家能源局：全社会用电量",
+        "href": "https://www.nea.gov.cn/20260519/fdecbf091d654d53a9db438cdc356a5c/c.html"
+      },
+      {
+        "id": "china_miit",
+        "label": "工业和信息化部：工信数据",
+        "href": "https://www.miit.gov.cn/gxsj/"
+      },
+      {
+        "id": "oecd_cli",
+        "label": "OECD：Composite Leading Indicator",
+        "href": "https://www.oecd.org/en/data/indicators/composite-leading-indicator-cli.html"
+      },
+      {
+        "id": "imf_data",
+        "label": "International Monetary Fund：Data access",
+        "href": "https://data.imf.org/en/news/accessing"
+      },
+      {
+        "id": "world_bank_api",
+        "label": "World Bank：Indicators API",
+        "href": "https://datahelpdesk.worldbank.org/knowledgebase/articles/889392"
+      },
+      {
+        "id": "bis_credit",
+        "label": "Bank for International Settlements：Credit to the non-financial sector",
+        "href": "https://www.bis.org/statistics/totcredit/changes.htm"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-11T21:35:00-06:00",
+    "status": "ready",
+    "datasets": {
+      "priority_scores": [
+        {
+          "recommended_order": 1,
+          "domain": "发布日历与版本底座",
+          "layer": "基础设施",
+          "research_value": 5,
+          "gap_fit": 5,
+          "cross_country_value": 5,
+          "official_access": 4,
+          "near_term_delivery": 4,
+          "stage": "P0",
+          "total_score": 23
+        },
+        {
+          "recommended_order": 2,
+          "domain": "居民现金流与消费",
+          "layer": "共同主干",
+          "research_value": 5,
+          "gap_fit": 5,
+          "cross_country_value": 4,
+          "official_access": 5,
+          "near_term_delivery": 4,
+          "stage": "P1",
+          "total_score": 23
+        },
+        {
+          "recommended_order": 3,
+          "domain": "订单—库存—利润—投资",
+          "layer": "共同主干",
+          "research_value": 5,
+          "gap_fit": 5,
+          "cross_country_value": 4,
+          "official_access": 5,
+          "near_term_delivery": 4,
+          "stage": "P1",
+          "total_score": 23
+        },
+        {
+          "recommended_order": 4,
+          "domain": "信用传导与部门资产负债表",
+          "layer": "共同主干",
+          "research_value": 5,
+          "gap_fit": 5,
+          "cross_country_value": 3,
+          "official_access": 5,
+          "near_term_delivery": 3,
+          "stage": "P1",
+          "total_score": 21
+        },
+        {
+          "recommended_order": 5,
+          "domain": "外部部门与资本流动",
+          "layer": "共同主干",
+          "research_value": 5,
+          "gap_fit": 4,
+          "cross_country_value": 4,
+          "official_access": 5,
+          "near_term_delivery": 3,
+          "stage": "P1",
+          "total_score": 21
+        },
+        {
+          "recommended_order": 6,
+          "domain": "住房全链条",
+          "layer": "共同主干",
+          "research_value": 5,
+          "gap_fit": 4,
+          "cross_country_value": 3,
+          "official_access": 5,
+          "near_term_delivery": 3,
+          "stage": "P1",
+          "total_score": 20
+        },
+        {
+          "recommended_order": 7,
+          "domain": "电力、能源与物流脉搏",
+          "layer": "高频脉搏",
+          "research_value": 4,
+          "gap_fit": 4,
+          "cross_country_value": 3,
+          "official_access": 5,
+          "near_term_delivery": 4,
+          "stage": "P2",
+          "total_score": 20
+        },
+        {
+          "recommended_order": 8,
+          "domain": "人口与人力资本",
+          "layer": "长期结构",
+          "research_value": 4,
+          "gap_fit": 3,
+          "cross_country_value": 4,
+          "official_access": 5,
+          "near_term_delivery": 4,
+          "stage": "P3",
+          "total_score": 20
+        },
+        {
+          "recommended_order": 9,
+          "domain": "协调口径覆盖层",
+          "layer": "协调覆盖",
+          "research_value": 3,
+          "gap_fit": 2,
+          "cross_country_value": 5,
+          "official_access": 5,
+          "near_term_delivery": 4,
+          "stage": "P4",
+          "total_score": 19
+        },
+        {
+          "recommended_order": 10,
+          "domain": "创新、数字化与 AI 扩散",
+          "layer": "长期结构",
+          "research_value": 4,
+          "gap_fit": 4,
+          "cross_country_value": 3,
+          "official_access": 4,
+          "near_term_delivery": 3,
+          "stage": "P3",
+          "total_score": 18
+        },
+        {
+          "recommended_order": 11,
+          "domain": "预期与经营条件",
+          "layer": "高频脉搏",
+          "research_value": 4,
+          "gap_fit": 4,
+          "cross_country_value": 2,
+          "official_access": 4,
+          "near_term_delivery": 3,
+          "stage": "P2",
+          "total_score": 17
+        },
+        {
+          "recommended_order": 12,
+          "domain": "区域收敛与空间分化",
+          "layer": "高频/结构",
+          "research_value": 4,
+          "gap_fit": 3,
+          "cross_country_value": 2,
+          "official_access": 4,
+          "near_term_delivery": 2,
+          "stage": "P2",
+          "total_score": 15
+        },
+        {
+          "recommended_order": 13,
+          "domain": "气候、资源与能源转型",
+          "layer": "长期结构",
+          "research_value": 3,
+          "gap_fit": 3,
+          "cross_country_value": 3,
+          "official_access": 4,
+          "near_term_delivery": 2,
+          "stage": "P3",
+          "total_score": 15
+        }
+      ],
+      "first_wave_blueprint": [
+        {
+          "order": 0,
+          "module": "发布日历与版本底座",
+          "core_question": "看到的是哪个参考期、哪次发布和哪次修订？",
+          "china_increment": "统一记录发布日、版本、修订、季调与缺失原因",
+          "us_increment": "统一记录发布日、版本、修订、季调与缺失原因",
+          "comparison_mode": "基础设施；先于任何综合指数"
+        },
+        {
+          "order": 1,
+          "module": "居民现金流",
+          "core_question": "收入能否支撑消费，储蓄和债务在缓冲还是拖累？",
+          "china_increment": "人均可支配收入与消费、城乡分项、储蓄代理、住户存贷款和按揭",
+          "us_increment": "可支配个人收入、PCE、储蓄率、G.19 消费信贷、债务偿付与拖欠",
+          "comparison_mode": "aligned + normalized + parallel_only"
+        },
+        {
+          "order": 2,
+          "module": "订单—库存—利润—投资",
+          "core_question": "企业周期从需求到投资处在哪一段？",
+          "china_increment": "工业企业收入/成本/利润/库存/应收、分行业投资、PMI 分项",
+          "us_increment": "耐用品订单/出货、制造贸易库存销售、QSS、企业利润与私人投资",
+          "comparison_mode": "aligned + normalized"
+        },
+        {
+          "order": 3,
+          "module": "信用传导",
+          "core_question": "宽松或收紧是否真正传到居民与企业？",
+          "china_increment": "社融流量、分部门贷款、存款、债券融资、央行企业/银行调查",
+          "us_increment": "H.8 银行信用、G.19 消费信贷、Z.1 部门表、SLOOS 与信用利差",
+          "comparison_mode": "以方向、脉冲和占 GDP 比重比较；不硬比存量口径"
+        },
+        {
+          "order": 4,
+          "module": "住房全链条",
+          "core_question": "住房如何连接居民、开发商、银行和财政？",
+          "china_increment": "销售、开工、竣工、施工、库存、开发资金、房价、土地与财政",
+          "us_increment": "许可、开工、竣工、新房销售与库存、建设支出、FHFA 房价与按揭",
+          "comparison_mode": "normalized + parallel_only"
+        },
+        {
+          "order": 5,
+          "module": "外部压力",
+          "core_question": "外需、资本流动和汇率压力如何回到国内周期？",
+          "china_increment": "伙伴—商品贸易、经常账户、IIP、FDI、证券流、储备、外债与结售汇",
+          "us_increment": "Census 贸易、BEA 国际收支/IIP、TIC、美元与行业出口暴露",
+          "comparison_mode": "aligned + normalized + linked"
+        }
+      ],
+      "macro_universe": [
+        {
+          "order": 1,
+          "layer": "基础设施",
+          "domain": "发布、版本与修订",
+          "project_position": "新建共用底座",
+          "official_source_families": "两国各发布机构；ALFRED 可作美国历史版本辅助",
+          "research_use": "实时判断、事件研究、回测、数据新鲜度与修订监控",
+          "stage": "P0"
+        },
+        {
+          "order": 2,
+          "layer": "共同主干",
+          "domain": "居民现金流与消费",
+          "project_position": "新建专题；复用既有价格和利率",
+          "official_source_families": "中国统计局/央行；美国 BEA/Fed",
+          "research_use": "消费持续性、储蓄缓冲、债务拖累与住房负担",
+          "stage": "P1"
+        },
+        {
+          "order": 3,
+          "layer": "共同主干",
+          "domain": "订单—库存—利润—投资",
+          "project_position": "深化中国企业数据；新建美国企业周期",
+          "official_source_families": "中国统计局；美国 Census/BEA/Fed",
+          "research_use": "企业周期位置、补库存/去库存、利润与资本开支",
+          "stage": "P1"
+        },
+        {
+          "order": 4,
+          "layer": "共同主干",
+          "domain": "信用传导与资产负债表",
+          "project_position": "深化中国金融；补美国银行/居民/部门表",
+          "official_source_families": "中国央行；美国 Fed H.8/G.19/Z.1/SLOOS",
+          "research_use": "政策到实体的传导、信用脉冲与部门脆弱性",
+          "stage": "P1"
+        },
+        {
+          "order": 5,
+          "layer": "共同主干",
+          "domain": "住房全链条",
+          "project_position": "深化现有中国住房；新建美国实体链",
+          "official_source_families": "中国统计局/央行/财政；美国 Census/FHFA/Fed",
+          "research_use": "住房对增长、信用、居民与财政的传导",
+          "stage": "P1"
+        },
+        {
+          "order": 6,
+          "layer": "共同主干",
+          "domain": "外部部门与资本流动",
+          "project_position": "深化现有贸易/结售汇；补完整账户",
+          "official_source_families": "中国海关/SAFE；美国 Census/BEA/Treasury",
+          "research_use": "外需、资本流动、汇率与双边暴露",
+          "stage": "P1"
+        },
+        {
+          "order": 7,
+          "layer": "高频脉搏",
+          "domain": "电力、能源与物流",
+          "project_position": "新增高频物理活动层",
+          "official_source_families": "中国能源局/交通部；美国 EIA/BTS",
+          "research_use": "转折识别、供给约束、运输和能源压力",
+          "stage": "P2"
+        },
+        {
+          "order": 8,
+          "layer": "高频脉搏",
+          "domain": "预期与经营条件",
+          "project_position": "补充调查与高频企业状态",
+          "official_source_families": "中国央行/统计局；美国 Census/Fed",
+          "research_use": "经营预期、招聘、融资、远程工作与技术采用",
+          "stage": "P2"
+        },
+        {
+          "order": 9,
+          "layer": "高频/结构",
+          "domain": "区域收敛与空间分化",
+          "project_position": "深化既有省州面板，不重建",
+          "official_source_families": "中国省级统计/财政；美国 BEA/Census",
+          "research_use": "区域扩散、迁移、产业结构、财政与住房分化",
+          "stage": "P2"
+        },
+        {
+          "order": 10,
+          "layer": "长期结构",
+          "domain": "人口与人力资本",
+          "project_position": "深化人口与劳动供给",
+          "official_source_families": "中国统计局/教育卫生部门；美国 Census/BLS/NCES/CDC",
+          "research_use": "老龄化、迁移、教育、健康与潜在增长",
+          "stage": "P3"
+        },
+        {
+          "order": 11,
+          "layer": "长期结构",
+          "domain": "创新、数字化与 AI 扩散",
+          "project_position": "新增结构专题并服务 AI 研究语境",
+          "official_source_families": "中国工信部/统计局/知识产权；美国 Census/NSF/USPTO",
+          "research_use": "生产率、无形资本、机器人、软件和企业 AI 扩散",
+          "stage": "P3"
+        },
+        {
+          "order": 12,
+          "layer": "长期结构",
+          "domain": "气候、资源与能源转型",
+          "project_position": "新增结构专题",
+          "official_source_families": "中国能源/生态环境部门；美国 EIA/NOAA/EPA",
+          "research_use": "能源结构、强度、灾害暴露与转型约束",
+          "stage": "P3"
+        },
+        {
+          "order": 13,
+          "layer": "协调覆盖",
+          "domain": "跨国共同尺度",
+          "project_position": "新增 overlay，不替代本国序列",
+          "official_source_families": "OECD/IMF/BIS/World Bank",
+          "research_use": "共同周期、国际基准、稳健性与长历史补充",
+          "stage": "P4"
+        }
+      ]
+    },
+    "accessIssues": []
+  },
+  "sources": [
+    {
+      "id": "current_coverage",
+      "label": "research-tools-suite：现有中美宏观模块与状态文档",
+      "href": "https://github.com/Zenith1874/research-tools-suite/tree/codex/one-plus-five-migration"
+    },
+    {
+      "id": "priority_synthesis",
+      "label": "规划综合：现有覆盖、研究价值与官方来源可行性",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "id": "macro-universe-priority-synthesis-2026-08-11",
+        "executed_at": "2026-08-11T21:35:00-06:00",
+        "description": "对 13 个候选专题按五个显式规划维度评分并排序。分数由项目审计和官方来源可行性综合形成，不是实证估计。",
+        "tables_used": [],
+        "filters": [
+          "候选范围为本轮中美宏观数据宇宙",
+          "每个维度使用 1–5 的序数规划评分",
+          "不包含预测准确率或经济效应估计"
+        ],
+        "metric_definitions": [
+          "total_score = research_value + gap_fit + cross_country_value + official_access + near_term_delivery",
+          "各分项 1=低，5=高；总分满分 25，仅用于排 backlog"
+        ],
+        "sql": "WITH scored(recommended_order,domain,layer,research_value,gap_fit,cross_country_value,official_access,near_term_delivery,stage) AS (VALUES (1,'发布日历与版本底座','基础设施',5,5,5,4,4,'P0'),(2,'居民现金流与消费','共同主干',5,5,4,5,4,'P1'),(3,'订单—库存—利润—投资','共同主干',5,5,4,5,4,'P1'),(4,'信用传导与部门资产负债表','共同主干',5,5,3,5,3,'P1'),(5,'外部部门与资本流动','共同主干',5,4,4,5,3,'P1'),(6,'住房全链条','共同主干',5,4,3,5,3,'P1'),(7,'电力、能源与物流脉搏','高频脉搏',4,4,3,5,4,'P2'),(8,'人口与人力资本','长期结构',4,3,4,5,4,'P3'),(9,'协调口径覆盖层','协调覆盖',3,2,5,5,4,'P4'),(10,'创新、数字化与 AI 扩散','长期结构',4,4,3,4,3,'P3'),(11,'预期与经营条件','高频脉搏',4,4,2,4,3,'P2'),(12,'区域收敛与空间分化','高频/结构',4,3,2,4,2,'P2'),(13,'气候、资源与能源转型','长期结构',3,3,3,4,2,'P3')) SELECT recommended_order,domain,layer,research_value,gap_fit,cross_country_value,official_access,near_term_delivery,stage,research_value+gap_fit+cross_country_value+official_access+near_term_delivery AS total_score FROM scored ORDER BY total_score DESC,recommended_order;"
+      }
+    },
+    {
+      "id": "first_wave_synthesis",
+      "label": "专题综合：一个版本底座与五条传导链",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "id": "macro-universe-first-wave-blueprint-2026-08-11",
+        "executed_at": "2026-08-11T21:35:00-06:00",
+        "description": "把中国和美国可新增的官方指标组织为六项第一波专题设计。",
+        "tables_used": [],
+        "filters": [
+          "优先官方公开来源",
+          "不重复现有已覆盖总量序列",
+          "保留制度边界和不可比结论"
+        ],
+        "metric_definitions": [
+          "order = 建议设计顺序；0 为共用基础设施"
+        ],
+        "sql": "WITH blueprint(\"order\",module,core_question,china_increment,us_increment,comparison_mode) AS (VALUES (0,'发布日历与版本底座','看到的是哪个参考期、哪次发布和哪次修订？','统一记录发布日、版本、修订、季调与缺失原因','统一记录发布日、版本、修订、季调与缺失原因','基础设施；先于任何综合指数'),(1,'居民现金流','收入能否支撑消费，储蓄和债务在缓冲还是拖累？','人均可支配收入与消费、城乡分项、储蓄代理、住户存贷款和按揭','可支配个人收入、PCE、储蓄率、G.19 消费信贷、债务偿付与拖欠','aligned + normalized + parallel_only'),(2,'订单—库存—利润—投资','企业周期从需求到投资处在哪一段？','工业企业收入/成本/利润/库存/应收、分行业投资、PMI 分项','耐用品订单/出货、制造贸易库存销售、QSS、企业利润与私人投资','aligned + normalized'),(3,'信用传导','宽松或收紧是否真正传到居民与企业？','社融流量、分部门贷款、存款、债券融资、央行企业/银行调查','H.8 银行信用、G.19 消费信贷、Z.1 部门表、SLOOS 与信用利差','以方向、脉冲和占 GDP 比重比较；不硬比存量口径'),(4,'住房全链条','住房如何连接居民、开发商、银行和财政？','销售、开工、竣工、施工、库存、开发资金、房价、土地与财政','许可、开工、竣工、新房销售与库存、建设支出、FHFA 房价与按揭','normalized + parallel_only'),(5,'外部压力','外需、资本流动和汇率压力如何回到国内周期？','伙伴—商品贸易、经常账户、IIP、FDI、证券流、储备、外债与结售汇','Census 贸易、BEA 国际收支/IIP、TIC、美元与行业出口暴露','aligned + normalized + linked')) SELECT * FROM blueprint ORDER BY \"order\";"
+      }
+    },
+    {
+      "id": "universe_synthesis",
+      "label": "数据宇宙综合：共同主干、高频脉搏、长期结构与协调覆盖",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "id": "macro-universe-map-2026-08-11",
+        "executed_at": "2026-08-11T21:35:00-06:00",
+        "description": "把候选数据专题映射到项目现状、官方来源族、研究用途和建议阶段。",
+        "tables_used": [],
+        "filters": [
+          "仅收录有明确研究用途的专题",
+          "协调来源不覆盖本国官方观测",
+          "高频信号不作为 GDP 替代品"
+        ],
+        "metric_definitions": [
+          "order = 路线图阅读顺序，不代表统计排名"
+        ],
+        "sql": "WITH universe(\"order\",layer,domain,project_position,official_source_families,research_use,stage) AS (VALUES (1,'基础设施','发布、版本与修订','新建共用底座','两国各发布机构；ALFRED 可作美国历史版本辅助','实时判断、事件研究、回测、数据新鲜度与修订监控','P0'),(2,'共同主干','居民现金流与消费','新建专题；复用既有价格和利率','中国统计局/央行；美国 BEA/Fed','消费持续性、储蓄缓冲、债务拖累与住房负担','P1'),(3,'共同主干','订单—库存—利润—投资','深化中国企业数据；新建美国企业周期','中国统计局；美国 Census/BEA/Fed','企业周期位置、补库存/去库存、利润与资本开支','P1'),(4,'共同主干','信用传导与资产负债表','深化中国金融；补美国银行/居民/部门表','中国央行；美国 Fed H.8/G.19/Z.1/SLOOS','政策到实体的传导、信用脉冲与部门脆弱性','P1'),(5,'共同主干','住房全链条','深化现有中国住房；新建美国实体链','中国统计局/央行/财政；美国 Census/FHFA/Fed','住房对增长、信用、居民与财政的传导','P1'),(6,'共同主干','外部部门与资本流动','深化现有贸易/结售汇；补完整账户','中国海关/SAFE；美国 Census/BEA/Treasury','外需、资本流动、汇率与双边暴露','P1'),(7,'高频脉搏','电力、能源与物流','新增高频物理活动层','中国能源局/交通部；美国 EIA/BTS','转折识别、供给约束、运输和能源压力','P2'),(8,'高频脉搏','预期与经营条件','补充调查与高频企业状态','中国央行/统计局；美国 Census/Fed','经营预期、招聘、融资、远程工作与技术采用','P2'),(9,'高频/结构','区域收敛与空间分化','深化既有省州面板，不重建','中国省级统计/财政；美国 BEA/Census','区域扩散、迁移、产业结构、财政与住房分化','P2'),(10,'长期结构','人口与人力资本','深化人口与劳动供给','中国统计局/教育卫生部门；美国 Census/BLS/NCES/CDC','老龄化、迁移、教育、健康与潜在增长','P3'),(11,'长期结构','创新、数字化与 AI 扩散','新增结构专题并服务 AI 研究语境','中国工信部/统计局/知识产权；美国 Census/NSF/USPTO','生产率、无形资本、机器人、软件和企业 AI 扩散','P3'),(12,'长期结构','气候、资源与能源转型','新增结构专题','中国能源/生态环境部门；美国 EIA/NOAA/EPA','能源结构、强度、灾害暴露与转型约束','P3'),(13,'协调覆盖','跨国共同尺度','新增 overlay，不替代本国序列','OECD/IMF/BIS/World Bank','共同周期、国际基准、稳健性与长历史补充','P4')) SELECT * FROM universe ORDER BY \"order\";"
+      }
+    },
+    {
+      "id": "bea_api",
+      "label": "U.S. Bureau of Economic Analysis：Developer Resources",
+      "href": "https://www.bea.gov/resources/for-developers"
+    },
+    {
+      "id": "census_eits",
+      "label": "U.S. Census Bureau：Economic Indicators API",
+      "href": "https://www.census.gov/data/developers/data-sets/economic-indicators.html"
+    },
+    {
+      "id": "fed_g19",
+      "label": "Federal Reserve：G.19 Consumer Credit",
+      "href": "https://www.federalreserve.gov/releases/g19/current/default.htm"
+    },
+    {
+      "id": "fed_h8",
+      "label": "Federal Reserve：H.8 Assets and Liabilities of Commercial Banks",
+      "href": "https://www.federalreserve.gov/releases/h8/h8notes.htm"
+    },
+    {
+      "id": "fed_z1",
+      "label": "Federal Reserve：Financial Accounts of the United States (Z.1)",
+      "href": "https://www.federalreserve.gov/releases/z1/preview/html/table_descriptions.htm"
+    },
+    {
+      "id": "eia_open_data",
+      "label": "U.S. Energy Information Administration：Open Data API",
+      "href": "https://www.eia.gov/opendata/index.php/api"
+    },
+    {
+      "id": "bts_tsi",
+      "label": "Bureau of Transportation Statistics：Freight Transportation Services Index",
+      "href": "https://www.bts.gov/taxonomy/term/391"
+    },
+    {
+      "id": "census_btos",
+      "label": "U.S. Census Bureau：Business Trends and Outlook Survey",
+      "href": "https://www.census.gov/hfp/btos/about"
+    },
+    {
+      "id": "pboc_statistics",
+      "label": "中国人民银行：调查统计",
+      "href": "https://www.pbc.gov.cn/diaochatongjisi/116219/index.html"
+    },
+    {
+      "id": "safe_statistics",
+      "label": "国家外汇管理局：统计数据",
+      "href": "https://www.safe.gov.cn/safe/tjsj1/"
+    },
+    {
+      "id": "china_customs",
+      "label": "海关总署：Monthly Statistics",
+      "href": "https://english.customs.gov.cn/statics/report/monthly.html"
+    },
+    {
+      "id": "china_mot",
+      "label": "交通运输部：交通运输数据",
+      "href": "https://www.mot.gov.cn/shuju/"
+    },
+    {
+      "id": "china_nea",
+      "label": "国家能源局：全社会用电量",
+      "href": "https://www.nea.gov.cn/20260519/fdecbf091d654d53a9db438cdc356a5c/c.html"
+    },
+    {
+      "id": "china_miit",
+      "label": "工业和信息化部：工信数据",
+      "href": "https://www.miit.gov.cn/gxsj/"
+    },
+    {
+      "id": "oecd_cli",
+      "label": "OECD：Composite Leading Indicator",
+      "href": "https://www.oecd.org/en/data/indicators/composite-leading-indicator-cli.html"
+    },
+    {
+      "id": "imf_data",
+      "label": "International Monetary Fund：Data access",
+      "href": "https://data.imf.org/en/news/accessing"
+    },
+    {
+      "id": "world_bank_api",
+      "label": "World Bank：Indicators API",
+      "href": "https://datahelpdesk.worldbank.org/knowledgebase/articles/889392"
+    },
+    {
+      "id": "bis_credit",
+      "label": "Bank for International Settlements：Credit to the non-financial sector",
+      "href": "https://www.bis.org/statistics/totcredit/changes.htm"
+    }
+  ]
+}

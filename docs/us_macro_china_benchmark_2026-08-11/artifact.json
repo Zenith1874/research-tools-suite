@@ -1,0 +1,619 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "美国宏观：从“有数据”升级到“可比较”",
+    "description": "面向项目决策的美国宏观建设审计，并给出与中国宏观对标的分阶段方案。",
+    "generatedAt": "2026-08-11T20:22:24-06:00",
+    "blocks": [
+      {
+        "id": "report_title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# 美国宏观：从“有数据”升级到“可比较”"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Executive Summary\n\n- **该搞，但目标不是再堆一批折线。** 美国侧已经有可用底库，下一步应把它升级成来源清楚、版本可追、口径可比的研究模块。\n- **先修口径，再扩指标。** 当前主页面的 CPI 与核心 CPI 同比会在原始月度序列缺月时错位；如果不先建立质量门禁，更多指标只会放大口径风险。\n- **对标中国要分三种模式。** 同口径指标直接对齐，结构性指标先标准化，制度边界不同的指标只做并列解释；不能把“放在同一张图上”当成可比。\n- **推荐顺序是质量门禁 → 产品呈现 → 官方直接源扩充 → 中美比较注册表 → 协调口径覆盖层。** 这样每一层都有独立验收标准，也能避免协调数据库替代本国官方观测。"
+      },
+      {
+        "id": "coverage_finding",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "local_coverage",
+        "body": "## 底库已经成形，产品层却只走到半程\n\n**美国底库共有 45 条原始序列；主页面实际呈现 36 条，占 80%，另有 9 条没有在主页面出现。** 因此现在最划算的工作不是从零搭库，而是先把已有资产变成可发现、可筛选、可导出、可解释的研究界面。"
+      },
+      {
+        "id": "coverage_chart_block",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "coverage_chart"
+      },
+      {
+        "id": "product_gap",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "repo_us_page",
+        "body": "## 现有页面需要从“长页面”升级成研究工作台\n\n**当前 `/us-macro` 仍是五个板块顺序下拉的阅读页。** 它缺少中国侧已经证明有用的专题标签、自定义日期、单序列开关、轴模式、CSV 导出和覆盖审计。M2、美联储资产负债表、广义美元、VIX、消费者信心、期限利差、BIS 房价和衰退标记等既有资产，也没有在主页面形成一套完整的美国经济叙事。\n\n**含义：** Phase 1 应优先暴露既有资产并补上来源与新鲜度标签，这一步不需要先引入新的外部数据源。"
+      },
+      {
+        "id": "alignment_finding",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "calendar_alignment",
+        "body": "## 先修口径：当前 CPI 同比受真实缺月影响\n\n**原始 CPI 与核心 CPI 都缺少 2025 年 10 月观测，而主页面按“第 12 行之前”计算同比，不是按“同一日历月”配对。** 到 2026 年 6 月，现有算法把 CPI 同比算成 3.7265%，同月对齐结果是 3.4635%；核心 CPI 分别是 2.8058% 与 2.5658%。两者分别高出约 0.2630 和 0.2400 个百分点。\n\n**含义：** 这是已经被数据库和 API 复核出的错配，不是理论风险。应把按日历键对齐、缺期拒算和回归测试设为扩源前的硬门禁。"
+      },
+      {
+        "id": "alignment_chart_block",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "alignment_chart"
+      },
+      {
+        "id": "comparison_model",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 对标中国，核心是“可比模式”而不是同图硬叠\n\n建议为每一组中美指标预先指定一种模式：\n\n1. **直接对齐（aligned）**：概念、频率、季调和变换一致后比较，例如 CPI 同比、工业生产同比、贸易增速或贸易差额。\n2. **标准化后比较（normalized）**：先转成指数=100、占 GDP 比重、人均值或 z-score，例如住房周期、债务负担和需求动量。\n3. **仅并列解释（parallel_only）**：制度边界不同，不输出“谁高谁低”的简单排名，例如联邦基金利率与 LPR、CPS/JOLTS 与中国调查失业率、美国联邦财政与中国多层级财政。\n\n每个比较对至少登记三组字段：\n\n- 身份与概念：`pair_id`、`concept`、`cn_code`、`us_code`；\n- 变换与尺度：`transform`、`frequency`、`unit`、`seasonal_basis`；\n- 判断与溯源：`pairing_mode`、`caveat`、`primary_source`。\n\n美国观测优先来自 [BEA](https://www.bea.gov/resources/for-developers)、[BLS](https://www.bls.gov/developers/api_signature_v2.htm)、[Census](https://www.census.gov/data/developers/data-sets/economic-indicators.html)、[Treasury](https://fiscaldata.treasury.gov/datasets/debt-to-the-penny/)、[Federal Reserve](https://www.federalreserve.gov/releases/H8/about.htm) 与 [FHFA](https://www.fhfa.gov/house-price-index?tab=HPI+Datasets)；中国观测保留国家统计局等本国来源；[OECD](https://www.oecd.org/en/data/insights/data-explainers/2024/09/api.html)、[IMF](https://data.imf.org/en/Resource-Pages/IMF-API) 和 BIS 只作为协调口径覆盖层。"
+      },
+      {
+        "id": "roadmap_heading",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 建议按“质量门禁 → 呈现 → 扩源 → 比较”推进\n\n**Phase 0 和 Phase 1 应先于新增数据源。** 前两阶段解决可信度和研究可用性；后续扩源才围绕真实经济、信用、外部部门与住房补齐美国特有的分析链条。"
+      },
+      {
+        "id": "roadmap_table_block",
+        "type": "table",
+        "layout": "full",
+        "tableId": "roadmap_table"
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 下一轮需要定的三个研究选择\n\n1. **主问题优先级：** 先服务全国宏观诊断，还是先服务利率—信用—住房传导？这会决定 Phase 2 的首批直接源。\n2. **版本政策：** 研究默认使用“最新修订值”，还是同时保留首发值与历史版本？如果要做事件研究或实时判断，应尽早接入 release/vintage 层。\n3. **中美比较窗口：** 默认从 2010 年、疫情前后，还是按政策周期切片？窗口应在建综合图之前冻结。"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Caveats and assumptions\n\n- 本报告是 2026 年 8 月 11 日的代码与数据库快照审计；没有写入数据库，也没有执行新增数据下载。\n- “45 条序列”衡量目录宽度，不等于概念完整性；中国和美国的指标数量不能机械比较。\n- 当前库的 `data_status` 统一为 `official`，`source_type='us_macro'` 只是域标签；FRED 仍可能是分发渠道而非原始发布机构。后续应新增独立的权威等级，区分原始官方、官方镜像、协调官方与高信誉非联邦来源。\n- CPI 数值是对现有原始观测的两种变换结果，不是预测，也不是对未来通胀路径的判断。\n- 制度边界不一致时，报告应保留缺失与不可比结论，不能用标准化掩盖概念差异。"
+      }
+    ],
+    "charts": [
+      {
+        "id": "coverage_chart",
+        "title": "美国宏观目录在主页面的呈现状态",
+        "subtitle": "现有底库的主要缺口在产品呈现，而不是原始采集。",
+        "intent": "comparison",
+        "question": "45 条美国宏观原始序列中，有多少已经在主页面形成可见分析？",
+        "rationale": "水平条形图直接比较已呈现与未呈现数量，并保留占比字段供审计。",
+        "type": "horizontalBar",
+        "dataset": "main_page_visibility",
+        "sourceId": "local_coverage",
+        "encodings": {
+          "x": {
+            "field": "status",
+            "type": "nominal",
+            "label": "呈现状态"
+          },
+          "y": {
+            "field": "series_count",
+            "type": "quantitative",
+            "label": "原始序列数",
+            "unit": "条"
+          },
+          "tooltip": [
+            {
+              "field": "series_count",
+              "type": "quantitative",
+              "label": "序列数",
+              "unit": "条"
+            },
+            {
+              "field": "share_pct",
+              "type": "quantitative",
+              "label": "目录占比",
+              "unit": "%"
+            }
+          ]
+        },
+        "valueFormat": "number",
+        "unit": "条",
+        "labels": {
+          "values": "all"
+        },
+        "palette": {
+          "kind": "sequential",
+          "name": "blue"
+        },
+        "settings": {
+          "orientation": "horizontal",
+          "showValues": true,
+          "sort": "descending"
+        },
+        "maxRows": 10,
+        "comparisonContext": {
+          "denominator": "美国宏观目录中的 45 条原始序列",
+          "grain": "indicator_code",
+          "unit": "条"
+        }
+      },
+      {
+        "id": "alignment_chart",
+        "title": "2026 年 6 月 CPI 同比计算对照",
+        "subtitle": "缺月后，按行滞后会把两项同比抬高约 0.24–0.26 个百分点。",
+        "intent": "comparison",
+        "question": "现有按行滞后算法与同月日历对齐算法的结果相差多少？",
+        "rationale": "分组条形图在同一尺度上比较两项指标的两种算法，并让算法差异可见。",
+        "type": "bar",
+        "dataset": "calendar_alignment_check",
+        "sourceId": "calendar_alignment",
+        "encodings": {
+          "x": {
+            "field": "indicator",
+            "type": "nominal",
+            "label": "指标"
+          },
+          "y": {
+            "field": "value_pct",
+            "type": "quantitative",
+            "label": "同比",
+            "unit": "%"
+          },
+          "color": {
+            "field": "method",
+            "type": "nominal",
+            "label": "计算方法"
+          },
+          "tooltip": [
+            {
+              "field": "period",
+              "type": "temporal",
+              "label": "观测期"
+            },
+            {
+              "field": "value_pct",
+              "type": "quantitative",
+              "label": "同比",
+              "unit": "%"
+            },
+            {
+              "field": "difference_pp",
+              "type": "quantitative",
+              "label": "相对同月对齐偏差",
+              "unit": "个百分点"
+            }
+          ]
+        },
+        "valueFormat": "number",
+        "unit": "%",
+        "labels": {
+          "values": "all"
+        },
+        "legend": {
+          "position": "bottom",
+          "sort": "spec",
+          "title": "计算方法"
+        },
+        "palette": {
+          "kind": "categorical",
+          "name": "comparison"
+        },
+        "settings": {
+          "groupMode": "grouped",
+          "showValues": true,
+          "sort": "none"
+        },
+        "maxRows": 10,
+        "comparisonContext": {
+          "baseline": "同一日历月对齐",
+          "grain": "指标 × 方法 × 月份",
+          "unit": "%"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "roadmap_table",
+        "title": "美国宏观建设路线图",
+        "subtitle": "每一阶段都以可验证的验收门禁结束。",
+        "dataset": "implementation_priorities",
+        "sourceId": "roadmap_synthesis",
+        "defaultSort": {
+          "field": "priority",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "priority",
+            "label": "顺序",
+            "format": "number"
+          },
+          {
+            "field": "phase",
+            "label": "阶段",
+            "type": "text"
+          },
+          {
+            "field": "scope",
+            "label": "核心工作",
+            "type": "text"
+          },
+          {
+            "field": "acceptance_gate",
+            "label": "验收门禁",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "local_coverage",
+        "label": "本地 SQLite：美国宏观目录与主页面呈现映射",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "id": "us-macro-main-page-coverage-2026-08-11",
+          "executed_at": "2026-08-11T20:11:51-06:00",
+          "description": "将美国宏观目录中的不同 indicator_code 与静态分析得到的主页面呈现代码清单连接，统计已呈现与未呈现数量和占比。",
+          "tables_used": [
+            "us_macro_observations"
+          ],
+          "filters": [
+            "按不同 indicator_code 计数",
+            "主页面清单包含直接图表、衍生序列输入和 FEDFUNDS 头部卡片"
+          ],
+          "metric_definitions": [
+            "series_count = 每种呈现状态下不同 indicator_code 的数量",
+            "share_pct = series_count / 美国宏观目录不同 indicator_code 总数 × 100"
+          ],
+          "sql": "WITH main_page_represented(indicator_code) AS (VALUES ('A091RC1Q027SBEA'),('CES0500000003'),('CIVPART'),('CPIAUCSL'),('CPILFESL'),('DFF'),('DGS10'),('DGS2'),('DGS30'),('DGS3MO'),('DGS5'),('DPRIME'),('EMRATIO'),('FEDFUNDS'),('FGEXPND'),('FGRECPT'),('FYFSD'),('GDPC1'),('GFDEBTN'),('GFDEGDQ188S'),('ICSA'),('INDPRO'),('JTSHIR'),('JTSJOL'),('JTSLDL'),('JTSQUR'),('MORTGAGE30US'),('OPHNFB'),('PAYEMS'),('PCEPILFE'),('RSAFS'),('SOFR'),('T10Y2Y'),('T10YIE'),('U6RATE'),('UNRATE')), catalog AS (SELECT DISTINCT indicator_code FROM us_macro_observations), coverage AS (SELECT CASE WHEN r.indicator_code IS NULL THEN '主页面未呈现' ELSE '主页面已呈现' END AS status FROM catalog AS c LEFT JOIN main_page_represented AS r USING (indicator_code)) SELECT status, COUNT(*) AS series_count, ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM catalog), 1) AS share_pct FROM coverage GROUP BY status ORDER BY series_count DESC;"
+        }
+      },
+      {
+        "id": "calendar_alignment",
+        "label": "本地 SQLite：CPI 同比按行滞后与同月日历对齐复核",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "id": "us-macro-cpi-calendar-alignment-2026-08-11",
+          "executed_at": "2026-08-11T20:16:00-06:00",
+          "description": "对 CPIAUCSL 和 CPILFESL 的 2026 年 6 月观测，分别使用第 12 行之前与上一年同月观测计算同比。",
+          "tables_used": [
+            "us_macro_observations"
+          ],
+          "filters": [
+            "indicator_code IN ('CPIAUCSL','CPILFESL')",
+            "最新比较期为 2026-06-01",
+            "日历基期为 2025-06-01"
+          ],
+          "metric_definitions": [
+            "按行滞后同比 = (当前值 / 按 period 排序的第 12 行之前值 - 1) × 100",
+            "同月日历对齐同比 = (当前值 / 上一年同月值 - 1) × 100",
+            "difference_pp = 按行滞后同比 - 同月日历对齐同比"
+          ],
+          "sql": "WITH labels(indicator_code, indicator) AS (VALUES ('CPIAUCSL','CPI 同比'),('CPILFESL','核心 CPI 同比')), lagged AS (SELECT indicator_code, period, value, LAG(value, 12) OVER (PARTITION BY indicator_code ORDER BY period) AS row_lag_value FROM us_macro_observations WHERE indicator_code IN ('CPIAUCSL','CPILFESL')), paired AS (SELECT l.indicator_code, l.period, l.value, l.row_lag_value, p.value AS calendar_lag_value FROM lagged AS l JOIN us_macro_observations AS p ON p.indicator_code = l.indicator_code AND p.period = '2025-06-01' WHERE l.period = '2026-06-01'), methods AS (SELECT indicator_code, period, '现有按行滞后' AS method, 100.0 * (value / row_lag_value - 1.0) AS value_pct, 100.0 * (value / row_lag_value - value / calendar_lag_value) AS difference_pp FROM paired UNION ALL SELECT indicator_code, period, '同月日历对齐' AS method, 100.0 * (value / calendar_lag_value - 1.0) AS value_pct, 0.0 AS difference_pp FROM paired) SELECT labels.indicator, methods.method, methods.period, ROUND(methods.value_pct, 4) AS value_pct, ROUND(methods.difference_pp, 4) AS difference_pp FROM methods JOIN labels USING (indicator_code) ORDER BY labels.indicator, CASE methods.method WHEN '现有按行滞后' THEN 1 ELSE 2 END;"
+        }
+      },
+      {
+        "id": "roadmap_synthesis",
+        "label": "路线图综合：项目审计与官方来源能力",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "id": "us-macro-roadmap-synthesis-2026-08-11",
+          "executed_at": "2026-08-11T20:22:24-06:00",
+          "description": "把代码/数据库审计结论、美国官方数据能力与中美可比性规则整理为分阶段实施清单。",
+          "tables_used": [],
+          "filters": [
+            "仅包含本轮建议范围",
+            "不把预测模型纳入当前路线图"
+          ],
+          "metric_definitions": [
+            "priority = 建议实施顺序；数值越小越先执行"
+          ],
+          "sql": "WITH plan(priority, phase, scope, source_strategy, comparison_mode, acceptance_gate) AS (VALUES (0,'Phase 0｜质量门禁','修复按行滞后；增加缺月回归测试；重算 CPI/核心 CPI；分级来源权威性','不新增来源；先治理现有观测与元数据','先冻结频率、季调、单位和版本规则','缺月时按同月键计算或明确拒算；主页面与跨国页结果一致'),(1,'Phase 1｜产品呈现','专题标签、自定义区间、序列开关、轴模式、CSV、覆盖审计与新鲜度徽标','暴露现有 45 条目录资产','只展示已登记的 aligned / normalized / parallel_only 模式','已有未呈现序列可发现；每张图可追到来源与最新观测'),(2,'Phase 2｜美国直接源扩充','需求与投资、银行信用、外部部门、住房建设与 FHFA 房价','BEA/BLS/Census/Treasury/Fed/FHFA 优先；FRED 作分发与校验','先做美国内部完整分析，再决定中美配对','每条新序列有主来源、发布日、版本、季调和缺失策略'),(3,'Phase 3｜中美比较注册表','登记指标对、变换、频率、单位、季调、比较模式和制度 caveat','保留两国本国来源，不用同名替代同概念','aligned / normalized / parallel_only 三种模式','任何跨国图都能回溯 pair_id 与不可比说明'),(4,'Phase 4｜协调口径覆盖层','加入 OECD/IMF/BIS/World Bank 的协调指标与周期覆盖','协调数据库只作 overlay，不覆盖本国观测','用于稳健性、共同尺度与国际基准','协调值与本国值并存；差异可解释；不自动生成预测')) SELECT * FROM plan ORDER BY priority;"
+        }
+      },
+      {
+        "id": "repo_us_page",
+        "label": "research-tools-suite：美国宏观服务与页面",
+        "href": "https://github.com/Zenith1874/research-tools-suite/tree/codex/one-plus-five-migration"
+      },
+      {
+        "id": "bea_api",
+        "label": "U.S. Bureau of Economic Analysis：Developer Resources",
+        "href": "https://www.bea.gov/resources/for-developers"
+      },
+      {
+        "id": "bls_api",
+        "label": "U.S. Bureau of Labor Statistics：Public Data API v2",
+        "href": "https://www.bls.gov/developers/api_signature_v2.htm"
+      },
+      {
+        "id": "census_economic_indicators",
+        "label": "U.S. Census Bureau：Economic Indicators API",
+        "href": "https://www.census.gov/data/developers/data-sets/economic-indicators.html"
+      },
+      {
+        "id": "treasury_fiscal_data",
+        "label": "U.S. Treasury Fiscal Data：Debt to the Penny",
+        "href": "https://fiscaldata.treasury.gov/datasets/debt-to-the-penny/"
+      },
+      {
+        "id": "fed_h8",
+        "label": "Federal Reserve：H.8 Assets and Liabilities of Commercial Banks",
+        "href": "https://www.federalreserve.gov/releases/H8/about.htm"
+      },
+      {
+        "id": "treasury_tic",
+        "label": "U.S. Treasury：Treasury International Capital System",
+        "href": "https://home.treasury.gov/data/treasury-international-capital-tic-system-home-page/description-of-TIC-system"
+      },
+      {
+        "id": "fhfa_hpi",
+        "label": "Federal Housing Finance Agency：House Price Index datasets",
+        "href": "https://www.fhfa.gov/house-price-index?tab=HPI+Datasets"
+      },
+      {
+        "id": "fred_metadata",
+        "label": "FRED API：Series metadata and observations",
+        "href": "https://fred.stlouisfed.org/docs/api/fred/series_observations.html"
+      },
+      {
+        "id": "alfred_vintages",
+        "label": "ALFRED：Archived economic data vintages",
+        "href": "https://alfred.stlouisfed.org/help"
+      },
+      {
+        "id": "oecd_api",
+        "label": "OECD：API guidance",
+        "href": "https://www.oecd.org/en/data/insights/data-explainers/2024/09/api.html"
+      },
+      {
+        "id": "imf_api",
+        "label": "International Monetary Fund：Data API",
+        "href": "https://data.imf.org/en/Resource-Pages/IMF-API"
+      },
+      {
+        "id": "china_nbs",
+        "label": "中国国家统计局：国家数据",
+        "href": "https://data.stats.gov.cn/easyquery.htm?cn=E0103&zb=A0201"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-11T20:22:24-06:00",
+    "status": "ready",
+    "datasets": {
+      "main_page_visibility": [
+        {
+          "status": "主页面已呈现",
+          "series_count": 36,
+          "share_pct": 80.0
+        },
+        {
+          "status": "主页面未呈现",
+          "series_count": 9,
+          "share_pct": 20.0
+        }
+      ],
+      "calendar_alignment_check": [
+        {
+          "indicator": "CPI 同比",
+          "method": "现有按行滞后",
+          "period": "2026-06-01",
+          "value_pct": 3.7265,
+          "difference_pp": 0.2630
+        },
+        {
+          "indicator": "CPI 同比",
+          "method": "同月日历对齐",
+          "period": "2026-06-01",
+          "value_pct": 3.4635,
+          "difference_pp": 0.0
+        },
+        {
+          "indicator": "核心 CPI 同比",
+          "method": "现有按行滞后",
+          "period": "2026-06-01",
+          "value_pct": 2.8058,
+          "difference_pp": 0.2400
+        },
+        {
+          "indicator": "核心 CPI 同比",
+          "method": "同月日历对齐",
+          "period": "2026-06-01",
+          "value_pct": 2.5658,
+          "difference_pp": 0.0
+        }
+      ],
+      "implementation_priorities": [
+        {
+          "priority": 0,
+          "phase": "Phase 0｜质量门禁",
+          "scope": "修复按行滞后；增加缺月回归测试；重算 CPI/核心 CPI；分级来源权威性",
+          "source_strategy": "不新增来源；先治理现有观测与元数据",
+          "comparison_mode": "先冻结频率、季调、单位和版本规则",
+          "acceptance_gate": "缺月时按同月键计算或明确拒算；主页面与跨国页结果一致"
+        },
+        {
+          "priority": 1,
+          "phase": "Phase 1｜产品呈现",
+          "scope": "专题标签、自定义区间、序列开关、轴模式、CSV、覆盖审计与新鲜度徽标",
+          "source_strategy": "暴露现有 45 条目录资产",
+          "comparison_mode": "只展示已登记的 aligned / normalized / parallel_only 模式",
+          "acceptance_gate": "已有未呈现序列可发现；每张图可追到来源与最新观测"
+        },
+        {
+          "priority": 2,
+          "phase": "Phase 2｜美国直接源扩充",
+          "scope": "需求与投资、银行信用、外部部门、住房建设与 FHFA 房价",
+          "source_strategy": "BEA/BLS/Census/Treasury/Fed/FHFA 优先；FRED 作分发与校验",
+          "comparison_mode": "先做美国内部完整分析，再决定中美配对",
+          "acceptance_gate": "每条新序列有主来源、发布日、版本、季调和缺失策略"
+        },
+        {
+          "priority": 3,
+          "phase": "Phase 3｜中美比较注册表",
+          "scope": "登记指标对、变换、频率、单位、季调、比较模式和制度 caveat",
+          "source_strategy": "保留两国本国来源，不用同名替代同概念",
+          "comparison_mode": "aligned / normalized / parallel_only 三种模式",
+          "acceptance_gate": "任何跨国图都能回溯 pair_id 与不可比说明"
+        },
+        {
+          "priority": 4,
+          "phase": "Phase 4｜协调口径覆盖层",
+          "scope": "加入 OECD/IMF/BIS/World Bank 的协调指标与周期覆盖",
+          "source_strategy": "协调数据库只作 overlay，不覆盖本国观测",
+          "comparison_mode": "用于稳健性、共同尺度与国际基准",
+          "acceptance_gate": "协调值与本国值并存；差异可解释；不自动生成预测"
+        }
+      ]
+    },
+    "accessIssues": []
+  },
+  "sources": [
+    {
+      "id": "local_coverage",
+      "label": "本地 SQLite：美国宏观目录与主页面呈现映射",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "id": "us-macro-main-page-coverage-2026-08-11",
+        "executed_at": "2026-08-11T20:11:51-06:00",
+        "description": "将美国宏观目录中的不同 indicator_code 与静态分析得到的主页面呈现代码清单连接，统计已呈现与未呈现数量和占比。",
+        "tables_used": [
+          "us_macro_observations"
+        ],
+        "filters": [
+          "按不同 indicator_code 计数",
+          "主页面清单包含直接图表、衍生序列输入和 FEDFUNDS 头部卡片"
+        ],
+        "metric_definitions": [
+          "series_count = 每种呈现状态下不同 indicator_code 的数量",
+          "share_pct = series_count / 美国宏观目录不同 indicator_code 总数 × 100"
+        ],
+        "sql": "WITH main_page_represented(indicator_code) AS (VALUES ('A091RC1Q027SBEA'),('CES0500000003'),('CIVPART'),('CPIAUCSL'),('CPILFESL'),('DFF'),('DGS10'),('DGS2'),('DGS30'),('DGS3MO'),('DGS5'),('DPRIME'),('EMRATIO'),('FEDFUNDS'),('FGEXPND'),('FGRECPT'),('FYFSD'),('GDPC1'),('GFDEBTN'),('GFDEGDQ188S'),('ICSA'),('INDPRO'),('JTSHIR'),('JTSJOL'),('JTSLDL'),('JTSQUR'),('MORTGAGE30US'),('OPHNFB'),('PAYEMS'),('PCEPILFE'),('RSAFS'),('SOFR'),('T10Y2Y'),('T10YIE'),('U6RATE'),('UNRATE')), catalog AS (SELECT DISTINCT indicator_code FROM us_macro_observations), coverage AS (SELECT CASE WHEN r.indicator_code IS NULL THEN '主页面未呈现' ELSE '主页面已呈现' END AS status FROM catalog AS c LEFT JOIN main_page_represented AS r USING (indicator_code)) SELECT status, COUNT(*) AS series_count, ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM catalog), 1) AS share_pct FROM coverage GROUP BY status ORDER BY series_count DESC;"
+      }
+    },
+    {
+      "id": "calendar_alignment",
+      "label": "本地 SQLite：CPI 同比按行滞后与同月日历对齐复核",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "id": "us-macro-cpi-calendar-alignment-2026-08-11",
+        "executed_at": "2026-08-11T20:16:00-06:00",
+        "description": "对 CPIAUCSL 和 CPILFESL 的 2026 年 6 月观测，分别使用第 12 行之前与上一年同月观测计算同比。",
+        "tables_used": [
+          "us_macro_observations"
+        ],
+        "filters": [
+          "indicator_code IN ('CPIAUCSL','CPILFESL')",
+          "最新比较期为 2026-06-01",
+          "日历基期为 2025-06-01"
+        ],
+        "metric_definitions": [
+          "按行滞后同比 = (当前值 / 按 period 排序的第 12 行之前值 - 1) × 100",
+          "同月日历对齐同比 = (当前值 / 上一年同月值 - 1) × 100",
+          "difference_pp = 按行滞后同比 - 同月日历对齐同比"
+        ],
+        "sql": "WITH labels(indicator_code, indicator) AS (VALUES ('CPIAUCSL','CPI 同比'),('CPILFESL','核心 CPI 同比')), lagged AS (SELECT indicator_code, period, value, LAG(value, 12) OVER (PARTITION BY indicator_code ORDER BY period) AS row_lag_value FROM us_macro_observations WHERE indicator_code IN ('CPIAUCSL','CPILFESL')), paired AS (SELECT l.indicator_code, l.period, l.value, l.row_lag_value, p.value AS calendar_lag_value FROM lagged AS l JOIN us_macro_observations AS p ON p.indicator_code = l.indicator_code AND p.period = '2025-06-01' WHERE l.period = '2026-06-01'), methods AS (SELECT indicator_code, period, '现有按行滞后' AS method, 100.0 * (value / row_lag_value - 1.0) AS value_pct, 100.0 * (value / row_lag_value - value / calendar_lag_value) AS difference_pp FROM paired UNION ALL SELECT indicator_code, period, '同月日历对齐' AS method, 100.0 * (value / calendar_lag_value - 1.0) AS value_pct, 0.0 AS difference_pp FROM paired) SELECT labels.indicator, methods.method, methods.period, ROUND(methods.value_pct, 4) AS value_pct, ROUND(methods.difference_pp, 4) AS difference_pp FROM methods JOIN labels USING (indicator_code) ORDER BY labels.indicator, CASE methods.method WHEN '现有按行滞后' THEN 1 ELSE 2 END;"
+      }
+    },
+    {
+      "id": "roadmap_synthesis",
+      "label": "路线图综合：项目审计与官方来源能力",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "id": "us-macro-roadmap-synthesis-2026-08-11",
+        "executed_at": "2026-08-11T20:22:24-06:00",
+        "description": "把代码/数据库审计结论、美国官方数据能力与中美可比性规则整理为分阶段实施清单。",
+        "tables_used": [],
+        "filters": [
+          "仅包含本轮建议范围",
+          "不把预测模型纳入当前路线图"
+        ],
+        "metric_definitions": [
+          "priority = 建议实施顺序；数值越小越先执行"
+        ],
+        "sql": "WITH plan(priority, phase, scope, source_strategy, comparison_mode, acceptance_gate) AS (VALUES (0,'Phase 0｜质量门禁','修复按行滞后；增加缺月回归测试；重算 CPI/核心 CPI；分级来源权威性','不新增来源；先治理现有观测与元数据','先冻结频率、季调、单位和版本规则','缺月时按同月键计算或明确拒算；主页面与跨国页结果一致'),(1,'Phase 1｜产品呈现','专题标签、自定义区间、序列开关、轴模式、CSV、覆盖审计与新鲜度徽标','暴露现有 45 条目录资产','只展示已登记的 aligned / normalized / parallel_only 模式','已有未呈现序列可发现；每张图可追到来源与最新观测'),(2,'Phase 2｜美国直接源扩充','需求与投资、银行信用、外部部门、住房建设与 FHFA 房价','BEA/BLS/Census/Treasury/Fed/FHFA 优先；FRED 作分发与校验','先做美国内部完整分析，再决定中美配对','每条新序列有主来源、发布日、版本、季调和缺失策略'),(3,'Phase 3｜中美比较注册表','登记指标对、变换、频率、单位、季调、比较模式和制度 caveat','保留两国本国来源，不用同名替代同概念','aligned / normalized / parallel_only 三种模式','任何跨国图都能回溯 pair_id 与不可比说明'),(4,'Phase 4｜协调口径覆盖层','加入 OECD/IMF/BIS/World Bank 的协调指标与周期覆盖','协调数据库只作 overlay，不覆盖本国观测','用于稳健性、共同尺度与国际基准','协调值与本国值并存；差异可解释；不自动生成预测')) SELECT * FROM plan ORDER BY priority;"
+      }
+    },
+    {
+      "id": "repo_us_page",
+      "label": "research-tools-suite：美国宏观服务与页面",
+      "href": "https://github.com/Zenith1874/research-tools-suite/tree/codex/one-plus-five-migration"
+    },
+    {
+      "id": "bea_api",
+      "label": "U.S. Bureau of Economic Analysis：Developer Resources",
+      "href": "https://www.bea.gov/resources/for-developers"
+    },
+    {
+      "id": "bls_api",
+      "label": "U.S. Bureau of Labor Statistics：Public Data API v2",
+      "href": "https://www.bls.gov/developers/api_signature_v2.htm"
+    },
+    {
+      "id": "census_economic_indicators",
+      "label": "U.S. Census Bureau：Economic Indicators API",
+      "href": "https://www.census.gov/data/developers/data-sets/economic-indicators.html"
+    },
+    {
+      "id": "treasury_fiscal_data",
+      "label": "U.S. Treasury Fiscal Data：Debt to the Penny",
+      "href": "https://fiscaldata.treasury.gov/datasets/debt-to-the-penny/"
+    },
+    {
+      "id": "fed_h8",
+      "label": "Federal Reserve：H.8 Assets and Liabilities of Commercial Banks",
+      "href": "https://www.federalreserve.gov/releases/H8/about.htm"
+    },
+    {
+      "id": "treasury_tic",
+      "label": "U.S. Treasury：Treasury International Capital System",
+      "href": "https://home.treasury.gov/data/treasury-international-capital-tic-system-home-page/description-of-TIC-system"
+    },
+    {
+      "id": "fhfa_hpi",
+      "label": "Federal Housing Finance Agency：House Price Index datasets",
+      "href": "https://www.fhfa.gov/house-price-index?tab=HPI+Datasets"
+    },
+    {
+      "id": "fred_metadata",
+      "label": "FRED API：Series metadata and observations",
+      "href": "https://fred.stlouisfed.org/docs/api/fred/series_observations.html"
+    },
+    {
+      "id": "alfred_vintages",
+      "label": "ALFRED：Archived economic data vintages",
+      "href": "https://alfred.stlouisfed.org/help"
+    },
+    {
+      "id": "oecd_api",
+      "label": "OECD：API guidance",
+      "href": "https://www.oecd.org/en/data/insights/data-explainers/2024/09/api.html"
+    },
+    {
+      "id": "imf_api",
+      "label": "International Monetary Fund：Data API",
+      "href": "https://data.imf.org/en/Resource-Pages/IMF-API"
+    },
+    {
+      "id": "china_nbs",
+      "label": "中国国家统计局：国家数据",
+      "href": "https://data.stats.gov.cn/easyquery.htm?cn=E0103&zb=A0201"
+    }
+  ]
+}

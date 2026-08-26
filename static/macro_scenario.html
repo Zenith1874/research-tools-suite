@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>宏观趋势与情景推演</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <script src="/research-nav.js" defer></script>
+  <style>
+    :root{--bg:#07111f;--panel:#0d1728;--panel2:#111d31;--bd:#22324b;--text:#e7eef8;--muted:#8ea0b8;--blue:#4f8fff;--cyan:#00d4aa;--gold:#f5a623;--pink:#ff647c;--purple:#a78bfa}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1440px;margin:auto;padding:22px}.hero{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}.hero h1{font-size:23px;margin:0 0 6px}.sub,.muted,.method{color:var(--muted);font-size:12px;line-height:1.75}.actions,.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.btn,.select,.number{border:1px solid var(--bd);background:var(--panel);color:var(--text);border-radius:5px;padding:8px 10px;font:inherit}.btn{cursor:pointer}.btn:hover,.btn.primary{border-color:var(--blue);background:#14294a}.btn:disabled{opacity:.55;cursor:wait}.select{min-width:270px}.number{width:90px}.notice{margin:14px 0;padding:10px 12px;border:1px solid #285074;border-radius:6px;background:#0d2037;color:#b9d8f4;font-size:12px}.notice.error{border-color:#7d3948;background:#2a1520;color:#ffc4ce}.toolbar{margin:18px 0 12px;padding:12px;border:1px solid var(--bd);background:var(--panel);border-radius:8px}.control-label{font-size:11px;color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.card{grid-column:span 4;border:1px solid var(--bd);background:var(--panel);border-radius:8px;padding:14px;min-width:0}.card.wide{grid-column:span 8}.card.full{grid-column:1/-1}.card h2{font-size:14px;margin:0 0 8px}.card h3{font-size:13px;margin:0 0 8px}.badge{display:inline-block;font-size:10px;border:1px solid #267d70;color:#8fe3cf;border-radius:4px;padding:2px 6px;margin-left:7px}.badge.warn{border-color:#8c641f;color:#ffd28a}.badge.missing{border-color:#7d3948;color:#ffc4ce}.kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.kpi{border:1px solid var(--bd);background:var(--panel2);border-radius:6px;padding:9px;min-width:0}.kpi label{display:block;color:var(--muted);font-size:10px}.kpi b{display:block;font-size:20px;margin:5px 0;font-variant-numeric:tabular-nums}.kpi small{display:block;color:var(--muted);font-size:10px;line-height:1.5}.chart{height:360px;margin-top:10px}.chart svg{width:100%;height:100%;display:block}.axis{fill:var(--muted);font-size:10px}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:8px}.legend i{display:inline-block;width:17px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}.table-wrap{overflow:auto;max-height:420px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{padding:8px 9px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}th{color:var(--muted);font-weight:500}.upper{color:#ff9eaf}.base{color:#8fe3cf}.lower{color:#9ec2ff}.gap-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.gap{border:1px solid var(--bd);background:var(--panel2);border-radius:6px;padding:10px}.gap strong{font-size:12px}.gap p{margin:5px 0;color:var(--muted);font-size:11px;line-height:1.6}.priority{float:right;font-size:10px;color:#ffd28a}.small{font-size:10px;color:var(--muted)}.right{text-align:right}.link{color:#9ec2ff;text-decoration:none}.link:hover{text-decoration:underline}@media(max-width:1050px){.card,.card.wide{grid-column:span 6}}@media(max-width:700px){.wrap{padding:13px}.card,.card.wide{grid-column:1/-1}.kpis{grid-template-columns:1fr 1fr}.gap-list{grid-template-columns:1fr}.hero h1{font-size:20px}.select{min-width:210px}.chart{height:270px}}
+  </style>
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <h1>宏观趋势与情景推演 <span class="badge">scenario lab</span></h1>
+      <div class="sub">把已有宏观、央行、利率、房地产数据转成可回测的条件路径；上行/下行只表示指标数值较高/较低，不是官方预测。</div>
+    </div>
+    <div class="right small">未来路径：scenario<br>历史回测：derived<br>页面不写回数据库</div>
+  </section>
+  <div id="message" class="notice" hidden></div>
+  <section class="toolbar">
+    <div class="controls">
+      <label class="control-label" for="indicator">指标</label>
+      <select id="indicator" class="select"></select>
+      <label class="control-label" for="horizon">未来期数</label>
+      <select id="horizon" class="select" style="min-width:115px">
+        <option value="6">6期</option><option value="12" selected>12期</option><option value="24">24期</option><option value="36">36期</option>
+      </select>
+      <label class="control-label" for="simulations">模拟次数</label>
+      <input id="simulations" class="number" type="number" min="100" max="3000" step="100" value="1000">
+      <button id="run" class="btn primary">重新推演</button>
+      <button id="export" class="btn">导出当前路径 CSV</button>
+      <a class="btn link" href="/housing-scenario">打开城市房价推演</a>
+    </div>
+  </section>
+  <section id="headline" class="grid"></section>
+  <section class="grid" style="margin-top:12px">
+    <article class="card wide">
+      <h2 id="chartTitle">历史与未来路径</h2>
+      <div id="chart" class="chart"></div>
+      <div class="legend"><span><i style="background:#8ea0b8"></i>历史</span><span><i style="background:#ff647c"></i>上行</span><span><i style="background:#00d4aa"></i>基准</span><span><i style="background:#4f8fff"></i>下行</span><span><i style="background:#a78bfa"></i>模拟 P10—P90/P50</span></div>
+    </article>
+    <article class="card">
+      <h2>方法与样本</h2>
+      <div id="method" class="method"></div>
+      <div id="source" class="method" style="margin-top:10px"></div>
+    </article>
+  </section>
+  <section class="grid" style="margin-top:12px">
+    <article class="card wide">
+      <h2>三档路径</h2>
+      <div id="scenarioTable" class="table-wrap"></div>
+    </article>
+    <article class="card">
+      <h2>历史滚动回测 <span class="badge">derived</span></h2>
+      <div id="backtest"></div>
+    </article>
+  </section>
+  <section class="card full" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap"><h2>查缺补漏：当前系统没有的高价值输入</h2><span class="small">缺口不以0值填补，也不由相近指标冒充</span></div>
+    <div id="gaps" class="gap-list"></div>
+  </section>
+  <p class="small" style="margin-top:14px">下一阶段可以把这里的宏观情景包直接传给房价结构模型：例如增长、信用、LPR、销售面积和人口分别采用上行/基准/下行组合，再观察不同城市价格与自有资金路径。</p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const state={payload:null,selected:null};
+  const $=id=>document.getElementById(id);
+  const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt=(value,d=2)=>value==null?'—':Number(value).toLocaleString('zh-CN',{maximumFractionDigits:d,minimumFractionDigits:d});
+  const val=(value,unit)=>unit==='%'?`${fmt(value)}%`:fmt(value);
+  function showMessage(text,error=false){const el=$('message');el.hidden=!text;el.className=error?'notice error':'notice';el.textContent=text||'';}
+  function populateCatalog(catalog,selected){
+    const select=$('indicator'),old=select.value;
+    const groups={};
+    (catalog||[]).forEach(item=>{(groups[item.category]??=[]).push(item)});
+    select.innerHTML=Object.entries(groups).map(([category,items])=>`<optgroup label="${esc(category)}">${items.map(item=>`<option value="${esc(item.code)}" ${item.code===(selected||old)?'selected':''} ${item.status==='missing'?'disabled':''}>${esc(item.name)} · ${item.status==='ok'?`${item.n_obs}点`:(item.status==='insufficient_sample'?'历史不足':'缺失')}</option>`).join('')}</optgroup>`).join('');
+    if(!select.value&&selected)select.value=selected;
+  }
+  function pathMap(selected){return Object.fromEntries((selected.scenarios||[]).map(row=>[row.key,row]));}
+  function renderHeadline(selected){
+    const paths=pathMap(selected),sim=selected.simulation,back=selected.backtest,base=paths.base;
+    const terminal=base?.end_value;
+    $('headline').innerHTML=`<article class="card"><h2>${esc(selected.name)} <span class="badge ${selected.status==='ok'?'':'warn'}">${esc(selected.data_status||'scenario')}</span></h2><div class="kpi"><label>最新观测 ${esc(selected.sample_end||'—')}</label><b>${val(selected.latest_value,selected.unit)}</b><small>${esc(selected.interpretation||'')}</small></div></article><article class="card"><h2>基准期末</h2><div class="kpi"><label>${esc(base?.path?.at(-1)?.period||'—')} · 条件路径</label><b>${val(terminal,selected.unit)}</b><small>基准变化 ${terminal==null||selected.latest_value==null?'—':fmt(terminal-selected.latest_value)}${selected.unit==='%'?' 个百分点':''}</small></div></article><article class="card"><h2>模拟敏感性</h2><div class="kpis"><div class="kpi"><label>P10</label><b>${val(sim?.end?.p10,selected.unit)}</b></div><div class="kpi"><label>P50</label><b>${val(sim?.end?.p50,selected.unit)}</b></div><div class="kpi"><label>P90</label><b>${val(sim?.end?.p90,selected.unit)}</b></div></div></article>`;
+  }
+  function renderChart(selected){
+    const history=selected.history||[],paths=pathMap(selected),sim=selected.simulation?.points||[];
+    const future=(paths.base?.path||[]);
+    $('chartTitle').textContent=`${selected.name}：历史 ${selected.sample_start||'—'}—${selected.sample_end||'—'} 与未来 ${future.at(-1)?.period||'—'}路径`;
+    if(!history.length||!Object.keys(paths).length){$('chart').innerHTML='<div class="muted">历史不足，无法绘图。</div>';return;}
+    const allPeriods=history.map(r=>r.period).concat(future.map(r=>r.period));
+    const allValues=history.map(r=>r.value).concat(Object.values(paths).flatMap(r=>r.path.map(p=>p.value))).concat(sim.flatMap(p=>[p.p10,p.p50,p.p90]));
+    const finite=allValues.filter(Number.isFinite),min=Math.min(...finite),max=Math.max(...finite),pad=(max-min||1)*.1,lo=min-pad,hi=max+pad;
+    const W=920,H=340,L=54,R=18,T=18,B=34,n=allPeriods.length;
+    const x=i=>L+(W-L-R)*(i/Math.max(1,n-1)),y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo));
+    const periodIndex=new Map(allPeriods.map((p,i)=>[p,i]));
+    const path=(rows,key='value')=>rows.map((row,i)=>`${i?'L':'M'}${x(periodIndex.get(row.period)).toFixed(1)},${y(Number(row[key])).toFixed(1)}`).join(' ');
+    const areaTop=sim.map(p=>`${x(periodIndex.get(p.period)).toFixed(1)},${y(p.p90).toFixed(1)}`).join(' '),areaBottom=[...sim].reverse().map(p=>`${x(periodIndex.get(p.period)).toFixed(1)},${y(p.p10).toFixed(1)}`).join(' ');
+    const tick=[allPeriods[0],allPeriods[Math.floor((allPeriods.length-1)/2)],allPeriods.at(-1)];
+    $('chart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="历史与情景路径"><line x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}" stroke="#22324b"/><line x1="${L}" x2="${L}" y1="${T}" y2="${H-B}" stroke="#22324b"/><text class="axis" x="${L-8}" y="${T+4}" text-anchor="end">${fmt(hi,1)}</text><text class="axis" x="${L-8}" y="${H-B+4}" text-anchor="end">${fmt(lo,1)}</text><text class="axis" x="${L}" y="${H-8}">${esc(tick[0])}</text><text class="axis" x="${W/2}" y="${H-8}" text-anchor="middle">${esc(tick[1])}</text><text class="axis" x="${W-R}" y="${H-8}" text-anchor="end">${esc(tick[2])}</text>${sim.length?`<polygon points="${areaTop} ${areaBottom}" fill="rgba(167,139,250,.13)"/>`:''}<path d="${path(history)}" fill="none" stroke="#8ea0b8" stroke-width="2"/><path d="${path(paths.upper.path)}" fill="none" stroke="#ff647c" stroke-width="2"/><path d="${path(paths.base.path)}" fill="none" stroke="#00d4aa" stroke-width="2.4"/><path d="${path(paths.lower.path)}" fill="none" stroke="#4f8fff" stroke-width="2"/>${sim.length?`<path d="${path(sim,'p50')}" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4 3"/>`:''}</svg>`;
+  }
+  function renderScenarioTable(selected){
+    const rows=(selected.scenarios||[]).map(item=>`<tr><td class="${item.key}">${esc(item.label)}</td><td>${fmt(item.drift_per_period,4)}${selected.mode==='level'?' 对数变化':' 个百分点'}</td><td>${fmt(item.annualised_drift,2)}${selected.mode==='level'?'%':' 个百分点/年'}</td><td>${esc(item.path.at(-1)?.period||'—')}</td><td>${val(item.end_value,selected.unit)}</td></tr>`).join('');
+    $('scenarioTable').innerHTML=`<table><thead><tr><th>路径</th><th>每期变化假设</th><th>年化等价</th><th>期末</th><th>期末值</th></tr></thead><tbody>${rows||'<tr><td colspan="5">没有足够历史形成路径。</td></tr>'}</tbody></table>`;
+  }
+  function renderBacktest(back){
+    if(!back||back.status!=='ok'){$('backtest').innerHTML=`<div class="muted">${esc(back?.reason||'历史不足，未运行回测。')}</div>`;return;}
+    $('backtest').innerHTML=`<div class="kpis"><div class="kpi"><label>MAE</label><b>${fmt(back.mae)}</b><small>与指标单位相同</small></div><div class="kpi"><label>RMSE</label><b>${fmt(back.rmse)}</b><small>${back.n_points}个比较点</small></div><div class="kpi"><label>方向命中</label><b>${back.direction_accuracy_pct==null?'—':fmt(back.direction_accuracy_pct,1)+'%'}</b><small>${back.n_origins}个滚动起点</small></div></div><p class="method">区间覆盖：${back.envelope_coverage_pct==null?'—':fmt(back.envelope_coverage_pct,1)+'%'}。${esc(back.method||'')}</p>`;
+  }
+  function renderMethod(selected){
+    $('method').innerHTML=`<p>${esc(selected.method||'')}</p><p>样本：${esc(selected.sample_start||'—')} 至 ${esc(selected.sample_end||'—')}，${selected.n_obs||0}个连续点；频率：${esc(selected.frequency||'—')}；模式：${esc(selected.mode||'—')}。</p><p>${esc(selected.interpretation||'')}</p>`;
+    $('source').innerHTML=`最新来源：${esc(selected.latest_source_name||'当前缓存/未记录')} ${selected.latest_source_url?`· <a class="link" target="_blank" rel="noopener" href="${esc(selected.latest_source_url)}">来源页</a>`:''}`;
+  }
+  function renderGaps(gaps){$('gaps').innerHTML=(gaps||[]).map(g=>`<article class="gap"><span class="priority">${esc(g.priority)}</span><strong>${esc(g.label)}</strong><p>${esc(g.reason)}</p><p>下一步：${esc(g.next_step)}</p></article>`).join('');}
+  function render(){const p=state.payload,s=p?.selected;if(!s)return;state.selected=s;populateCatalog(p.catalog,s.code);renderHeadline(s);renderChart(s);renderScenarioTable(s);renderBacktest(s.backtest);renderMethod(s);renderGaps(p.gaps);}
+  async function load(){
+    const indicator=$('indicator').value,params=new URLSearchParams({horizon:$('horizon').value,simulations:$('simulations').value,seed:'20260816'});if(indicator)params.set('indicator',indicator);
+    $('run').disabled=true;showMessage('正在计算路径、模拟和滚动回测…');
+    try{const response=await fetch('/api/macro-scenario?'+params);const data=await response.json();if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);state.payload=data;render();showMessage(`已完成：${data.selected.name} · 历史 ${data.selected.n_obs||0} 点 · 未来 ${data.parameters.horizon} 期`)}catch(error){showMessage('推演失败：'+error.message,true)}finally{$('run').disabled=false;}
+  }
+  function exportCsv(){const s=state.selected;if(!s)return;const rows=[['type','scenario','period','value','unit','data_status']];(s.history||[]).forEach(r=>rows.push(['history','',r.period,r.value,s.unit,'observed']));(s.scenarios||[]).forEach(item=>item.path.forEach(r=>rows.push(['scenario',item.key,r.period,r.value,s.unit,'scenario'])));(s.simulation?.points||[]).forEach(r=>rows.push(['simulation','p10',r.period,r.p10,s.unit,'scenario'],['simulation','p50',r.period,r.p50,s.unit,'scenario'],['simulation','p90',r.period,r.p90,s.unit,'scenario']));const cell=v=>`"${String(v??'').replaceAll('"','""')}"`;const blob=new Blob(['\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`macro-scenario-${s.code}.csv`;a.click();URL.revokeObjectURL(url)}
+  $('run').addEventListener('click',load);$('indicator').addEventListener('change',load);$('export').addEventListener('click',exportCsv);load();
+})();
+</script>
+</body>
+</html>
