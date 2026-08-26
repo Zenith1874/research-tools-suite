@@ -68,7 +68,24 @@ from services.china_macro_dashboard_service import (
     build_china_macro_payload,
     update_china_macro_bundle,
 )
+from services.china_macro_service import ensure_china_macro_tables
+from services.hong_kong_macro_service import (
+    ensure_hong_kong_macro_tables,
+    build_hong_kong_macro_payload,
+    build_hong_kong_macro_debug,
+    build_hong_kong_macro_csv,
+    build_hong_kong_macro_csd_web_table_payload,
+    build_hong_kong_macro_csd_web_table_csv,
+    build_hong_kong_macro_trade_dimensions_csv,
+    build_hong_kong_macro_trade_dimensions_payload,
+    build_lead_lag_payload,
+    build_saved_lead_lag_payload,
+    persist_lead_lag_payload,
+    retry_hkma_sources,
+    update_hong_kong_macro,
+)
 from services.macro_analytics_service import build_macro_analytics_payload
+from services.macro_scenario_service import build_macro_scenario_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
 from services.housing_price_service import (
     build_housing_payload,
@@ -123,6 +140,25 @@ from services.abdc_astar_research_service import (
     build_journal_health_payload,
     llm_classify_articles,
 )
+from services.business_research_service import (
+    ensure_business_research_tables,
+    build_research_overview,
+    build_research_search,
+    build_theories_payload,
+    build_theory_detail,
+    build_constructs_payload,
+    build_construct_detail,
+    build_methods_payload,
+    build_method_detail,
+    build_paper_workspace,
+    build_papers_payload,
+    build_landscape_payload,
+    build_library_payload,
+    update_library_state,
+    save_research_note,
+    delete_research_note,
+    rebuild_link_index,
+)
 from services.paper_translation_service import (
     PaperTranslationManager,
     TranslationError,
@@ -143,6 +179,51 @@ from services.cardcookie_monitor_service import (
     CardCookieMonitorError,
     CardCookieMonitorManager,
 )
+from services.ebook_conversion_service import (
+    EBOOK_MAX_UPLOAD_BYTES,
+    EbookConversionError,
+    EbookConversionManager,
+    scan_folder as scan_pdf_folder,
+)
+from services.faculty_jobs_service import (
+    FACULTY_DB_PATH,
+    build_faculty_job_detail,
+    build_faculty_job_filters,
+    build_faculty_job_runs,
+    build_faculty_job_sources,
+    build_faculty_jobs_payload,
+    build_faculty_job_summary,
+    build_aacsb_directory_summary,
+    build_aacsb_directory_filters,
+    build_job_market_analytics,
+    compare_schools,
+    create_application,
+    delete_saved_search,
+    ensure_faculty_jobs_tables,
+    export_faculty_jobs_csv,
+    get_profile,
+    list_institution_aliases,
+    list_aacsb_directory,
+    list_possible_duplicates,
+    list_saved_search_alerts,
+    list_saved_searches,
+    mark_saved_search_alerts_seen,
+    list_my_applications,
+    list_schools,
+    patch_application,
+    resolve_possible_duplicate,
+    save_override,
+    save_saved_search,
+    save_scope_override,
+    save_institution_alias,
+    save_profile_payload,
+    run_saved_search_alerts,
+    school_detail,
+    add_evidence,
+    scan_aacsb_official_websites,
+    update_faculty_jobs,
+    update_aacsb_directory,
+)
 
 logging.basicConfig(level=logging.INFO,
     format='%(asctime)s  %(levelname)-7s  %(message)s', datefmt='%H:%M:%S')
@@ -157,12 +238,13 @@ def _load_secrets():
     if not os.path.exists(path):
         return
     try:
-        for line in open(path, encoding='utf-8'):
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            k, v = line.split('=', 1)
-            os.environ.setdefault(k.strip(), v.strip())
+        with open(path, encoding='utf-8') as secrets_file:
+            for line in secrets_file:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, v = line.split('=', 1)
+                os.environ.setdefault(k.strip(), v.strip())
     except Exception:
         pass
 _load_secrets()
@@ -172,6 +254,20 @@ PORT       = int(os.environ.get('SERVER_PORT', '5001'))
 ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '')
 CORS_ORIGIN = os.environ.get('CORS_ORIGIN', '').strip()
 ALLOW_REMOTE_WRITES = os.environ.get('ALLOW_REMOTE_WRITES', '0').strip().lower() in ('1', 'true', 'yes')
+# Cloudflare Tunnel connects to the origin over loopback. When this opt-in is
+# enabled, a valid CF-Connecting-IP header on a loopback request is treated as
+# the original remote client for read/write and private-data guards. It is
+# intentionally off by default because forwarded headers must never be trusted
+# unless a trusted local reverse proxy is the intended source.
+TRUST_CLOUDFLARE_HEADERS = os.environ.get(
+    'TRUST_CLOUDFLARE_HEADERS', '0').strip().lower() in ('1', 'true', 'yes')
+# 这两个模块曾经被整体关闭，原因是打开页面就会反复联系校内 GPU 并因此被限流。
+# 现在探活已改成显式的按需动作（POST /api/*/probe），模块本身不再产生任何自动
+# 连接，因此默认恢复可用；仍可用 PAPER_TRANSLATION_ENABLED=0 硬关闭。
+PAPER_TRANSLATION_ENABLED = os.environ.get(
+    'PAPER_TRANSLATION_ENABLED', '1').strip().lower() in ('1', 'true', 'yes')
+AUDIO_TRANSCRIPTION_ENABLED = os.environ.get(
+    'AUDIO_TRANSCRIPTION_ENABLED', '1').strip().lower() in ('1', 'true', 'yes')
 TRANSLATION_ALLOW_REMOTE = os.environ.get('TRANSLATION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 AUDIO_TRANSCRIPTION_ALLOW_REMOTE = os.environ.get(
     'AUDIO_TRANSCRIPTION_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
@@ -179,20 +275,58 @@ YUEDU_FM_ALLOW_REMOTE = os.environ.get(
     'YUEDU_FM_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 CARDCOOKIE_MONITOR_ALLOW_REMOTE = os.environ.get(
     'CARDCOOKIE_MONITOR_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
+EBOOK_ALLOW_REMOTE = os.environ.get(
+    'EBOOK_ALLOW_REMOTE', '0').strip().lower() in ('1', 'true', 'yes')
 AUDIO_MAX_UPLOAD_BYTES = int(os.environ.get(
     'AUDIO_MAX_UPLOAD_BYTES', AUDIO_DEFAULT_MAX_UPLOAD_BYTES))
 MAX_POST_BYTES = 1024 * 1024
+FACULTY_JOBS_AUTO_UPDATE = os.environ.get(
+    'FACULTY_JOBS_AUTO_UPDATE', '1').strip().lower() in ('1', 'true', 'yes')
+FACULTY_JOBS_UPDATE_HOURS = max(1, int(os.environ.get('FACULTY_JOBS_UPDATE_HOURS', '24')))
+FACULTY_JOBS_HTTP_TIMEOUT = max(3, int(os.environ.get('FACULTY_JOBS_HTTP_TIMEOUT', '20')))
+FACULTY_JOBS_MAX_PAGES = max(1, int(os.environ.get('FACULTY_JOBS_MAX_PAGES_PER_SOURCE', '1')))
+FACULTY_JOBS_ALLOW_REMOTE_PRIVATE = os.environ.get(
+    'FACULTY_JOBS_ALLOW_REMOTE_PRIVATE', '0').strip().lower() in ('1', 'true', 'yes')
 
-DB_PATH    = os.path.join(_ROOT, 'pboc_data.db')
+def _resolve_db_path():
+    """Keep the desktop service on the repository database when a stale
+    empty Codex runtime path is injected into the process environment.
+
+    The runtime harness may provide ``/tmp/research_tools_runtime_*.db`` for
+    isolated checks.  That is useful for tests, but it is not the user's local
+    research database; using it for the long-running desktop server makes the
+    page appear empty.  A non-empty explicitly configured path is preserved.
+    """
+    default_path = os.path.join(_ROOT, 'pboc_data.db')
+    configured = os.environ.get('PBOC_DB_PATH', '').strip()
+    if not configured:
+        return default_path
+    normalized = configured.replace('\\', '/').lower()
+    if normalized.startswith('/tmp/research_tools_runtime_'):
+        try:
+            runtime_size = os.path.getsize(configured) if os.path.exists(configured) else 0
+        except OSError:
+            runtime_size = 0
+        if os.path.exists(default_path) and runtime_size < 1024 * 1024:
+            log.warning('检测到临时运行库为空或过小，回退到主库: %s', default_path)
+            return default_path
+    return configured
+
+
+DB_PATH    = _resolve_db_path()
 STATIC_DIR = os.path.join(_ROOT, 'static')
 ABDC_PATH  = os.path.join(_ROOT, 'data', 'abdc_data.json')
-PAPER_TRANSLATION = PaperTranslationManager(os.path.join(_ROOT, 'data', 'translation_jobs'))
-AUDIO_TRANSCRIPTION = AudioTranscriptionManager(
+PAPER_TRANSLATION = (PaperTranslationManager(os.path.join(_ROOT, 'data', 'translation_jobs'))
+                     if PAPER_TRANSLATION_ENABLED else None)
+AUDIO_TRANSCRIPTION = (AudioTranscriptionManager(
     os.path.join(_ROOT, 'data', 'audio_jobs'), max_upload_bytes=AUDIO_MAX_UPLOAD_BYTES)
+    if AUDIO_TRANSCRIPTION_ENABLED else None)
 YUEDU_FM = YueduFMManager(os.path.join(_ROOT, 'data', 'yuedu_fm'))
 CARDCOOKIE_MONITOR = CardCookieMonitorManager(
     os.path.join(_ROOT, 'data', 'cardcookie_monitor.db'),
     secrets_path=os.path.join(_ROOT, '.secrets'))
+# 阅读副本转换只用本机 PyMuPDF，不依赖 GPU，因此不套 *_ENABLED 开关。
+EBOOK_CONVERSION = EbookConversionManager(os.path.join(_ROOT, 'data', 'ebook_jobs'))
 BASE    = 'https://www.pbc.gov.cn'
 INDEX_URL = BASE + '/goutongjiaoliu/113456/113469/index.html'
 HEADERS = {
@@ -519,6 +653,11 @@ def init_db():
         ensure_pboc_buyout_reverse_repo_tables(conn)
         ensure_mof_treasury_bond_tables(conn)
         ensure_astar_tables(conn)
+        ensure_china_macro_tables(conn)
+        ensure_hong_kong_macro_tables(conn)
+        # Business Research user state is intentionally kept in its own small
+        # database; the large A* metadata database remains the paper source.
+        ensure_business_research_tables()
         # 不再批量重置爬取来源。来源 URL 是前端判断 cache/seed/live 的关键证据。
         reset_count = 0
         conn.commit()
@@ -556,6 +695,9 @@ def init_db():
                     )
         conn.commit()
 
+    # Academic Career uses a separate private SQLite/WAL store.  Its schema
+    # creation is idempotent and intentionally kept outside the macro DB.
+    ensure_faculty_jobs_tables(FACULTY_DB_PATH)
     total = get_db().execute('SELECT COUNT(*) FROM monthly_data').fetchone()[0]
     log.info(f'DB 就绪 — 种子新增 {seeded} 条，库中共 {total} 个月')
 
@@ -1451,12 +1593,41 @@ def _is_loopback_address(address):
         return False
 
 
+def _effective_client_ip(client_ip, headers=None):
+    """Resolve the original client IP for an explicitly trusted CF proxy.
+
+    ``cloudflared`` forwards public requests to the local origin and adds
+    ``CF-Connecting-IP``. Without this distinction the origin would see every
+    tunneled request as ``127.0.0.1`` and grant local write/private-file access.
+    We only inspect the header when the operator explicitly enables Cloudflare
+    mode and the socket peer is loopback; malformed values keep the peer IP.
+    """
+    if not TRUST_CLOUDFLARE_HEADERS or not _is_loopback_address(client_ip):
+        return client_ip
+    candidate = str((headers or {}).get('CF-Connecting-IP') or '').strip()
+    if not candidate:
+        return client_ip
+    try:
+        ipaddress.ip_address(candidate.split('%', 1)[0])
+    except ValueError:
+        return client_ip
+    return candidate
+
+
 def _write_request_allowed(client_ip, supplied_token=''):
     """Keep LAN viewing available while protecting all state-changing routes."""
     if _is_loopback_address(client_ip) or ALLOW_REMOTE_WRITES:
         return True
     return bool(ADMIN_TOKEN and supplied_token and
                 hmac.compare_digest(ADMIN_TOKEN, supplied_token))
+
+
+def _faculty_jobs_private_access_allowed(client_ip, supplied_token=''):
+    """Keep profile/application state local unless explicitly opted in."""
+    if _is_loopback_address(client_ip):
+        return True
+    return bool(FACULTY_JOBS_ALLOW_REMOTE_PRIVATE and
+                _write_request_allowed(client_ip, supplied_token))
 
 
 def _translation_access_allowed(client_ip, supplied_token=''):
@@ -1491,9 +1662,44 @@ def _cardcookie_monitor_access_allowed(client_ip, supplied_token=''):
                 _write_request_allowed(client_ip, supplied_token))
 
 
+def _ebook_access_allowed(client_ip, supplied_token=''):
+    """Folder listing and converted books are loopback-only unless opted in.
+
+    This route can enumerate arbitrary local folders and copy files onto disk,
+    so it must never be reachable from the campus network by default.
+    """
+    if _is_loopback_address(client_ip):
+        return True
+    return bool(EBOOK_ALLOW_REMOTE and
+                _write_request_allowed(client_ip, supplied_token))
+
+
+def _disabled_gpu_module_for_path(path):
+    """Return the disabled GPU-backed module addressed by an HTTP path."""
+    translation_path = (
+        path in ('/paper-translation', '/paper-translation/', '/paper_translation.html',
+                 '/api/translation') or
+        path.startswith('/paper-translation/') or
+        path.startswith('/api/translation/')
+    )
+    if translation_path and not PAPER_TRANSLATION_ENABLED:
+        return 'paper_translation'
+
+    audio_path = (
+        path in ('/audio-transcription', '/audio-transcription/',
+                 '/audio_transcription.html', '/audio_transcription_result.html',
+                 '/api/audio') or
+        path.startswith('/audio-transcription/') or
+        path.startswith('/api/audio/')
+    )
+    if audio_path and not AUDIO_TRANSCRIPTION_ENABLED:
+        return 'audio_transcription'
+    return None
+
+
 def cors_headers(origin=None):
     headers = {
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
         'Access-Control-Allow-Headers': ('Content-Type, X-Research-Admin-Token, '
                                          'X-File-Name, X-Translation-Options, X-Audio-Options'),
         'Content-Type': 'application/json; charset=utf-8',
@@ -1517,8 +1723,35 @@ def _parse_housing_scenario_horizon(query, default=24):
         return int(default), None
 
 
+def _parse_macro_housing_linkage(query):
+    """Parse the optional macro-to-housing overlay without broadening defaults."""
+    enabled = str(query.get('macro_link') or '').strip().lower() in (
+        '1', 'true', 'yes', 'on')
+    if not enabled:
+        return None
+    selectors = {}
+    for key in ('growth', 'credit', 'sales', 'population', 'lpr'):
+        value = str(query.get(f'macro_{key}') or 'auto').strip().lower()
+        selectors[key] = value if value in ('auto', 'upper', 'base', 'lower') else 'auto'
+    return {'enabled': True, 'selectors': selectors}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args): pass
+
+    def _client_ip(self):
+        return _effective_client_ip(self.client_address[0], self.headers)
+
+    def _reject_disabled_gpu_module(self, path):
+        module = _disabled_gpu_module_for_path(path)
+        if not module:
+            return False
+        self.send_json({
+            'error': '该本地 GPU 工具已关闭',
+            'code': 'module_disabled',
+            'module': module,
+        }, 404, cache_control='no-store, private')
+        return True
 
     def send_json(self, data, code=200, cache_control=None):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -1535,6 +1768,25 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             # 客户端在响应写完前断开(刷新/离开/等不及)——正常现象，静默丢弃，
             # 不让异常冒泡到 socketserver 刷屏日志、也不影响其它线程。
+            pass
+
+    def send_csv(self, text, download_name):
+        body = text.encode('utf-8')
+        fallback = re.sub(r'[^A-Za-z0-9._-]+', '_', download_name) or 'export.csv'
+        try:
+            self.send_response(200)
+            for k, v in cors_headers(self.headers.get('Origin')).items():
+                if k.lower() != 'content-type':
+                    self.send_header(k, v)
+            self.send_header('Content-Type', 'text/csv; charset=utf-8')
+            self.send_header('Content-Disposition',
+                             f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(download_name)}')
+            self.send_header('Cache-Control', 'no-store, private')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Content-Length', len(body))
+            self.end_headers()
+            self.wfile.write(body)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass
 
     def send_file(self, file_path):
@@ -1638,9 +1890,19 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass
 
+    def _require_faculty_jobs_private(self):
+        allowed = _faculty_jobs_private_access_allowed(
+            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
+        if not allowed:
+            self.send_json({
+                'error': '学术职业个人资料和申请追踪默认仅允许服务本机访问',
+                'code': 'academic_career_local_only',
+            }, 403, cache_control='no-store, private')
+        return allowed
+
     def _require_translation_access(self):
         allowed = _translation_access_allowed(
-            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
         if not allowed:
             self.send_json({
                 'error': '论文翻译文件默认仅允许服务器本机访问',
@@ -1650,7 +1912,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _require_audio_access(self):
         allowed = _audio_access_allowed(
-            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
         if not allowed:
             self.send_json({
                 'error': '原始录音、转录与字幕默认仅允许服务器本机访问',
@@ -1660,7 +1922,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _require_yuedu_fm_access(self):
         allowed = _yuedu_fm_access_allowed(
-            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
         if not allowed:
             self.send_json({
                 'error': '悦读FM 本地资料默认仅允许服务器本机访问',
@@ -1670,11 +1932,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def _require_cardcookie_monitor_access(self):
         allowed = _cardcookie_monitor_access_allowed(
-            self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
         if not allowed:
             self.send_json({
                 'error': 'CardCookie 监控和邮件设置默认仅允许服务器本机访问',
                 'code': 'cardcookie_monitor_local_only',
+            }, 403)
+        return allowed
+
+    def _require_ebook_access(self):
+        allowed = _ebook_access_allowed(
+            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
+        if not allowed:
+            self.send_json({
+                'error': '本机文件夹浏览与阅读副本默认仅允许服务器本机访问',
+                'code': 'ebook_local_only',
             }, 403)
         return allowed
 
@@ -1688,26 +1960,117 @@ class Handler(BaseHTTPRequestHandler):
         self.send_file(target)
 
     def do_OPTIONS(self):
+        path = urlparse(self.path).path
+        if self._reject_disabled_gpu_module(path):
+            return
         self.send_response(204)
         for k,v in cors_headers(self.headers.get('Origin')).items(): self.send_header(k,v)
         self.end_headers()
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if self._reject_disabled_gpu_module(path):
+            return
         try:
             # API routes
             if   path == '/api/data':       self._api_data()
             elif path == '/api/status':     self._api_status()
             elif path == '/api/health':
                 can_write = _write_request_allowed(
-                    self.client_address[0], self.headers.get('X-Research-Admin-Token', ''))
+                    self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
                 self.send_json({'status':'ok', 'time':datetime.now().isoformat(),
                                 'bound_host': HOST, 'client_can_write': can_write,
-                                'access_mode': 'manage' if can_write else 'read_only'})
+                                'access_mode': 'manage' if can_write else 'read_only',
+                                'modules': {
+                                    'paper_translation': {'enabled': PAPER_TRANSLATION_ENABLED},
+                                    'audio_transcription': {'enabled': AUDIO_TRANSCRIPTION_ENABLED},
+                                }})
             elif path == '/api/jobs':
                 with _JOBS_LOCK:
                     jobs = dict(_JOBS)
                 self.send_json({'update_lock_busy': _UPDATE_LOCK.locked(), 'jobs': jobs})
+            elif path == '/api/faculty-jobs':
+                query = self._query_params()
+                include_private = str(query.get('private') or '').lower() in ('1', 'true', 'yes')
+                if not include_private or self._require_faculty_jobs_private():
+                    self.send_json(build_faculty_jobs_payload(
+                        FACULTY_DB_PATH, query=query, include_private=include_private),
+                        cache_control='no-store, private' if include_private else 'no-store')
+            elif path == '/api/faculty-jobs/summary':
+                self.send_json(build_faculty_job_summary(FACULTY_DB_PATH, query=self._query_params()), cache_control='no-store')
+            elif path == '/api/faculty-jobs/filters':
+                self.send_json(build_faculty_job_filters(FACULTY_DB_PATH, query=self._query_params()), cache_control='no-store')
+            elif path == '/api/faculty-jobs/sources':
+                self.send_json(build_faculty_job_sources(FACULTY_DB_PATH), cache_control='no-store')
+            elif path == '/api/faculty-jobs/aacsb/summary':
+                self.send_json(build_aacsb_directory_summary(FACULTY_DB_PATH), cache_control='no-store')
+            elif path == '/api/faculty-jobs/aacsb/filters':
+                self.send_json(build_aacsb_directory_filters(FACULTY_DB_PATH), cache_control='no-store')
+            elif path == '/api/faculty-jobs/aacsb/directory':
+                query = self._query_params()
+                self.send_json(list_aacsb_directory(
+                    FACULTY_DB_PATH, query=query, limit=query.get('limit', 50), offset=query.get('offset', 0)),
+                    cache_control='no-store')
+            elif path == '/api/faculty-jobs/runs':
+                self.send_json(build_faculty_job_runs(
+                    FACULTY_DB_PATH, limit=self._query_params().get('limit', 50)),
+                    cache_control='no-store')
+            elif path == '/api/faculty-jobs/saved-searches':
+                if self._require_faculty_jobs_private():
+                    self.send_json(list_saved_searches(FACULTY_DB_PATH), cache_control='no-store, private')
+            elif path == '/api/faculty-jobs/alerts':
+                if self._require_faculty_jobs_private():
+                    query = self._query_params()
+                    self.send_json(list_saved_search_alerts(
+                        FACULTY_DB_PATH, search_id=query.get('search_id'),
+                        unread_only=str(query.get('unread_only') or '').lower() in {'1', 'true', 'yes'},
+                        limit=query.get('limit', 100)), cache_control='no-store, private')
+            elif path == '/api/faculty-jobs/duplicates':
+                if self._require_faculty_jobs_private():
+                    query = self._query_params()
+                    self.send_json(list_possible_duplicates(
+                        FACULTY_DB_PATH,
+                        include_resolved=str(query.get('include_resolved') or '').lower() in {'1', 'true', 'yes'},
+                        limit=query.get('limit', 100), offset=query.get('offset', 0)),
+                        cache_control='no-store, private')
+            elif path == '/api/faculty-jobs/export.csv':
+                query = self._query_params()
+                include_private = str(query.get('private') or '').lower() in ('1', 'true', 'yes')
+                if not include_private or self._require_faculty_jobs_private():
+                    self.send_csv(export_faculty_jobs_csv(
+                        FACULTY_DB_PATH, query=query, include_private=include_private),
+                        'faculty_jobs.csv')
+            elif path == '/api/faculty-jobs/profile':
+                if self._require_faculty_jobs_private():
+                    self.send_json(get_profile(), cache_control='no-store, private')
+            elif re.match(r'^/api/faculty-jobs/\d+$', path):
+                job_id = int(path.rsplit('/', 1)[1])
+                query = self._query_params()
+                include_private = str(query.get('private') or '').lower() in ('1', 'true', 'yes')
+                if not include_private or self._require_faculty_jobs_private():
+                    self.send_json(build_faculty_job_detail(
+                        FACULTY_DB_PATH, job_id, include_private=include_private),
+                        cache_control='no-store, private' if include_private else 'no-store')
+            elif path == '/api/schools':
+                self.send_json(list_schools(
+                    FACULTY_DB_PATH, query=self._query_params(),
+                    limit=self._query_params().get('limit', 50),
+                    offset=self._query_params().get('offset', 0)), cache_control='no-store')
+            elif path == '/api/schools/compare':
+                query = self._query_params()
+                ids = [item for item in re.split(r'[,\s]+', query.get('ids', '')) if item]
+                self.send_json(compare_schools(FACULTY_DB_PATH, ids), cache_control='no-store')
+            elif path == '/api/institution-aliases':
+                if self._require_faculty_jobs_private():
+                    self.send_json(list_institution_aliases(FACULTY_DB_PATH, self._query_params().get('limit', 200)), cache_control='no-store, private')
+            elif re.match(r'^/api/schools/\d+$', path):
+                self.send_json(school_detail(
+                    FACULTY_DB_PATH, int(path.rsplit('/', 1)[1])), cache_control='no-store')
+            elif path == '/api/job-market-analytics':
+                self.send_json(build_job_market_analytics(FACULTY_DB_PATH, query=self._query_params()), cache_control='no-store')
+            elif path == '/api/my-applications':
+                if self._require_faculty_jobs_private():
+                    self.send_json(list_my_applications(FACULTY_DB_PATH), cache_control='no-store, private')
             elif path == '/api/translation/config':
                 if self._require_translation_access():
                     self.send_json(PAPER_TRANSLATION.config(), cache_control='no-store, private')
@@ -1739,6 +2102,28 @@ class Handler(BaseHTTPRequestHandler):
                 if self._require_translation_access():
                     self.send_json(PAPER_TRANSLATION.get_job(path.rsplit('/', 1)[1]),
                                    cache_control='no-store, private')
+            elif path == '/api/ebook/config':
+                if self._require_ebook_access():
+                    self.send_json(EBOOK_CONVERSION.config(),
+                                   cache_control='no-store, private')
+            elif path == '/api/ebook/scan':
+                self._api_ebook_scan()
+            elif path == '/api/ebook/bundle':
+                self._api_ebook_bundle()
+            elif path == '/api/ebook/jobs':
+                if self._require_ebook_access():
+                    self.send_json({'jobs': EBOOK_CONVERSION.list_jobs()},
+                                   cache_control='no-store, private')
+            elif re.match(r'^/api/ebook/jobs/[0-9a-f]{32}/download$', path):
+                self._api_ebook_download(path.split('/')[4])
+            elif re.match(r'^/api/ebook/jobs/[0-9a-f]{32}$', path):
+                if self._require_ebook_access():
+                    try:
+                        self.send_json(EBOOK_CONVERSION.get_job(path.rsplit('/', 1)[1]),
+                                       cache_control='no-store, private')
+                    except EbookConversionError as exc:
+                        self.send_json({'error': str(exc)}, 404,
+                                       cache_control='no-store, private')
             elif path == '/api/audio/config':
                 if self._require_audio_access():
                     self.send_json(AUDIO_TRANSCRIPTION.config())
@@ -1810,6 +2195,81 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
             elif path == '/api/china-macro/data': self.send_json(build_china_macro_payload(DB_PATH))
+            elif path == '/api/hong-kong-macro/data':
+                try:
+                    payload = build_hong_kong_macro_payload(DB_PATH, self._query_params())
+                    can_write = _write_request_allowed(
+                        self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
+                    payload.setdefault('meta', {}).update({
+                        'access_mode': 'manage' if can_write else 'read_only',
+                        'client_can_write': can_write,
+                    })
+                    self.send_json(payload)
+                except ValueError as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
+            elif path == '/api/hong-kong-macro/debug':
+                self.send_json(build_hong_kong_macro_debug(DB_PATH))
+            elif path == '/api/hong-kong-macro/export.csv':
+                try:
+                    self.send_csv(build_hong_kong_macro_csv(DB_PATH, self._query_params()), 'hong_kong_macro.csv')
+                except ValueError as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
+            elif path.startswith('/api/hong-kong-macro/csd-web-table/') and path.endswith('.csv'):
+                table_id = path.rsplit('/', 1)[1][:-4]
+                try:
+                    self.send_csv(build_hong_kong_macro_csd_web_table_csv(
+                        DB_PATH, table_id, self._query_params()),
+                        f'hong_kong_csd_{table_id}.csv')
+                except ValueError as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
+            elif path.startswith('/api/hong-kong-macro/csd-web-table/'):
+                table_id = path.rsplit('/', 1)[1]
+                try:
+                    self.send_json(build_hong_kong_macro_csd_web_table_payload(
+                        DB_PATH, table_id, self._query_params()))
+                except ValueError as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
+            elif path == '/api/hong-kong-macro/trade-dimensions.csv':
+                self.send_csv(build_hong_kong_macro_trade_dimensions_csv(DB_PATH),
+                              'hong_kong_trade_dimensions.csv')
+            elif path == '/api/hong-kong-macro/trade-dimensions':
+                q = self._query_params()
+                latest_only = str(q.get('latest', '1')).lower() not in ('0', 'false', 'no')
+                top_n = q.get('top_n', '10')
+                if str(top_n).lower() in ('none', 'all', '0'):
+                    top_n = None
+                try:
+                    self.send_json(build_hong_kong_macro_trade_dimensions_payload(
+                        DB_PATH, dimension_type=q.get('dimension_type'),
+                        start_period=q.get('start'), end_period=q.get('end'),
+                        latest_only=latest_only, top_n=top_n))
+                except ValueError as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
+            elif path == '/api/hong-kong-macro/lead-lag':
+                q = self._query_params()
+                try:
+                    min_overlap = int(q.get('min_overlap', 60))
+                except (TypeError, ValueError):
+                    self.send_json({'success': False, 'status': 'invalid_request',
+                                    'error': 'min_overlap 必须是整数'}, 400)
+                    return
+                if min_overlap < 2:
+                    self.send_json({'success': False, 'status': 'invalid_request',
+                                    'error': 'min_overlap 必须至少为 2'}, 400)
+                    return
+                result = build_lead_lag_payload(
+                    DB_PATH, hk_indicator=q.get('hk_indicator'),
+                    mainland_indicator=q.get('mainland_indicator'),
+                    transform=q.get('transform') or 'yoy',
+                    min_overlap=min_overlap)
+                code = 500 if result.get('status') == 'failed' else (
+                    400 if result.get('status') in ('invalid_request', 'unsupported_transform') else 200)
+                self.send_json(result, code)
+            elif path == '/api/hong-kong-macro/lead-lag/saved':
+                q = self._query_params()
+                self.send_json(build_saved_lead_lag_payload(
+                    DB_PATH, snapshot_id=q.get('snapshot_id'), pair_code=q.get('pair_code'),
+                    limit=q.get('limit', 20)))
             elif path == '/api/us-macro/data':    self.send_json(build_us_macro_payload(DB_PATH))
             elif path == '/api/gdp/data':         self.send_json(build_gdp_payload(DB_PATH))
             elif path == '/api/housing-scenario/cities':
@@ -1840,6 +2300,7 @@ class Handler(BaseHTTPRequestHandler):
                         'base': _formation('formation_base', 0.0),
                         'stress': _formation('formation_stress', -15.0),
                     }
+                    macro_linkage = _parse_macro_housing_linkage(q)
                     self.send_json(build_housing_scenario_comparison(
                         DB_PATH, cities=cities or None,
                         kind=q.get('kind') or 'second',
@@ -1847,7 +2308,8 @@ class Handler(BaseHTTPRequestHandler):
                         source=q.get('source') or 'official',
                         end_period=end_period,
                         structural_weight=structural_weight,
-                        formation_adjustments=formation_adjustments))
+                        formation_adjustments=formation_adjustments,
+                        macro_linkage=macro_linkage))
                 except (TypeError, ValueError) as exc:
                     self.send_json({'success': False, 'data_status': 'scenario',
                                     'error': str(exc)}, 400)
@@ -1881,6 +2343,7 @@ class Handler(BaseHTTPRequestHandler):
                             for scenario_kind in override_kinds:
                                 over.setdefault(scenario_kind, {})[key] = rate
                 try:
+                    macro_linkage = _parse_macro_housing_linkage(q)
                     self.send_json(build_housing_scenario_payload(
                         DB_PATH, q.get('city') or '厦门',
                         horizon=scenario_horizon,
@@ -1888,7 +2351,8 @@ class Handler(BaseHTTPRequestHandler):
                         overrides=over or None,
                         city_code=q.get('city_code'), source=source,
                         end_period=end_period,
-                        structural_weight=_num('structural_weight', 0.40, 0.0, 1.0)))
+                        structural_weight=_num('structural_weight', 0.40, 0.0, 1.0),
+                        macro_linkage=macro_linkage))
                 except (TypeError, ValueError) as exc:
                     self.send_json({'success': False, 'data_status': 'scenario',
                                     'error': str(exc)}, 400)
@@ -1931,6 +2395,19 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/analytics': self.send_json(_analytics_payload())
             elif path in ('/api/analytics/china','/api/analytics/us','/api/analytics/cross','/api/analytics/housing','/api/analytics/debt'):
                 self.send_json(_analytics_payload()[path.rsplit('/', 1)[1]])
+            elif path == '/api/macro-scenario':
+                q = self._query_params()
+                try:
+                    self.send_json(build_macro_scenario_payload(
+                        DB_PATH, indicator=q.get('indicator'),
+                        horizon=q.get('horizon', 12),
+                        simulations=q.get('simulations', 1000),
+                        seed=q.get('seed', 20260816)),
+                        cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'success': False, 'data_status': 'scenario',
+                                    'error': str(exc)}, 400,
+                                   cache_control='no-store, private')
             elif path == '/api/whats-new':        self.send_json(build_whats_new_payload(DB_PATH))
             elif path == '/api/housing/data':     self.send_json(build_housing_payload(DB_PATH))
             elif path == '/api/housing/anjuke':   self.send_json(build_anjuke_payload())
@@ -1944,6 +2421,38 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({'available': True, 'articles': [], 'journal_match': []})
                 else:
                     self.send_json(semantic_search(q, topk=int(p.get('topk', 30))))
+            # Business Research Phase 2: shared theory / construct / method /
+            # paper workspace / landscape payloads.  The catalog is separate
+            # from the A* article cache; paper records are read from the
+            # existing astar_articles tables.
+            elif path == '/api/abdc/research/overview':
+                self.send_json(build_research_overview(DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/search':
+                self.send_json(build_research_search(self._query_params(), DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/theories':
+                self.send_json(build_theories_payload(self._query_params(), DB_PATH), cache_control='no-store')
+            elif re.match(r'^/api/abdc/research/theories/[^/]+$', path):
+                self.send_json(build_theory_detail(unquote(path.rsplit('/', 1)[1]), DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/constructs':
+                self.send_json(build_constructs_payload(self._query_params(), DB_PATH), cache_control='no-store')
+            elif re.match(r'^/api/abdc/research/constructs/[^/]+$', path):
+                self.send_json(build_construct_detail(unquote(path.rsplit('/', 1)[1]), self._query_params(), DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/methods':
+                self.send_json(build_methods_payload(self._query_params(), DB_PATH), cache_control='no-store')
+            elif re.match(r'^/api/abdc/research/methods/[^/]+$', path):
+                self.send_json(build_method_detail(unquote(path.rsplit('/', 1)[1]), DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/papers':
+                self.send_json(build_papers_payload(self._query_params(), DB_PATH), cache_control='no-store')
+            elif re.match(r'^/api/abdc/research/papers/\d+$', path):
+                self.send_json(build_paper_workspace(int(path.rsplit('/', 1)[1]), DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/landscape':
+                self.send_json(build_landscape_payload(self._query_params(), DB_PATH), cache_control='no-store')
+            elif path == '/api/abdc/research/library':
+                # Recently opened papers are held per browser; the client passes
+                # the ids it knows so the shelf can resolve them server-side.
+                recent = [item for item in re.split(r'[,\s]+', self._query_params().get('recent', '')) if item.isdigit()]
+                self.send_json(build_library_payload(DB_PATH, recent_ids=recent[:12]),
+                               cache_control='no-store, private')
             # Static page routes
             elif path == '/favicon.ico':
                 self.send_response(204)
@@ -1958,16 +2467,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'fiscal_debt_debug.html'))
             elif path in ('/fiscal-debt', '/fiscal-debt/'):
                 self.send_file(os.path.join(STATIC_DIR, 'fiscal_debt.html'))
+            elif path in ('/abdc/research', '/abdc/research/', '/research', '/research/') or re.match(
+                    r'^/(?:abdc/)?(?:research/)?(?:theories|constructs|methods|papers|landscape|library)(?:/[^/]+)?/?$', path):
+                self.send_file(os.path.join(STATIC_DIR, 'business_research.html'))
             elif path in ('/abdc', '/abdc/', '/abdc/index.html'):
                 self.send_file(os.path.join(STATIC_DIR, 'abdc', 'index.html'))
             elif path in ('/abdc-astar-research', '/abdc-astar-research/'):
                 self.send_file(os.path.join(STATIC_DIR, 'abdc_astar_research.html'))
+            elif path in ('/faculty-jobs', '/faculty-jobs/'):
+                self.send_file(os.path.join(STATIC_DIR, 'faculty_jobs.html'))
+            elif path in ('/school-explorer', '/school-explorer/'):
+                self.send_file(os.path.join(STATIC_DIR, 'school_explorer.html'))
+            elif path in ('/job-market-analytics', '/job-market-analytics/'):
+                self.send_file(os.path.join(STATIC_DIR, 'job_market_analytics.html'))
+            elif path in ('/my-applications', '/my-applications/'):
+                self.send_file(os.path.join(STATIC_DIR, 'my_applications.html'))
             elif path in ('/paper-translation', '/paper-translation/'):
                 self.send_file(os.path.join(STATIC_DIR, 'paper_translation.html'))
             elif path in ('/audio-transcription', '/audio-transcription/'):
                 self.send_file(os.path.join(STATIC_DIR, 'audio_transcription.html'))
             elif re.match(r'^/audio-transcription/results/[0-9a-f]{32}/?$', path):
                 self.send_file(os.path.join(STATIC_DIR, 'audio_transcription_result.html'))
+            elif path in ('/ebook-conversion', '/ebook-conversion/'):
+                self.send_file(os.path.join(STATIC_DIR, 'ebook_conversion.html'))
             elif path in ('/yuedu-fm', '/yuedu-fm/'):
                 self.send_file(os.path.join(STATIC_DIR, 'yuedu_fm.html'))
             elif path in ('/cardcookie-monitor', '/cardcookie-monitor/'):
@@ -1976,12 +2498,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'china_rates.html'))
             elif path in ('/china-macro', '/china-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'china_macro.html'))
+            elif path in ('/hong-kong-macro', '/hong-kong-macro/'):
+                self.send_file(os.path.join(STATIC_DIR, 'hong_kong_macro.html'))
             elif path in ('/us-macro', '/us-macro/'):
                 self.send_file(os.path.join(STATIC_DIR, 'us_macro.html'))
             elif path in ('/gdp', '/gdp/'):
                 self.send_file(os.path.join(STATIC_DIR, 'gdp.html'))
             elif path in ('/macro-analytics', '/macro-analytics/'):
                 self.send_file(os.path.join(STATIC_DIR, 'macro_analytics.html'))
+            elif path in ('/macro-scenario', '/macro-scenario/'):
+                self.send_file(os.path.join(STATIC_DIR, 'macro_scenario.html'))
             elif path in ('/housing', '/housing/'):
                 self.send_file(os.path.join(STATIC_DIR, 'housing.html'))
             elif path in ('/debt-ceiling', '/debt-ceiling/'):
@@ -2001,8 +2527,48 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json({'error':str(e)},500)
 
+    def do_PATCH(self):
+        path = urlparse(self.path).path
+        if self._reject_disabled_gpu_module(path):
+            return
+        try:
+            content_length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            self.send_json({'error': 'invalid Content-Length'}, 400)
+            return
+        if content_length > MAX_POST_BYTES:
+            self.send_json({'error': 'request body too large', 'max_bytes': MAX_POST_BYTES}, 413)
+            return
+        if not _write_request_allowed(
+                self._client_ip(), self.headers.get('X-Research-Admin-Token', '')):
+            self.send_json({
+                'error': '当前为局域网只读访问；更新、保存和情景运行仅允许本机操作',
+                'code': 'remote_write_forbidden',
+            }, 403)
+            return
+        if re.match(r'^/api/my-applications/\d+$', path):
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(patch_application(
+                        FACULTY_DB_PATH, int(path.rsplit('/', 1)[1]), self._read_json_body()),
+                        cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif re.match(r'^/api/faculty-jobs/duplicates/\d+$', path):
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(resolve_possible_duplicate(
+                        FACULTY_DB_PATH, int(path.rsplit('/', 1)[1]), self._read_json_body()),
+                        cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        else:
+            self.send_json({'error': 'not found'}, 404)
+
     def do_POST(self):
         path = urlparse(self.path).path
+        if self._reject_disabled_gpu_module(path):
+            return
         try:
             content_length = int(self.headers.get('Content-Length') or 0)
         except ValueError:
@@ -2012,13 +2578,15 @@ class Handler(BaseHTTPRequestHandler):
             request_limit = TRANSLATION_MAX_UPLOAD_BYTES
         elif path == '/api/audio/jobs':
             request_limit = AUDIO_MAX_UPLOAD_BYTES
+        elif path == '/api/ebook/jobs':
+            request_limit = EBOOK_MAX_UPLOAD_BYTES
         else:
             request_limit = MAX_POST_BYTES
         if content_length > request_limit:
             self.send_json({'error': 'request body too large', 'max_bytes': request_limit}, 413)
             return
         if not _write_request_allowed(
-                self.client_address[0], self.headers.get('X-Research-Admin-Token', '')):
+                self._client_ip(), self.headers.get('X-Research-Admin-Token', '')):
             self.send_json({
                 'error': '当前为局域网只读访问；更新、保存和情景运行仅允许本机操作',
                 'code': 'remote_write_forbidden',
@@ -2026,6 +2594,147 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/scrape':
             self.send_json(_run_update_job('pboc_scrape', scrape_and_update))
+        elif path == '/api/faculty-jobs/update':
+            body = self._read_json_body()
+            sources = body.get('sources', body.get('source_names'))
+            if sources is not None and not isinstance(sources, list):
+                self.send_json({'error': 'sources must be an array'}, 400)
+                return
+            try:
+                timeout = int(body.get('timeout', FACULTY_JOBS_HTTP_TIMEOUT))
+                max_pages = int(body.get('max_pages', FACULTY_JOBS_MAX_PAGES))
+                timeout = max(3, min(120, timeout))
+                max_pages = max(1, min(5, max_pages))
+            except (TypeError, ValueError):
+                self.send_json({'error': 'timeout and max_pages must be integers'}, 400)
+                return
+            self.send_json(_run_update_job(
+                'faculty_jobs', lambda: update_faculty_jobs(
+                    FACULTY_DB_PATH, source_names=sources, timeout=timeout, max_pages=max_pages)))
+        elif path == '/api/faculty-jobs/aacsb/update':
+            body = self._read_json_body()
+            try:
+                max_pages = max(1, min(150, int(body.get('max_pages', 110))))
+                max_records = int(body['max_records']) if body.get('max_records') is not None else None
+                max_records = max(1, min(2000, max_records)) if max_records is not None else None
+                max_details = int(body['max_details']) if body.get('max_details') is not None else None
+                max_details = max(0, min(2000, max_details)) if max_details is not None else None
+                max_schools = int(body['max_schools']) if body.get('max_schools') is not None else None
+                max_schools = max(0, min(2000, max_schools)) if max_schools is not None else None
+                timeout = max(3, min(120, int(body.get('timeout', 20))))
+                delay = max(0.1, min(10.0, float(body.get('delay', 0.45))))
+                max_jobs_per_school = max(1, min(100, int(body.get('max_jobs_per_school', 20))))
+                site_max_pages = max(1, min(8, int(body.get('site_max_pages', 2))))
+            except (TypeError, ValueError):
+                self.send_json({'error': 'AACSB scan limits must be valid bounded numbers'}, 400)
+                return
+            if bool(body.get('scan_existing', False)):
+                try:
+                    offset = max(0, int(body.get('offset', 0)))
+                except (TypeError, ValueError):
+                    self.send_json({'error': 'offset must be an integer'}, 400)
+                    return
+                self.send_json(_run_update_job(
+                    'aacsb_official', lambda: scan_aacsb_official_websites(
+                        FACULTY_DB_PATH, max_schools=max_schools or 25, offset=offset,
+                        include_checked=bool(body.get('include_checked', False)),
+                        timeout=timeout, delay=delay,
+                        max_jobs_per_school=max_jobs_per_school,
+                        site_max_pages=site_max_pages)))
+            else:
+                self.send_json(_run_update_job(
+                    'aacsb_official', lambda: update_aacsb_directory(
+                        FACULTY_DB_PATH, max_pages=max_pages, max_records=max_records,
+                        fetch_details=bool(body.get('fetch_details', True)),
+                        refresh_details=bool(body.get('refresh_details', False)),
+                        scan_websites=bool(body.get('scan_websites', False)), max_details=max_details,
+                        max_schools=max_schools, timeout=timeout, delay=delay,
+                        max_jobs_per_school=max_jobs_per_school,
+                        site_max_pages=site_max_pages)))
+        elif path == '/api/faculty-jobs/saved-searches':
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(save_saved_search(FACULTY_DB_PATH, self._read_json_body()), 201,
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif path == '/api/faculty-jobs/saved-searches/run':
+            if self._require_faculty_jobs_private():
+                try:
+                    body = self._read_json_body()
+                    self.send_json(run_saved_search_alerts(FACULTY_DB_PATH, body.get('search_id')),
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif path == '/api/faculty-jobs/saved-searches/delete':
+            if self._require_faculty_jobs_private():
+                try:
+                    body = self._read_json_body()
+                    self.send_json(delete_saved_search(FACULTY_DB_PATH, body.get('id')),
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif path == '/api/faculty-jobs/alerts/seen':
+            if self._require_faculty_jobs_private():
+                try:
+                    body = self._read_json_body()
+                    self.send_json(mark_saved_search_alerts_seen(FACULTY_DB_PATH, body.get('alert_ids', [])),
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif path == '/api/faculty-jobs/profile':
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(save_profile_payload(self._read_json_body()),
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif re.match(r'^/api/my-applications/\d+$', path):
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(patch_application(
+                        FACULTY_DB_PATH, int(path.rsplit('/', 1)[1]), self._read_json_body()),
+                        cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif path == '/api/my-applications':
+            if self._require_faculty_jobs_private():
+                body = self._read_json_body()
+                try:
+                    job_id = int(body.pop('job_id'))
+                    self.send_json(create_application(FACULTY_DB_PATH, job_id, body), 201,
+                                   cache_control='no-store, private')
+                except (KeyError, TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif re.match(r'^/api/schools/\d+/(enrich|override)$', path):
+            if self._require_faculty_jobs_private():
+                school_match = re.match(r'^/api/schools/(\d+)/(enrich|override)$', path)
+                school_id = int(school_match.group(1))
+                try:
+                    body = self._read_json_body()
+                    if school_match.group(2) == 'enrich':
+                        self.send_json(add_evidence(FACULTY_DB_PATH, school_id, body),
+                                       cache_control='no-store, private')
+                    else:
+                        self.send_json(save_override(FACULTY_DB_PATH, school_id, body),
+                                       cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif re.match(r'^/api/faculty-jobs/\d+/scope-override$', path):
+            if self._require_faculty_jobs_private():
+                try:
+                    job_id = int(path.split('/')[3])
+                    self.send_json(save_scope_override(FACULTY_DB_PATH, job_id, self._read_json_body()),
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        elif path == '/api/institution-aliases':
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(save_institution_alias(FACULTY_DB_PATH, self._read_json_body()),
+                                   cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
         elif path == '/api/financial/update':
             self._api_financial_update()
         elif path == '/api/fiscal-debt/update':
@@ -2045,6 +2754,56 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(_run_update_job(
                 'china_macro', lambda: update_china_macro_bundle(
                     DB_PATH, full_history=full_history, start_year=start_year)))
+        elif path == '/api/hong-kong-macro/update':
+            body = self._read_json_body()
+            full_history = bool(body.get('full_history'))
+            try:
+                start_year = int(body.get('start_year')) if body.get('start_year') else None
+            except (TypeError, ValueError):
+                self.send_json({'error': 'start_year 必须是年份整数'}, 400)
+                return
+            self.send_json(_run_update_job(
+                'hong_kong_macro', lambda: update_hong_kong_macro(
+                    DB_PATH, full_history=full_history, start_year=start_year)))
+        elif path == '/api/hong-kong-macro/retry-hkma':
+            body = self._read_json_body()
+            source_ids = body.get('source_ids')
+            if source_ids is not None and not isinstance(source_ids, list):
+                self.send_json({'error': 'source_ids 必须是数组'}, 400)
+                return
+            try:
+                start_year = int(body.get('start_year')) if body.get('start_year') else None
+            except (TypeError, ValueError):
+                self.send_json({'error': 'start_year 必须是年份整数'}, 400)
+                return
+            self.send_json(_run_update_job(
+                'hong_kong_macro_hkma', lambda: retry_hkma_sources(
+                    DB_PATH, source_ids=source_ids, start_year=start_year)))
+        elif path == '/api/hong-kong-macro/lead-lag/save':
+            body = self._read_json_body()
+            try:
+                min_overlap = int(body.get('min_overlap', 60))
+            except (TypeError, ValueError):
+                self.send_json({'success': False, 'status': 'invalid_request',
+                                'error': 'min_overlap 必须是整数'}, 400)
+                return
+            if min_overlap < 2:
+                self.send_json({'success': False, 'status': 'invalid_request',
+                                'error': 'min_overlap 必须至少为 2'}, 400)
+                return
+            payload = build_lead_lag_payload(
+                DB_PATH, hk_indicator=body.get('hk_indicator'),
+                mainland_indicator=body.get('mainland_indicator'),
+                transform=body.get('transform') or 'yoy', min_overlap=min_overlap)
+            if not payload.get('success'):
+                code = 500 if payload.get('status') == 'failed' else 400
+                self.send_json(payload, code)
+            else:
+                try:
+                    self.send_json(persist_lead_lag_payload(
+                        DB_PATH, payload, pair_code=body.get('pair_code')))
+                except ValueError as exc:
+                    self.send_json({'success': False, 'error': str(exc)}, 400)
         elif path == '/api/us-macro/update':
             self.send_json(_run_update_job('us_macro', lambda: update_us_macro(DB_PATH)))
         elif path == '/api/gdp/update':
@@ -2130,6 +2889,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'status': 'started', 'message': f'LLM 重新分类已启动（最多 {limit} 篇）'})
         elif path == '/api/abdc/astar/save':
             self._api_astar_save()
+        elif re.match(r'^/api/abdc/research/papers/\d+/state$', path):
+            self._api_business_research_state(int(path.split('/')[-2]))
+        elif re.match(r'^/api/abdc/research/papers/\d+/notes$', path):
+            self._api_business_research_note(int(path.split('/')[-2]))
+        elif re.match(r'^/api/abdc/research/papers/\d+/notes/\d+/delete$', path):
+            # Segments are …/papers/<paper_id>/notes/<note_id>/delete, so the
+            # paper id is the fourth from the end, not the third.
+            note_delete = re.match(r'^/api/abdc/research/papers/(\d+)/notes/(\d+)/delete$', path)
+            self._api_business_research_note_delete(int(note_delete.group(1)), int(note_delete.group(2)))
         elif path == '/api/abdc/astar/enrich':
             body = self._read_json_body()
             limit = body.get('limit')
@@ -2152,6 +2920,20 @@ class Handler(BaseHTTPRequestHandler):
             self._api_translation_retry(path.split('/')[4])
         elif re.match(r'^/api/translation/jobs/[0-9a-f]{32}/delete$', path):
             self._api_translation_delete(path.split('/')[4])
+        elif path == '/api/translation/probe':
+            self._api_translation_probe()
+        elif path == '/api/audio/probe':
+            self._api_audio_probe()
+        elif path == '/api/ebook/jobs':
+            self._api_ebook_create(content_length)
+        elif path == '/api/ebook/batches':
+            self._api_ebook_batch()
+        elif re.match(r'^/api/ebook/jobs/[0-9a-f]{32}/(retry|delete)$', path):
+            self._api_ebook_job_action(path.split('/')[4], path.rsplit('/', 1)[1])
+        elif path == '/api/ebook/deliver':
+            self._api_ebook_deliver()
+        elif path == '/api/ebook/send-to-kindle':
+            self._api_ebook_send_to_kindle()
         elif path == '/api/audio/jobs':
             self._api_audio_create(content_length)
         elif re.match(r'^/api/audio/jobs/[0-9a-f]{32}/retry$', path):
@@ -2269,6 +3051,170 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'error': str(exc)}, 400)
         except Exception:
             self.send_json({'error': '删除翻译任务失败'}, 500)
+
+    def _api_translation_probe(self):
+        """Explicit, user-initiated model check; the only GPU contact outside a job."""
+        if not self._require_translation_access():
+            return
+        try:
+            self.send_json(PAPER_TRANSLATION.probe_model(),
+                           cache_control='no-store, private')
+        except TranslationError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('检查翻译模型连接失败')
+            self.send_json({'error': '检查模型连接失败'}, 500)
+
+    def _api_audio_probe(self):
+        """Explicit, user-initiated cluster check; opens SSH only on this call."""
+        if not self._require_audio_access():
+            return
+        try:
+            self.send_json(AUDIO_TRANSCRIPTION.probe_services(),
+                           cache_control='no-store, private')
+        except AudioTranscriptionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('检查语音服务连接失败')
+            self.send_json({'error': '检查服务连接失败'}, 500)
+
+    # ── PDF 阅读副本转换 ─────────────────────────────────────────────────────
+    def _ebook_selection(self, body):
+        """Read the shared job/batch/format selector used by every delivery."""
+        raw_ids = body.get('job_ids')
+        job_ids = [str(item) for item in raw_ids] if isinstance(raw_ids, list) else []
+        batch_id = str(body.get('batch_id') or '').strip() or None
+        output_format = str(body.get('format') or '').strip() or None
+        if output_format not in (None, 'epub', 'device_pdf'):
+            raise EbookConversionError('输出格式无效')
+        if not job_ids and not batch_id:
+            raise EbookConversionError('请先选择要投递的任务')
+        return job_ids, batch_id, output_format
+
+    def _api_ebook_scan(self):
+        if not self._require_ebook_access():
+            return
+        params = self._query_params()
+        try:
+            self.send_json(
+                scan_pdf_folder(params.get('path'),
+                                params.get('recursive', '1') != '0'),
+                cache_control='no-store, private')
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+
+    def _api_ebook_download(self, job_id):
+        if not self._require_ebook_access():
+            return
+        output_format = (self._query_params().get('format') or 'epub').strip()
+        try:
+            output_path, output_name = EBOOK_CONVERSION.output_path(job_id, output_format)
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 404, cache_control='no-store, private')
+            return
+        content_type = ('application/epub+zip' if output_format == 'epub'
+                        else 'application/pdf')
+        inline = self._query_params().get('inline') == '1'
+        self.send_download(output_path, output_name, content_type, inline=inline)
+
+    def _api_ebook_bundle(self):
+        if not self._require_ebook_access():
+            return
+        params = self._query_params()
+        job_ids = [item for item in (params.get('job_ids') or '').split(',') if item]
+        batch_id = (params.get('batch_id') or '').strip() or None
+        output_format = (params.get('format') or '').strip() or None
+        try:
+            bundle_path, download_name = EBOOK_CONVERSION.build_bundle(
+                job_ids=job_ids, batch_id=batch_id, output_format=output_format)
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+            return
+        self.send_download(bundle_path, download_name, 'application/zip')
+
+    def _api_ebook_create(self, content_length):
+        if not self._require_ebook_access():
+            return
+        try:
+            filename = unquote(self.headers.get('X-File-Name', ''))
+            options = decode_options_header(self.headers.get('X-Ebook-Options'))
+            content = self.rfile.read(content_length) if content_length else b''
+            self.send_json(
+                EBOOK_CONVERSION.create_job(
+                    filename=filename, content=content, options=options,
+                    batch_id=(options or {}).get('batch_id')),
+                202, cache_control='no-store, private')
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('创建阅读副本任务失败')
+            self.send_json({'error': '创建阅读副本任务失败'}, 500)
+
+    def _api_ebook_batch(self):
+        if not self._require_ebook_access():
+            return
+        body = self._read_json_body()
+        paths = body.get('paths')
+        try:
+            if not isinstance(paths, list):
+                raise EbookConversionError('请提供本机文件路径列表')
+            self.send_json(
+                EBOOK_CONVERSION.create_batch(
+                    [{'path': item} for item in paths], body.get('options')),
+                202, cache_control='no-store, private')
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('创建批量转换失败')
+            self.send_json({'error': '创建批量转换失败'}, 500)
+
+    def _api_ebook_job_action(self, job_id, action):
+        if not self._require_ebook_access():
+            return
+        try:
+            if action == 'retry':
+                self.send_json(EBOOK_CONVERSION.retry_job(job_id), 202,
+                               cache_control='no-store, private')
+            else:
+                EBOOK_CONVERSION.delete_job(job_id)
+                self.send_json({'status': 'deleted'}, cache_control='no-store, private')
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+
+    def _api_ebook_deliver(self):
+        if not self._require_ebook_access():
+            return
+        body = self._read_json_body()
+        try:
+            job_ids, batch_id, output_format = self._ebook_selection(body)
+            self.send_json(
+                EBOOK_CONVERSION.deliver_to_folder(
+                    body.get('target'), job_ids=job_ids, batch_id=batch_id,
+                    output_format=output_format,
+                    overwrite=bool(body.get('overwrite'))),
+                cache_control='no-store, private')
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('写入目标文件夹失败')
+            self.send_json({'error': '写入目标文件夹失败'}, 500)
+
+    def _api_ebook_send_to_kindle(self):
+        if not self._require_ebook_access():
+            return
+        body = self._read_json_body()
+        try:
+            job_ids, batch_id, output_format = self._ebook_selection(body)
+            self.send_json(
+                EBOOK_CONVERSION.send_to_kindle(
+                    body.get('recipient'), job_ids=job_ids, batch_id=batch_id,
+                    output_format=output_format),
+                cache_control='no-store, private')
+        except EbookConversionError as exc:
+            self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
+        except Exception:
+            log.exception('发送到 Kindle 失败')
+            self.send_json({'error': '发送到 Kindle 失败'}, 500)
 
     def _api_audio_create(self, content_length):
         if not self._require_audio_access():
@@ -2500,6 +3446,35 @@ class Handler(BaseHTTPRequestHandler):
             reading_status=body.get('reading_status', 'to_read'),
             project_tag=body.get('project_tag')))
 
+    def _api_business_research_state(self, paper_id):
+        try:
+            body = self._read_json_body()
+            self.send_json(update_library_state(paper_id, body))
+        except (TypeError, ValueError) as exc:
+            self.send_json({'success': False, 'error': str(exc)}, 400)
+        except Exception as exc:
+            log.exception('Business Research state update failed')
+            self.send_json({'success': False, 'error': '研究状态保存失败: ' + str(exc)}, 500)
+
+    def _api_business_research_note(self, paper_id):
+        try:
+            body = self._read_json_body()
+            self.send_json(save_research_note(paper_id, body))
+        except (TypeError, ValueError) as exc:
+            self.send_json({'success': False, 'error': str(exc)}, 400)
+        except Exception as exc:
+            log.exception('Business Research note save failed')
+            self.send_json({'success': False, 'error': '研究笔记保存失败: ' + str(exc)}, 500)
+
+    def _api_business_research_note_delete(self, paper_id, note_id):
+        try:
+            self.send_json(delete_research_note(paper_id, note_id))
+        except (TypeError, ValueError) as exc:
+            self.send_json({'success': False, 'error': str(exc)}, 400)
+        except Exception as exc:
+            log.exception('Business Research note delete failed')
+            self.send_json({'success': False, 'error': '研究笔记删除失败: ' + str(exc)}, 500)
+
 # ── 定时调度 ──────────────────────────────────────────────────────────────────
 def scheduler_thread():
     SCHEDULE = ['09:00','14:00']
@@ -2619,6 +3594,46 @@ def anjuke_scheduler_thread(interval_hours=168):
             log.warning(f'安居客挂牌价更新失败（旧数据保留，官方70城不受影响）: {e}')
         time.sleep(interval_hours * 3600)
 
+
+def faculty_jobs_scheduler_thread(interval_hours=24):
+    """Refresh public academic-career sources once per day by default."""
+    log.info(f'Academic Career 调度器启动，每 {interval_hours}h 低频更新公开职位源')
+    time.sleep(900)   # let the existing server and user-facing pages settle first
+    while True:
+        try:
+            result = _run_update_job(
+                'faculty_jobs',
+                lambda: update_faculty_jobs(
+                    FACULTY_DB_PATH,
+                    timeout=FACULTY_JOBS_HTTP_TIMEOUT,
+                    max_pages=FACULTY_JOBS_MAX_PAGES),
+                blocking=True)
+            log.info('Academic Career 更新完成：ok=%s sources=%s',
+                     result.get('ok') if isinstance(result, dict) else None,
+                     len(result.get('sources', [])) if isinstance(result, dict) else None)
+        except Exception as exc:
+            log.warning(f'Academic Career 更新失败（旧数据保留）: {exc}')
+        time.sleep(interval_hours * 3600)
+
+
+def business_research_index_thread(interval_hours=6):
+    """Keep the Business Research paper↔entity link index warm.
+
+    The index is what makes the Theory/Construct/Method pages fast; without it
+    every card would re-scan the article cache.  A rebuild is only expensive
+    when the catalog changed, so this loop is cheap on the steady state.
+    """
+    while True:
+        try:
+            result = rebuild_link_index(DB_PATH)
+            if result.get('rebuilt'):
+                log.info(f"Business Research 链接索引更新：papers={result.get('papers_indexed')} "
+                         f"full={result.get('full')}")
+        except Exception as e:
+            log.warning(f'Business Research 链接索引更新失败（旧索引保留）: {e}')
+        time.sleep(interval_hours * 3600)
+
+
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     print('''
@@ -2657,10 +3672,19 @@ if __name__ == '__main__':
     # 三城人工确认并完成首次全量验收前默认关闭；验收后改为默认开启。
     if os.environ.get('ANJUKE_AUTO', '0') != '0':
         threading.Thread(target=anjuke_scheduler_thread, daemon=True).start()
+    if FACULTY_JOBS_AUTO_UPDATE:
+        threading.Thread(
+            target=faculty_jobs_scheduler_thread,
+            args=(FACULTY_JOBS_UPDATE_HOURS,), daemon=True).start()
     if os.environ.get('RATES_AUTO', '1') != '0':
         threading.Thread(target=rates_scheduler_thread, daemon=True).start()
     if os.environ.get('BACKUP_AUTO', '1') != '0':
         threading.Thread(target=backup_thread, daemon=True).start()
+    if os.environ.get('RESEARCH_INDEX_AUTO', '1') != '0':
+        # Business Research paper↔entity links. A cold full build scans the whole
+        # article cache, so it runs off the request path; catalog pages fall back
+        # to whatever the index already holds until it finishes.
+        threading.Thread(target=business_research_index_thread, daemon=True).start()
     try:
         load_journal_prestige_lists()       # 填充 FT50 / UTD24 清单（轻量）
         ensure_prestige_extra_journals()    # 把非 A* 的 FT50/UTD24 刊持久并入追踪集

@@ -54,8 +54,20 @@ data/translation_runtime.json
 data/audio_jobs/
 data/audio_runtime.json
 data/audio_smoke/
+# PDF 阅读副本的上传原件、EPUB、裁边 PDF 与打包 ZIP 只保存在本机
+data/ebook_jobs/
+# Academic Career: public source rows are local working data; profile and
+# application notes are personal data and must never enter the repository.
+data/faculty_jobs.db*
+data/faculty_jobs_cache/
+data/faculty_job_profile.json
+data/faculty_jobs_private/
 # 悦读FM 音频、封面、RSS 快照与本地元数据只保存在本机
 data/yuedu_fm/
+# 香港宏观官方源原始快照只保存在本机，保留摘要/哈希在数据库审计表
+data/hong_kong_macro_raw/
+# 中国 SAFE 官方储备/外部源原始快照只保存在本机
+data/china_macro_raw/
 .secrets
 .env
 .env.local
@@ -79,6 +91,13 @@ data/astar_verified_abstract_overrides.json
 data/astar_*probe*.json
 data/astar_abstract_full_scan*/
 data/astar_elsevier_*/
+data/research_sources/
+# OCR text and page manifests are derived private reading aids; keep the
+# supplied source file outside the repository and do not publish extracted text.
+data/research_source_text/
+# Human evidence ledger may contain page notes or short excerpts from private
+# source copies; keep it local and separate from the generated catalog.
+data/research_evidence/
 
 # 私有迁移执行产物只能写到仓库外；仓库内若误生成则保持忽略
 outputs/private-migration*/

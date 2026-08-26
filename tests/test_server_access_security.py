@@ -10,10 +10,78 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ServerAccessSecurityTests(unittest.TestCase):
+    def test_gpu_backed_modules_are_available_and_never_auto_connect(self):
+        """The modules are open again; idleness is enforced by on-demand probing.
+
+        They were shut off wholesale because reading their config endpoint
+        health-checked the cluster.  That probe is now an explicit user action,
+        so the kill switch is no longer the thing keeping the GPU untouched.
+        """
+        self.assertTrue(server.PAPER_TRANSLATION_ENABLED)
+        self.assertTrue(server.AUDIO_TRANSCRIPTION_ENABLED)
+        self.assertIsNotNone(server.PAPER_TRANSLATION)
+        self.assertIsNotNone(server.AUDIO_TRANSCRIPTION)
+        self.assertEqual(
+            server.PAPER_TRANSLATION.config()['connection_policy'], 'on_demand_only')
+        self.assertEqual(
+            server.AUDIO_TRANSCRIPTION.config()['connection_policy'], 'on_demand_only')
+
+    def test_disabled_gpu_module_paths_cover_pages_static_files_and_apis(self):
+        """The kill switch must still cover every entry point when set."""
+        translation_paths = (
+            '/paper-translation', '/paper-translation/', '/paper_translation.html',
+            '/api/translation/config', '/api/translation/probe',
+            '/api/translation/jobs/' + ('a' * 32),
+        )
+        audio_paths = (
+            '/audio-transcription', '/audio-transcription/results/' + ('a' * 32),
+            '/audio_transcription.html', '/audio_transcription_result.html',
+            '/api/audio/config', '/api/audio/probe',
+            '/api/audio/jobs/' + ('a' * 32),
+        )
+        with patch.object(server, 'PAPER_TRANSLATION_ENABLED', False), \
+             patch.object(server, 'AUDIO_TRANSCRIPTION_ENABLED', False):
+            for path in translation_paths:
+                self.assertEqual(
+                    server._disabled_gpu_module_for_path(path), 'paper_translation')
+            for path in audio_paths:
+                self.assertEqual(
+                    server._disabled_gpu_module_for_path(path), 'audio_transcription')
+            self.assertIsNone(server._disabled_gpu_module_for_path('/'))
+            self.assertIsNone(server._disabled_gpu_module_for_path('/api/health'))
+            self.assertIsNone(server._disabled_gpu_module_for_path('/api/ebook/config'))
+
+    def test_enabled_modules_are_not_intercepted_by_the_kill_switch(self):
+        for path in ('/paper-translation', '/api/translation/probe',
+                     '/audio-transcription', '/api/audio/probe'):
+            self.assertIsNone(server._disabled_gpu_module_for_path(path))
+
     def test_loopback_addresses_can_write(self):
         self.assertTrue(server._write_request_allowed('127.0.0.1'))
         self.assertTrue(server._write_request_allowed('::1'))
         self.assertTrue(server._write_request_allowed('::ffff:127.0.0.1'))
+
+    def test_cloudflare_proxy_header_turns_loopback_origin_into_remote(self):
+        headers = {'CF-Connecting-IP': '203.0.113.10'}
+        with patch.object(server, 'TRUST_CLOUDFLARE_HEADERS', True), \
+             patch.object(server, 'ALLOW_REMOTE_WRITES', False), \
+             patch.object(server, 'ADMIN_TOKEN', ''):
+            effective = server._effective_client_ip('127.0.0.1', headers)
+            self.assertEqual(effective, '203.0.113.10')
+            self.assertFalse(server._write_request_allowed(effective))
+
+    def test_cloudflare_proxy_header_requires_explicit_opt_in(self):
+        headers = {'CF-Connecting-IP': '203.0.113.10'}
+        with patch.object(server, 'TRUST_CLOUDFLARE_HEADERS', False):
+            self.assertEqual(
+                server._effective_client_ip('127.0.0.1', headers), '127.0.0.1')
+
+    def test_invalid_cloudflare_proxy_header_does_not_change_loopback(self):
+        with patch.object(server, 'TRUST_CLOUDFLARE_HEADERS', True):
+            self.assertEqual(
+                server._effective_client_ip(
+                    '127.0.0.1', {'CF-Connecting-IP': 'not-an-ip'}),
+                '127.0.0.1')
 
     def test_lan_address_is_read_only_by_default(self):
         with patch.object(server, 'ALLOW_REMOTE_WRITES', False), \

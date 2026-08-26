@@ -1,14 +1,15 @@
-# 1 + 5 单仓库结构
+# 1 + 6 单仓库结构
 
-本目录定义项目管理边界，不复制或搬动运行代码。根目录仍是唯一可运行、可测试、可发布的 Git 仓库；五个项目域继续共用 server.py、导航、依赖、数据库连接、安全护栏和测试基础设施。
+本目录定义项目管理边界，不复制或搬动运行代码。根目录仍是唯一可运行、可测试、可发布的 Git 仓库；六个项目域继续共用 server.py、导航、依赖、数据库连接、安全护栏和测试基础设施。
 
 | 项目域 | ID | 主要页面 | 说明 |
 |---|---|---|---|
-| 中国宏观、财政、城市与住房 | china_macro | /dashboard、/china-macro、/fiscal-debt、/city-economy、/housing-scenario 等 | 中国金融、实体经济、财政债务、城市与住房的一体化观察和情景工具 |
+| 中国宏观、财政、城市与住房 | china_macro | /dashboard、/china-macro、/hong-kong-macro、/fiscal-debt、/city-economy、/housing-scenario 等 | 中国金融、实体经济、财政债务、城市与住房的一体化观察和情景工具；香港宏观保持独立 jurisdiction |
 | 美国宏观 | us_macro | /us-macro | 美国就业、通胀、增长、财政债务和金融条件；与 GDP、统计分析共享部分组件 |
 | ABDC 商科研究 | abdc_research | /abdc、/abdc-astar-research | 期刊列表、A* Research Radar、分类、语义检索和来源审计 |
-| 科研语言与语音工具 | research_tools | /paper-translation、/audio-transcription | 私有文档翻译、总结、原文问答、访谈转录和匿名说话人区分 |
+| 科研语言、语音与阅读副本工具 | research_tools | /paper-translation、/audio-transcription、/ebook-conversion | 私有文档翻译、总结、原文问答、访谈转录和匿名说话人区分（前两者依赖 GPU，默认关闭）；PDF 转 EPUB 与墨水屏裁边分栏 PDF 为纯本机，始终可用 |
 | 个人归档与按需监控 | personal_tools | /yuedu-fm、/cardcookie-monitor | 本地媒体归档、离线播放和默认关闭的低频变化提醒 |
+| Academic Career / Faculty Job Market | academic_career | /faculty-jobs、/school-explorer、/job-market-analytics、/my-applications | 美国、加拿大与欧洲公开职位源、证据优先的学校层、描述性市场分析和本机私有申请追踪 |
 
 机器可读的唯一边界清单是 registry.json。每个子目录的 README 说明该域的页面、源文件、数据策略和最小验证集合。
 
@@ -31,7 +32,13 @@
 
 发布前运行：
 
+    python scripts/audit_projects.py
+
+旧入口仍然可用：
+
     python scripts/audit_one_plus_five.py
+
+它只是动态审计器的兼容包装，不再把项目数写死为五个。
 
 私有数据先查看计划，再复制到仓库外的目的地：
 

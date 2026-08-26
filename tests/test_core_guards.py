@@ -107,6 +107,15 @@ class FiscalPayloadContract(unittest.TestCase):
                     violations.append(f"{sec_name}/{c.get('label')}: missing 却带 value")
         self.assertEqual(violations, [], '数据纪律违规:\n' + '\n'.join(violations))
 
+    def test_buyout_coverage_is_displayable_and_retains_layered_breakdown(self):
+        coverage = self.payload['coverage']['pboc_buyout_reverse_repo']
+        self.assertGreater(coverage['records'], 0)
+        self.assertIsNotNone(coverage['earliest_period'])
+        self.assertIsNotNone(coverage['latest_period'])
+        self.assertGreater(coverage['operations']['records'], 0)
+        self.assertGreater(coverage['announcements']['records'], 0)
+        self.assertEqual(coverage['monthly_stock']['records'], coverage['records'])
+
 
 if __name__ == '__main__':
     unittest.main()

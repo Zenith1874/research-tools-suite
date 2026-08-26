@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "layout": "one_plus_five",
+  "layout": "one_plus_six",
   "repository": {
     "name": "research-tools-suite",
     "runtime_entrypoint": "server.py",
@@ -21,7 +21,9 @@
       "scripts/watchdog.bat",
       "tests/test_core_guards.py",
       "tests/test_research_navigation.py",
-      "tests/test_server_access_security.py"
+      "tests/test_server_access_security.py",
+      "scripts/audit_projects.py",
+      "scripts/audit_one_plus_five.py"
     ],
     "private_data_globs": [
       ".secrets",
@@ -46,9 +48,26 @@
       "outputs/*.jsonl",
       "outputs/*.log",
       "outputs/research-navigation-qa/**",
+      "output/**",
+      "tasks/**",
+      "data/china_macro_raw/**",
+      "data/hong_kong_macro_raw/**",
+      "abdc/**",
+      "*.db.gz",
+      "*.sqlite",
+      "*.sqlite3",
+      "*.sqlite-wal",
+      "*.sqlite-shm",
+      "*.sqlite3-wal",
+      "*.sqlite3-shm",
+      "*.sqlite3-journal",
+      "*.xlsx",
+      "*.xls",
+      "NUL",
       "pbc_found_links.json",
       "pbc_search_found.json",
       "static/*.bak-*",
+      "data/backups/**",
       "tmp/**"
     ],
     "disposable_globs": [
@@ -70,6 +89,7 @@
       "routes": [
         "/dashboard",
         "/china-macro",
+        "/hong-kong-macro",
         "/macro-analytics",
         "/gdp",
         "/housing",
@@ -81,6 +101,7 @@
       ],
       "source_globs": [
         "services/china_*.py",
+        "services/hong_kong_macro_service.py",
         "services/financial_*.py",
         "services/fiscal_*.py",
         "services/debt_*.py",
@@ -102,6 +123,7 @@
         "static/housing*.html",
         "static/housing*.js",
         "tests/test_china_*.py",
+        "tests/test_hong_kong_macro_service.py",
         "tests/test_fiscal_*.py",
         "tests/test_debt_*.py",
         "tests/test_city_*.py",
@@ -115,6 +137,7 @@
         "data/china_regional_official_TEMPLATE.csv",
         "data/housing_demographic_capacity_inputs.csv",
         "data/housing_nbs_annual_sales_history.csv",
+        "data/housing_nbs_sales_release_manifest.csv",
         "data/housing_structural_drivers.csv"
       ],
       "private_data_globs": [
@@ -153,7 +176,9 @@
       "default_route": "/abdc-astar-research",
       "routes": [
         "/abdc",
-        "/abdc-astar-research"
+        "/abdc-astar-research",
+        "/abdc/research",
+        "/research"
       ],
       "source_globs": [
         "services/abdc_*.py",
@@ -165,10 +190,23 @@
         "scripts/*aim*.py",
         "tests/test_astar*.py",
         "tests/test_aim*.py",
-        "profiles/**"
+        "profiles/**",
+        "services/business_research_service.py",
+        "static/business_research.*",
+        "scripts/*research_catalog*.py",
+        "scripts/*research_evidence*.py",
+        "scripts/*research_source*.py",
+        "scripts/verify_research_sources.py",
+        "scripts/resolve_research_source_access.py",
+        "scripts/ocr_research_source.py",
+        "scripts/seed_book60_evidence.py",
+        "tests/test_business_research*.py",
+        "tests/test_research_*.py",
+        "tests/test_book60_evidence_seed.py"
       ],
       "tracked_data": [
-        "data/abdc_data.json"
+        "data/abdc_data.json",
+        "data/research_catalog.json"
       ],
       "private_data_globs": [
         "abdc/**",
@@ -179,30 +217,38 @@
         "data/astar_verified_abstract_overrides.json",
         "data/astar_*probe*.json",
         "data/astar_abstract_full_scan*/**",
-        "data/astar_elsevier_*/**"
+        "data/astar_elsevier_*/**",
+        "data/business_research_state.db*",
+        "data/research_source_text/**",
+        "data/research_sources/**",
+        "data/research_evidence/**"
       ]
     },
     {
       "id": "research_tools",
       "nav_key": "tools",
       "nav_label": "科研工具",
-      "name": "科研语言与语音工具",
-      "default_route": "/paper-translation",
+      "name": "科研语言、语音与阅读副本工具",
+      "default_route": "/ebook-conversion",
       "routes": [
         "/paper-translation",
-        "/audio-transcription"
+        "/audio-transcription",
+        "/ebook-conversion"
       ],
       "source_globs": [
         "services/paper_*.py",
         "services/pdf_*.py",
         "services/audio_*.py",
+        "services/ebook_*.py",
         "static/paper_*.html",
         "static/audio_*.html",
+        "static/ebook_*.html",
         "scripts/*translation*.py",
         "scripts/*translation*.sh",
         "scripts/*audio*.py",
         "tests/test_paper_*.py",
-        "tests/test_audio_*.py"
+        "tests/test_audio_*.py",
+        "tests/test_ebook_*.py"
       ],
       "tracked_data": [],
       "private_data_globs": [
@@ -210,7 +256,8 @@
         "data/translation_runtime.json",
         "data/audio_jobs/**",
         "data/audio_runtime.json",
-        "data/audio_smoke/**"
+        "data/audio_smoke/**",
+        "data/ebook_jobs/**"
       ]
     },
     {
@@ -236,6 +283,43 @@
       "private_data_globs": [
         "data/yuedu_fm/**",
         "data/cardcookie_monitor.db*"
+      ]
+    },
+    {
+      "id": "academic_career",
+      "nav_key": "career",
+      "nav_label": "学术职业",
+      "name": "Academic Career / Faculty Job Market",
+      "default_route": "/faculty-jobs",
+      "routes": [
+        "/faculty-jobs",
+        "/school-explorer",
+        "/job-market-analytics",
+        "/my-applications"
+      ],
+      "source_globs": [
+        "services/faculty_job*.py",
+        "services/faculty_jobs*.py",
+        "services/faculty_jobs_sources/*.py",
+        "static/faculty_jobs.*",
+        "static/school_explorer.*",
+        "static/job_market_analytics.*",
+        "static/my_applications.*",
+        "scripts/*faculty*job*.py",
+        "tests/test_faculty_jobs*.py",
+        "tests/fixtures/faculty_jobs/**",
+        "projects/academic_career/**"
+      ],
+      "tracked_data": [
+        "data/faculty_job_taxonomy.json",
+        "data/faculty_job_rank_mappings.json",
+        "data/faculty_school_tier_rules.json"
+      ],
+      "private_data_globs": [
+        "data/faculty_jobs.db*",
+        "data/faculty_jobs_cache/**",
+        "data/faculty_job_profile.json",
+        "data/faculty_jobs_private/**"
       ]
     }
   ]

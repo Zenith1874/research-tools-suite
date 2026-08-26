@@ -22,21 +22,16 @@ snapshot = load_script("create_private_migration_snapshot")
 
 
 class OnePlusFiveRegistryTests(unittest.TestCase):
-    def test_registry_has_exactly_five_valid_projects(self):
+    def test_registry_has_dynamic_valid_projects_and_academic_career(self):
         registry = audit.load_registry()
         errors, _warnings = audit.validate_registry(ROOT, registry)
         self.assertEqual([], errors)
-        self.assertEqual(5, len(registry["projects"]))
-        self.assertEqual(
-            {
-                "china_macro",
-                "us_macro",
-                "abdc_research",
-                "research_tools",
-                "personal_tools",
-            },
-            {project["id"] for project in registry["projects"]},
-        )
+        self.assertGreaterEqual(len(registry["projects"]), 6)
+        ids = {project["id"] for project in registry["projects"]}
+        self.assertTrue({"china_macro", "us_macro", "abdc_research", "research_tools", "personal_tools"}.issubset(ids))
+        career = next(project for project in registry["projects"] if project["id"] == "academic_career")
+        self.assertEqual("/faculty-jobs", career["default_route"])
+        self.assertEqual(4, len(career["routes"]))
 
     def test_high_confidence_scanner_does_not_return_secret_values(self):
         with tempfile.TemporaryDirectory() as temporary:

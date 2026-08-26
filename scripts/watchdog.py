@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """服务器看门狗：定时探测 /api/health，连续失败 N 次就杀掉并重启 server.py。
 
+默认只监控本机服务，不会自动连接校内 SSH 主机。论文翻译隧道需要时由用户
+显式运行 scripts/start_translation_tunnel.sh；只有明确传入 --auto-tunnel 才会
+启用看门狗的自动隧道恢复。
+
 默认不随服务启动 —— 需要时手动运行 scripts/watchdog.bat，
 或挂成 Windows 计划任务(开机/登录时启动，详见文件末尾说明)。
 
@@ -193,11 +197,14 @@ def restart(port):
     log('✅ 重启后健康' if healthy(port) else '❌ 重启后仍不健康(下一轮继续监控)')
 
 
-# ── 论文翻译 SSH 隧道维护:模型状态文件在(远端模型应在跑)而本地隧道不通时自动重建 ──
+# ── 论文翻译 SSH 隧道维护（仅在显式 --auto-tunnel 时启用） ──
 TUNNEL_STATE = os.path.join(ROOT, 'data', 'translation_runtime.json')
 TUNNEL_LOCAL_PORT = int(os.environ.get('TRANSLATION_LOCAL_PORT', '18001'))
 TUNNEL_REMOTE_PORT = int(os.environ.get('TRANSLATION_REMOTE_PORT', '8000'))
+TUNNEL_RETRY_INITIAL_SECONDS = 60
+TUNNEL_RETRY_MAX_SECONDS = 3600
 _last_tunnel_attempt = 0.0
+_tunnel_retry_count = 0
 
 
 def tunnel_healthy(timeout=4):
@@ -210,15 +217,31 @@ def tunnel_healthy(timeout=4):
 
 
 def ensure_tunnel():
-    """manage_translation_vllm start 会写状态文件、stop 会删;
-    文件在 → 期望模型在线 → 隧道断了(如重启电脑后)就静默重建。60s 限频。"""
-    global _last_tunnel_attempt
-    if not os.path.exists(TUNNEL_STATE) or tunnel_healthy():
+    """Optionally restore a tunnel, with an increasing cooldown after failures.
+
+    This function is deliberately not called by default. A stale runtime state
+    file is not proof that the remote model is still running or that repeated
+    SSH logins are welcome. Normal operation uses the explicit, foreground
+    ``scripts/start_translation_tunnel.sh`` command instead.
+    """
+    global _last_tunnel_attempt, _tunnel_retry_count
+    if not os.path.exists(TUNNEL_STATE):
+        _last_tunnel_attempt = 0.0
+        _tunnel_retry_count = 0
+        return
+    if tunnel_healthy():
+        _last_tunnel_attempt = 0.0
+        _tunnel_retry_count = 0
         return
     now = time.time()
-    if now - _last_tunnel_attempt < 60:
+    cooldown = min(
+        TUNNEL_RETRY_MAX_SECONDS,
+        TUNNEL_RETRY_INITIAL_SECONDS * (2 ** min(_tunnel_retry_count, 6)),
+    )
+    if _last_tunnel_attempt and now - _last_tunnel_attempt < cooldown:
         return
     _last_tunnel_attempt = now
+    _tunnel_retry_count += 1
     try:
         with open(TUNNEL_STATE, encoding='utf-8') as f:
             host = (json.load(f).get('host') or '').strip()
@@ -250,6 +273,9 @@ def main():
     ap.add_argument('--port', type=int, default=5001)
     ap.add_argument('--start-if-down', action='store_true',
                     help='启动时若服务没在跑，直接拉起一个')
+    ap.add_argument('--auto-tunnel', action='store_true',
+                    help=('显式允许看门狗自动创建翻译 SSH 隧道；默认关闭，'
+                          '通常应手动运行 scripts/start_translation_tunnel.sh'))
     args = ap.parse_args()
 
     instance_lock = acquire_single_instance_lock(args.port)
@@ -257,14 +283,17 @@ def main():
         log(f'另一个看门狗已在运行，本实例退出(port={args.port})')
         return
 
+    tunnel_mode = ('开启（显式 --auto-tunnel）' if args.auto_tunnel
+                   else '关闭（默认，需手动启动隧道）')
     log(f'看门狗启动：每 {args.interval}s 探测 /api/health；'
         f'端口断开连失 {args.fails} 次、端口仍监听连失 {args.busy_fails} 次重启'
-        f'(port={args.port})')
+        f'(port={args.port})；翻译 SSH 隧道自动重连={tunnel_mode}')
     if args.start_if_down and not healthy(args.port):
         log('启动时检测到服务未运行 → 先拉起')
         start_server()
         time.sleep(8)
-    ensure_tunnel()   # 重启电脑后模型还在远端跑,但本地隧道会掉,登录即恢复
+    if args.auto_tunnel:
+        ensure_tunnel()
 
     consecutive = 0
     ticks = 0
@@ -282,7 +311,8 @@ def main():
             if consecutive >= failure_limit:
                 restart(args.port)
                 consecutive = 0
-        ensure_tunnel()
+        if args.auto_tunnel:
+            ensure_tunnel()
         ticks += 1
         if ticks % 120 == 0:          # 约每 40 分钟检查一次自身日志大小
             rotate_log(LOGFILE)       # server 日志被运行中进程占用，只在重启时轮转

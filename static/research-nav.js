@@ -8,8 +8,10 @@
       defaultHref: '/dashboard',
       items: [
         { label: '货币信用', href: '/dashboard', description: '央行金融统计、货币与信用核心指标。' },
-        { label: '实体外贸', href: '/china-macro', description: '增长、消费投资、价格景气、就业人口、双币种外贸与跨境资金。' },
+        { label: '实体、人口与外贸', href: '/china-macro', description: '增长、消费投资、价格景气、就业收入、人口家庭、双币种外贸与跨境资金。' },
+        { label: '香港宏观', href: '/hong-kong-macro', description: '香港住房、经济、再出口贸易、储备金融与中国联动描述性分析。' },
         { label: '统计分析', href: '/macro-analytics', description: '中国、美国与中美对照的派生统计分析。' },
+        { label: '趋势情景', href: '/macro-scenario', description: '宏观指标的条件路径、扰动模拟、滚动回测与缺口清单。' },
         { label: '中美 GDP', href: '/gdp', description: '全国历史规模、增长与中国省级/美国州级地区 GDP。' },
         { label: '中国房价', href: '/housing', description: '70城官方新房/二手指数、全国销售面积、BIS与安居客挂牌参考。' },
         { label: '财政债务', href: '/fiscal-debt', description: '年度财政收支、未来情景、政府债务与央行相关工具。' },
@@ -30,11 +32,17 @@
     },
     research: {
       label: 'ABDC 商科研究',
-      summary: '期刊列表 · A* 研究雷达',
-      defaultHref: '/abdc-astar-research',
+      summary: '期刊 · 雷达 · 理论 · 方法 · 版图',
+      defaultHref: '/abdc/research',
       items: [
+        { label: '研究总览', href: '/abdc/research', description: 'Business Research Workspace 入口与数据边界。' },
         { label: 'ABDC 期刊列表', href: '/abdc', description: '按名称、ISSN、FoR、等级与版本查询期刊。' },
-        { label: 'A* 研究雷达', href: '/abdc-astar-research', description: '追踪最新文章、主题、方法与研究机会。' }
+        { label: 'A* 研究雷达', href: '/abdc-astar-research', description: '追踪最新文章、主题、方法与研究机会。' },
+        { label: 'Theory Library', href: '/abdc/theories', description: '理论、构念、经典论文与应用脉络。' },
+        { label: 'Construct Library', href: '/abdc/constructs', description: '构念定义、理论关系、测量元数据与论文。' },
+        { label: 'Methods Lab', href: '/abdc/methods', description: '研究设计、统计与计算方法。' },
+        { label: 'Literature Landscape', href: '/abdc/landscape', description: '按主题观察文献集中和相对少见组合。' },
+        { label: 'My Papers', href: '/abdc/library', description: '阅读状态、收藏、笔记与最近研究论文。' }
       ],
       disciplines: [
         { label: 'Information Systems', slug: 'information-systems' },
@@ -44,13 +52,25 @@
         { label: '计算社会科学', slug: 'computational-social-science' }
       ]
     },
+    career: {
+      label: '学术职业',
+      summary: '职位 · 学校 · 市场 · 申请',
+      defaultHref: '/faculty-jobs',
+      items: [
+        { label: 'Business Faculty Jobs', href: '/faculty-jobs', description: '跨美国、加拿大与欧洲公开商学院/商科职位源的规范化检索。' },
+        { label: 'School Explorer', href: '/school-explorer', description: '大学研究层级、商学院证据与职位覆盖比较。' },
+        { label: 'Job Market Analytics', href: '/job-market-analytics', description: '按地区、学科、职级、合同与招聘周期观察公开样本。' },
+        { label: 'My Applications', href: '/my-applications', description: '本机私有的职位收藏、申请阶段、笔记和个人匹配评分。' }
+      ]
+    },
     tools: {
       label: '科研工具',
-      summary: '文档翻译 · 语音转录',
-      defaultHref: '/paper-translation',
+      summary: '阅读副本 · 文档翻译 · 语音转录',
+      defaultHref: '/ebook-conversion',
       items: [
-        { label: '学术语言工作台', href: '/paper-translation', description: '隐私优先的 PDF、DOCX 与文本翻译。' },
-        { label: '研究语音工作台', href: '/audio-transcription', description: '访谈与会议的说话人区分、转录、翻译和双语字幕。' }
+        { label: '阅读副本工坊', href: '/ebook-conversion', description: '把 PDF 转成手机看的 EPUB 和墨水屏看的裁边分栏 PDF；纯本机，不需要 GPU。' },
+        { label: '学术语言工作台', href: '/paper-translation', description: '隐私优先的 PDF、DOCX 与文本翻译；GPU 按需连接，打开页面不会联系集群。' },
+        { label: '研究语音工作台', href: '/audio-transcription', description: '访谈与会议的说话人区分、转录、翻译和双语字幕；GPU 按需连接。' }
       ]
     },
     leisure: {
@@ -65,10 +85,10 @@
   };
 
   function activeGroupForPath(pathname) {
-    if (/^\/(dashboard|china-macro|macro-analytics|fiscal-debt|financial\/debug|china-rates|city-economy|housing-scenario|housing|gdp|debt-ceiling)/.test(pathname)) return 'china';
+    if (/^\/(dashboard|china-macro|hong-kong-macro|macro-analytics|macro-scenario|fiscal-debt|financial\/debug|china-rates|city-economy|housing-scenario|housing|gdp|debt-ceiling)/.test(pathname)) return 'china';
     if (/^\/us-macro/.test(pathname)) return 'us';
-    if (/^\/(abdc|abdc-astar-research)/.test(pathname)) return 'research';
-    if (/^\/(paper-translation|audio-transcription)/.test(pathname)) return 'tools';
+    if (/^\/(abdc|abdc-astar-research|research)/.test(pathname)) return 'research';
+    if (/^\/(faculty-jobs|school-explorer|job-market-analytics|my-applications)/.test(pathname)) return 'career';
     if (/^\/(yuedu-fm|cardcookie-monitor)/.test(pathname)) return 'leisure';
     return '';
   }
@@ -76,7 +96,19 @@
   function activeSubnavHref() {
     const field = new URLSearchParams(window.location.search).get('field');
     if (field) return '/abdc-astar-research?field=' + encodeURIComponent(field);
-    return window.location.pathname.replace(/\/$/, '') || '/';
+    const pathname = window.location.pathname.replace(/\/$/, '') || '/';
+    // Paper detail pages belong to the Paper Workspace even though their
+    // route is /abdc/papers/<id>, not the workspace landing route.
+    if (/^\/abdc\/papers\//.test(pathname)) return '/abdc/library';
+    return pathname;
+  }
+
+  function isSubnavActive(activeHref, itemHref) {
+    if (activeHref === itemHref) return true;
+    // Detail routes inherit the active state of their library page. The root
+    // /abdc journal route is intentionally exact so it does not also activate
+    // for /abdc/research or another ABDC sub-route.
+    return itemHref !== '/abdc' && activeHref.indexOf(itemHref + '/') === 0;
   }
 
   const searchable = [];
@@ -99,7 +131,7 @@
     const group = groups[activeGroup];
     const activeHref = activeSubnavHref();
     const pages = group.items.map(function (item) {
-      const active = activeHref === item.href;
+      const active = isSubnavActive(activeHref, item.href);
       return '<a class="research-nav-subnav-link' + (active ? ' is-active' : '') + '" href="' + item.href + '"' +
         (active ? ' aria-current="page"' : '') + '>' + item.label + '</a>';
     }).join('');

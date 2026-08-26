@@ -8,40 +8,46 @@
 | 页面 | 说明 |
 |---|---|
 | `/dashboard` | 中国人民银行金融统计监控（M2/M1/贷款/存款/社融/利率，observation 层 + 来源追踪） |
-| `/china-macro` | 中国实体经济与外贸六板块：增长生产、消费投资、价格景气、就业人口、海关人民币/美元进出口、商务部外资/对外投资与外汇局跨境资金；支持自由期间、原币种切换、图例显隐、纵轴模式、CSV 和逐序列来源覆盖审计。 |
+| `/china-macro` | 中国实体经济、人口家庭与外贸七板块：增长生产、消费投资、价格景气、就业收入、人口家庭、海关人民币/美元进出口、商务部外资/对外投资与外汇局跨境资金；支持自由期间、原币种切换、图例显隐、纵轴模式、CSV 和逐序列来源覆盖审计。 |
+| `/hong-kong-macro` | 香港独立宏观模块：RVD/土地注册处住房、HKMA 经济与储备金融、Trade-IDDS 转口贸易、CSD 年度补充与中国联动描述性 lead-lag；香港不写入中国城市经济模块。 |
 | `/macro-analytics` | 宏观统计分析（中国/美国/中美对照/房价/财政债务五个维度；含 Sahm 规则、收益率曲线、房地产“量-价-地”、付息负担率、地方债借新还旧与中美付息对照；不含预测） |
+| `/macro-scenario` | 宏观趋势与情景推演：复用已有中国宏观、央行、利率、房地产数据，提供上行/基准/下行路径、固定种子敏感性模拟、滚动回测和高价值缺口清单；结果标为 `scenario`/`derived`，不冒充官方预测。 |
 | `/fiscal-debt` | 财政收支与政府债务监控（2010 年起年度收支、YTD 进度、还本付息三情景、年度借还全景、国债/地方债到期压力，以及央行国债买卖—买断式逆回购—对政府债权时间线） |
 | `/debt-ceiling` | 债务限额与时间推演（公开 CAGR/触线/付息公式；国债与地方法定债务限额路径；2023—2024 财政部广义政府债务官方锚点，以及2025隐性债务政策桥接区间）。城投债与隐性债务严格分列；私有库的中国货币网候选债可切换严格/宽关键词口径，展示覆盖率、合同到期墙、三种融资情景、现金偿付和 CSV 明细，但不冒充官方城投债余额，也不并入政府债务合计。 |
 | `/abdc` | ABDC 期刊质量列表查询（2010–2025 六个版本，按名称/ISSN/FoR 搜索） |
 | `/abdc-astar-research` | **A\* 研究动态（Research Radar）**：追踪 ABDC A\* 期刊最新文章，规则分类 + 个人研究相关性评分 + FT50/UTD24 标签。详见 [docs/abdc_astar_research_PROGRESS.md](docs/abdc_astar_research_PROGRESS.md) |
+| `/abdc/research` | **ABDC 商科研究工作台（Phase 2）**：Theory Library、Construct Library、Methods Lab、Paper Workspace 与描述性 Literature Landscape；目录脚手架和文章证据边界见 [docs/business_research_phase2_STATUS_2026-08-15.md](docs/business_research_phase2_STATUS_2026-08-15.md) |
 | `/paper-translation` | **学术语言工作台（文档翻译、文章总结与原文问答）**：PDF/DOCX/TXT/Markdown 本机文件处理，通过 SSH 隧道调用校内 GPU 上的开源模型；支持逐节小结、结构化全文摘要、翻译+总结双输出，以及带页码/章节证据的多轮追问，并保留格式与覆盖审计。 |
 | `/audio-transcription` | **研究语音工作台**：访谈、会议、讲座和研究录音的逐词转录、匿名说话人区分、可选逐轮翻译；任务在独立结果页直接阅读，同时保留原文/译文/双语 TXT、JSON、SRT、VTT 和 ZIP 导出。 |
+| `/ebook-conversion` | **阅读副本工坊**：把本机 PDF 转成手机看的 EPUB 重排本和墨水屏看的裁边分栏 PDF（六种设备比例）。可以填本机目录递归批量、用浏览器选整个文件夹、或直接多选文件；结果支持逐个下载、打包 ZIP、发到 Kindle 邮箱、写入指定文件夹。纯本机 PyMuPDF 完成，**不依赖 GPU，不受论文翻译/语音转写的关闭开关影响**。 |
 | `/yuedu-fm` | **悦读FM · 本地听**：从公开 RedCircle RSS 同步标题、节目文字、逐集封面和 MP3 到本机，支持断点续传、搜索与离线播放。 |
 | `/cardcookie-monitor` | **CardCookie 按需监控**：默认关闭，手动开启后低频检查 Walmart 与 Best Buy 的库存、折扣和价格；首次检查仅建基线，真实变化才按本机 SMTP 设置发邮件，所有检查与异常保存在独立本地 SQLite。 |
+| `/faculty-jobs` | **Academic Career / Faculty Job Market**：美国、加拿大与欧洲公开职位源的低频规范化采集、职位筛选、来源健康、证据字段与 CSV；同域页面还有学校比较、市场分析和本机私有申请追踪。 |
 | `/china-rates` | 中国利率与汇率（LPR、SHIBOR、人民币对美元中间价；中国货币网官方接口，每日自动更新） |
 | `/us-macro` | 美国宏观（就业、通胀、增长、财政债务、利率金融五组约 46 序列，含美联储总资产/美国 M2/VIX/美元指数/密歇根信心；BLS/劳工部/BEA/财政部/美联储/CBOE 等经 FRED 免 key CSV）。中国实体经济指标继续供给 `/macro-analytics`，完整观察层见 `/china-macro`。 |
 | `/gdp` | 中美 GDP 与地方财政：全国历史、BEA 美国州级 GDP、Census ASFIN 州财政；中国31省统计局 GDP/一般预算收支/税收连续覆盖2010–2024，财政部债务覆盖2018–2024，省级决算另补卖地与还本付息。 |
 | `/city-economy` | 城市经济十五城多指标视图：北上广深、厦门、南京、合肥、常州、苏州、无锡、武汉、长沙、成都、杭州、福州可任意多选；分为增长总览、人口就业、产业投资、金融财政、住房与城市承载力五个可切换板块，每项指标独立作图、独立纵轴并共享自由期间。上市公司页签另按办公地/注册地汇总家数、最新市值、完整年度营收与城市 GDP 比率，并提供 2021–2025 年平衡/可得样本趋势、头部公司穿透、Top1/Top5、HHI 和双地址口径差异。非直辖市只用城市自身数据，缺失不以省值代替；城市公报补充的消费、外贸、人口、就业、卫生和商品房字段逐格标注镜像/叙述口径；武汉、福州及杭州等城市财政决算补充保留全市/市本级与官方初步状态；在十五城关键口径基本对齐前不生成黑箱综合得分。 |
-| `/housing-scenario` | 城市房价推演：可切换统计局70城官方指数，以及安居客月度/年度15城目录；新增武汉、长沙、成都、杭州、福州并提供“后来五城”快捷切换。在原近6/12/36月或约3/5/10年价格动能三档之上，新增人口、收入、全国粗结婚率（登记对数/人口派生）、商品房量供给和5年期LPR的透明结构压力测试，支持0–100%修正强度且0%精确回退纯动能；就业、存款、户籍人口、房地产投资和高校学生只作观察项。另设独立的2030/2040/2050人口—家庭形成长期层：用UN WPP 2024中方案的20–39岁年龄结构、可调家庭形成倾向和有界城市集聚修正展示十五城容量与固定存量负担，不把人口指数直接换算成房价。只有真实记录才推演，缺失城市明确标记 missing；各口径不拼接，商业挂牌库不入仓库，未来值均为 scenario。 |
-| `/housing` | 中国房价（统计局 70 城新房/二手官方指数 + BIS 全国指数 + 安居客二手挂牌价参考及历史双口径走势；挂牌数据仅存本机独立库，不入仓库） |
+| `/housing-scenario` | 城市房价推演：可切换统计局70城官方指数，以及安居客月度/年度15城目录；新增武汉、长沙、成都、杭州、福州并提供“后来五城”快捷切换。在原近6/12/36月或约3/5/10年价格动能三档之上，新增人口、收入、全国粗结婚率（登记对数/人口派生）、商品房量供给和5年期LPR的透明结构压力测试，支持0–100%修正强度且0%精确回退纯动能；就业、存款、户籍人口、房地产投资和高校学生只作观察项。另新增“宏观联动”模式，把宏观实验室的GDP、贷款、销售面积、全国人口和LPR轨道按透明系数接入房价路径，并显示组件覆盖与缺口；不重复覆盖原始动能/结构路径。另设独立的2030/2040/2050人口—家庭形成长期层：用UN WPP 2024中方案的20–39岁年龄结构、可调家庭形成倾向和有界城市集聚修正展示十五城容量与固定存量负担，不把人口指数直接换算成房价。只有真实记录才推演，缺失城市明确标记 missing；各口径不拼接，商业挂牌库不入仓库，未来值均为 scenario。 |
+| `/housing` | 中国房价（统计局 70 城新房/二手官方指数 + BIS 全国指数 + 全国商品房销售面积/销售额〔年度1991起、月度累计2012-02起〕+ 安居客二手挂牌价参考及历史双口径走势；挂牌数据仅存本机独立库，不入仓库） |
 
 ## 全站信息架构
 
-顶部导航分为五个一级入口：
+顶部导航分为六个一级入口：
 
-- **中国宏观**：`/dashboard`、`/china-macro`、`/macro-analytics`、`/gdp`、`/housing`、`/fiscal-debt`、`/china-rates`、`/city-economy`、`/housing-scenario`
+- **中国宏观**：`/dashboard`、`/china-macro`、`/hong-kong-macro`、`/macro-analytics`、`/macro-scenario`、`/gdp`、`/housing`、`/fiscal-debt`、`/china-rates`、`/city-economy`、`/housing-scenario`
 - **美国宏观**：`/us-macro`
-- **ABDC 商科研究**：`/abdc`、`/abdc-astar-research`
-- **科研工具**：`/paper-translation`（“学术语言工作台”）、`/audio-transcription`（“研究语音工作台”）
+- **ABDC 商科研究**：`/abdc`、`/abdc-astar-research`、`/abdc/research`、`/abdc/theories`、`/abdc/constructs`、`/abdc/methods`、`/abdc/landscape`、`/abdc/library`
+- **科研工具**：`/ebook-conversion`（“阅读副本工坊”，纯本机始终可用）、`/paper-translation`（“学术语言工作台”）、`/audio-transcription`（“研究语音工作台”，后两者依赖 GPU，默认关闭）
 - **娱乐**：`/yuedu-fm`（“悦读FM”，个人本地归档与播放）、`/cardcookie-monitor`（默认关闭的个人价格与库存提醒）
+- **学术职业**：`/faculty-jobs`、`/school-explorer`、`/job-market-analytics`、`/my-applications`；前三者提供公开/派生覆盖，最后一个默认仅服务本机可见。
 
 ABDC 研究域下另设 Information Systems、Management、Marketing、OB / HR、计算社会科学五个学科频道。频道链接复用 `/abdc-astar-research?field=...`，直接应用文章筛选，不创建空白占位页面。
 
-## 1 + 5 单仓库项目结构
+## 1 + 6 单仓库项目结构
 
-整个工作台继续使用一个可运行、可测试、可发布的 Git 仓库，并按上述五个一级入口划分五个项目域。项目边界、源码映射、公开 Git 与私有数据规则见 [projects/README.md](projects/README.md)；机器可读清单见 [projects/registry.json](projects/registry.json)。
+整个工作台继续使用一个可运行、可测试、可发布的 Git 仓库，并按上述六个一级入口划分六个项目域。项目边界、源码映射、公开 Git 与私有数据规则见 [projects/README.md](projects/README.md)；机器可读清单见 [projects/registry.json](projects/registry.json)。
 
-大型 SQLite、原始音频、论文/访谈任务、嵌入、出版社摘要扫描、备份、日志和 .secrets 不进入公开 Git。发布前运行 python scripts/audit_one_plus_five.py；完整私有迁移使用 scripts/create_private_migration_snapshot.py 写入仓库外的目的地。
+大型 SQLite、原始音频、论文/访谈任务、嵌入、出版社摘要扫描、学术职位缓存/个人申请资料、备份、日志和 .secrets 不进入公开 Git。发布前运行 `python scripts/audit_projects.py`（历史兼容入口 `python scripts/audit_one_plus_five.py`）；完整私有迁移使用 scripts/create_private_migration_snapshot.py 写入仓库外的目的地。
 
 ## 运行
 
@@ -50,22 +56,23 @@ cd <repo>
 pip install -r requirements.txt   # requests / beautifulsoup4 / openpyxl / pypdf
 python server.py                  # 启动后打开 http://localhost:5001
 
-# 可选：看门狗(健康探测,服务器挂了自动重启)
+# 可选：看门狗(只探测本机健康状态,服务器挂了自动重启；默认不连接远端 SSH)
 python scripts/watchdog.py --start-if-down
 ```
 
 启动时自动建表、载入清单、开启后台增量调度器。
 
-### 保持常驻（Windows，无需管理员）
+### 手动运行与自动启动（Windows）
 
-服务器是普通用户进程，**关机/注销/重启后不会自动回来**。用看门狗 + 登录启动项解决：
+服务器是普通用户进程。当前登录启动项只恢复本地研究平台；论文翻译和语音转写模块保持关闭，
+不会在重启后恢复，也不会触发远端 GPU 连接。
 
 - **看门狗** `scripts/watchdog.py`：默认每 30s 探测 `/api/health`。端口未监听时连失 3 次重启；
   端口仍监听但 HTTP 暂时超时时使用 6 次忙碌容忍窗口，避免 Windows 短时卡顿误杀服务。
   单实例锁会阻止两个看门狗互相重启。它以 `DETACHED_PROCESS` 拉起 `server.py`，自身退出也不影响服务。
-- **开机自启**：登录启动文件夹放了 `ClaudeServerWatchdog.vbs`（隐藏窗口启动看门狗）——
-  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`。每次登录 Windows 自动拉起看门狗，
-  再由看门狗保证服务器在线。**删除该 .vbs 即取消自启。**
+  看门狗默认不会自动打开或重连论文翻译 SSH 隧道。
+- **本地平台开机自启**：启动文件夹中的 `ClaudeServerWatchdog.vbs` 会启动 watchdog 和 `server.py`，
+  但会强制设置两个 GPU 模块为关闭，且不传 `--auto-tunnel`。
 - 更强的**计划任务版**（连"看门狗自身崩溃"也每分钟自恢复）需要**管理员** PowerShell：
 
   ```powershell
@@ -76,7 +83,7 @@ python scripts/watchdog.py --start-if-down
   Register-ScheduledTask -TaskName "ClaudeServerWatchdog" -Action $act -Trigger $trg -Settings $set -RunLevel Limited
   ```
 
-三层保险：登录启动项 → 看门狗 → server.py（异步更新 + 全局写锁，不自锁死）。
+如需临时自愈，可手动运行 watchdog；它默认只监控本机服务，不会自动连接远端 GPU。
 
 ### 环境变量
 - `SERVER_HOST` — 服务监听地址；默认 `0.0.0.0`，允许校园网其他电脑查看。只需本机使用时设为 `127.0.0.1`。
@@ -84,6 +91,9 @@ python scripts/watchdog.py --start-if-down
 - `ALLOW_REMOTE_WRITES=1` — 明确允许远程电脑触发更新、保存和情景运行；默认关闭。
 - `ADMIN_TOKEN` — 可选远程管理令牌。远程 API 调用在 `X-Research-Admin-Token` 请求头携带该值后才可执行写操作。
 - `CORS_ORIGIN` — 可选的跨站访问来源；默认不开放 CORS。普通浏览器同源访问无需设置。
+- `TRUST_CLOUDFLARE_HEADERS=1` — 仅在 Cloudflare Tunnel 是唯一反向代理时启用；把带 `CF-Connecting-IP` 的 loopback 转发按远程请求处理，避免公网 POST 被误判成本机写操作。默认关闭。
+- `PAPER_TRANSLATION_ENABLED=0` — 硬关闭论文翻译页面和 API（整站返回 404）；默认 `1` 可用。模块本身不会自动连接 GPU，见下方“GPU 按需连接”。
+- `AUDIO_TRANSCRIPTION_ENABLED=0` — 硬关闭语音转写页面和 API；默认 `1` 可用。
 - `TRANSLATION_BASE_URL` — 本地 SSH 隧道后的 OpenAI 兼容地址；默认 `http://127.0.0.1:18001/v1`。
 - `TRANSLATION_MODEL` — 论文翻译模型；默认 `Qwen/Qwen3-14B-AWQ`。
 - `TRANSLATION_MAX_UPLOAD_BYTES` — 论文文件上限；默认 50 MB。论文任务目录始终 gitignored。
@@ -94,6 +104,13 @@ python scripts/watchdog.py --start-if-down
 - `AUDIO_TRANSCRIPTION_ALLOW_REMOTE=1` — 明确允许非本机访问原始录音、转录和字幕；隐私原因默认关闭。
 - `AUDIO_TRANSCRIPTION_HOSTS` — 逗号分隔的语音候选主机；默认固定为 `keller.cs.nmsu.edu`。需要临时扩容时再显式添加其他主机。
 - `AUDIO_GPU_WAIT_SECONDS` — Keller 无空闲 GPU 时的最长安全等待；默认 900 秒，不强行共享忙碌 GPU。
+- `EBOOK_ALLOW_REMOTE=1` — 显式允许非本机访问阅读副本工坊。该模块能列举本机任意文件夹并把文件写到本机磁盘，隐私与安全原因默认只允许服务器本机访问。
+- `EBOOK_MAX_UPLOAD_BYTES` — 上传 PDF 上限；默认 120 MB。用本机路径批量转换不受此限制，因为原件只被读取、不产生副本。
+- `EBOOK_MAX_FOLDER_FILES` / `EBOOK_MAX_SCAN_DEPTH` — 单次目录扫描的文件数与递归深度上限；默认 800 与 6，超出时结果标 `truncated` 而不是静默截断。
+- `EBOOK_MAX_CONCURRENT_JOBS` — 转换队列并发；默认 2，安全范围 1–4。
+- `EBOOK_EMAIL_MAX_BYTES` — 发到 Kindle 的单封附件上限；默认 24 MB，超限的文件明确跳过并给出原因。
+- `KINDLE_EMAIL` — 默认的 Send-to-Kindle 收件地址；页面留空即用它。API 只返回遮罩后的地址。
+- `EBOOK_SMTP_*` — 阅读副本发信的独立 SMTP 参数（`HOST`/`PORT`/`USER`/`PASS`/`FROM`/`USE_SSL`/`STARTTLS`）。不设置时回落到通用 `SMTP_*`。密码只放在 gitignored 的 `.secrets`，绝不进入任何 API 响应。
 - `YUEDU_FM_ALLOW_REMOTE=1` — 显式允许受平台写权限保护的远程设备读取悦读FM本地资料；默认仅服务器本机可访问。
 - `CARDCOOKIE_MONITOR_ALLOW_REMOTE=1` — 显式允许受管理权限保护的远程设备读取 CardCookie 监控状态；默认仅服务器本机可访问，开启/停止仍受写权限保护。
 - `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` — CardCookie 变化通知使用的 SMTP 参数；`SMTP_PASS` 应使用邮箱授权码或应用密码，只放在 gitignored 的 `.secrets`。
@@ -105,12 +122,48 @@ python scripts/watchdog.py --start-if-down
 - `FISCAL_AUTO=0` — 关闭政府债务模块每周一次的官方来源检查。
 - `RATES_AUTO=0` — 关闭利率/汇率与美国宏观每日一次的自动更新。
 - `ANJUKE_AUTO=1` — 开启安居客挂牌价每周低频检查；首次 70 城人工验收完成前默认关闭（验证码页自动跳过，不绕过）。
+- `FACULTY_JOBS_AUTO_UPDATE=0` — 关闭 Academic Career 公开职位源的每日后台刷新；默认开启，但启动后先等待 15 分钟。
+- `FACULTY_JOBS_UPDATE_HOURS` — 职位源刷新间隔，默认 24 小时。
+- `FACULTY_JOBS_HTTP_TIMEOUT` / `FACULTY_JOBS_MAX_PAGES_PER_SOURCE` — 单次公开页面请求超时和每来源页数上限；默认 20 秒、1 页。
+- `FACULTY_JOBS_ALLOW_REMOTE_PRIVATE=1` — 明确允许远程读取个人 profile/application 数据；默认关闭，即便普通写权限已开启也保持本机隔离。
 
 ### 校园网访问安全
 
 默认配置保留局域网查看能力：其他电脑可打开 `http://<本机校园网IP>:5001`，但只能读取页面和数据；更新数据、保存文章、重新分类与运行情景等写操作默认仅允许服务器本机执行。这样无需公开商业挂牌数据库，也避免校园网内其他设备误触发长任务。
 
 如只在本机使用，可在 `.secrets` 中加入 `SERVER_HOST=127.0.0.1`。不建议在校园网设置 `ALLOW_REMOTE_WRITES=1`；确需远程管理时优先配置随机的 `ADMIN_TOKEN`，并通过受控客户端请求头传递，令牌文件已被 `.gitignore` 排除。
+
+### Cloudflare Tunnel 外网访问
+
+如果需要让不安装 Tailscale 的手机或电脑通过普通浏览器访问，使用 Cloudflare Tunnel + Cloudflare Access：
+
+1. 在 Cloudflare Zero Trust 的 **Networks → Tunnels** 创建 `cloudflared` Tunnel。
+2. 添加公开主机名，例如 `research.example.com`，Origin Service 填 `http://127.0.0.1:5001`。
+3. 在 **Access → Applications** 创建 Self-hosted 应用，只允许自己的邮箱登录。
+4. Windows 启动环境必须设置 `TRUST_CLOUDFLARE_HEADERS=1`；保持 `ALLOW_REMOTE_WRITES=0`，不要把平台写接口公开。
+
+Cloudflare Tunnel 不需要路由器端口转发；Tunnel 的出站连接和 Access 登录是外网入口，域名/DNS 与 Tunnel 凭据只保存在 Cloudflare 和本机受保护配置中。
+
+### GPU 按需连接（两个 GPU 模块共同约束）
+
+这两个模块曾经被整体关闭，原因是**打开页面就会反复联系校内集群**：读取 `/api/translation/config`
+会顺手 health-check 模型，而翻译页每 15 秒轮询一次该接口；`/api/audio/config` 更重，会 SSH 登录每台
+候选主机跑 `nvidia-smi`。开着标签页就等于全天候占用共享资源，因此被限流。
+
+现在的约束是：
+
+- `config()` 只描述模块，**不产生任何出站连接**——不 HTTP、不 SSH。返回里 `connection_policy` 为
+  `on_demand_only`，`model_service.probed` 为 `false`。
+- 探活是独立且必须由用户触发的动作：`POST /api/translation/probe`、`POST /api/audio/probe`。
+  页面上是“连接并检查”按钮，点击后先弹确认再连。
+- **页面没有任何定时探活。**任务列表轮询只读本机 JSON，不碰 GPU。
+- 开始任务同样先确认，说明会连接并占用 GPU 直到任务结束。
+- 开始按钮不再要求“先探活成功”——那等于强制每次使用都先连一次。模型没起来时任务会失败并提示，
+  本机原件和检查点保留，可直接重试。
+
+`tests/test_gpu_on_demand.py` 把这套契约钉死：`config()` 的出站调用次数必须为 0，页面里不允许出现
+指向 config/probe 的 `setInterval`，探活与开始任务都必须带确认。需要彻底停用时仍可设
+`PAPER_TRANSLATION_ENABLED=0` / `AUDIO_TRANSCRIPTION_ENABLED=0`。
 
 ### 学术语言工作台：文档翻译
 
@@ -143,8 +196,10 @@ PDF 模式面向带可提取文本层的论文：保留原页尺寸、图片、�
 # 1. 默认使用记录中的主机，否则固定 Iverson；只有显式 --host auto 才会多机选择
 python scripts/manage_translation_vllm.py start
 
-# 2. 隧道由看门狗自动维护:只要模型状态文件在(manage start 后),隧道断了(如重启电脑)
-#    会在 20s 内自动重建;也可手动 scripts/start_translation_tunnel.sh
+# 2. 隧道不由看门狗自动建立；需要翻译时由用户显式打开并保持这个终端
+scripts/start_translation_tunnel.sh
+#    如确有明确需求，可手动运行 watchdog.py --auto-tunnel；失败后会指数退避，
+#    但不建议把它放进登录启动项或计划任务。
 
 # 3. 启动本研究平台，访问 http://127.0.0.1:5001/paper-translation
 python server.py
@@ -211,6 +266,25 @@ Keller GPU 忙时任务保持等待，超时后如实失败并保留本机原件
 API 或仓库。详细架构、版本、验证结果和限制见
 [docs/audio_transcription_STATUS_2026-07-21.md](docs/audio_transcription_STATUS_2026-07-21.md)。
 
+### 阅读副本工坊：PDF 转 Kindle 与手机格式
+
+页面：`http://127.0.0.1:5001/ebook-conversion`。同一次解析产出两种阅读副本：**EPUB 重排**给手机和支持
+EPUB 的 Kindle（正文重排、字号可调，表格与图形渲染成图片原样插入，保留原文页码作为 EPUB 页标记方便引用）；
+**裁边分栏 PDF** 给墨水屏（切白边、双栏按栏切开、按设备屏幕比例重排页面，公式图表 100% 保真）。
+两者共用 `services/pdf_translation_service.py` 里的版面引擎，通过 `extract_reading_layout()` 取得
+与翻译路径相反的取舍：保留参考文献、把表格与图形当作可渲染区域、扫描件只交几何不抛异常。
+
+**这个模块只用本机 PyMuPDF，不连任何远端 GPU**，因此不套 `PAPER_TRANSLATION_ENABLED` /
+`AUDIO_TRANSCRIPTION_ENABLED` 那类开关，即使那两个模块被硬关闭也照常可用。
+
+三种选文件方式：填本机目录递归批量（原件只读，不产生副本）、浏览器选整个文件夹、多选文件。
+三种投递方式：逐个下载或打包 ZIP、发到 Kindle 邮箱、写入指定本机文件夹（同名默认跳过不覆盖）。
+
+模块能列举本机任意目录并往磁盘写文件，因此**默认只允许服务器本机访问**，不跟随普通局域网只读策略；
+确需远程使用时才设 `EBOOK_ALLOW_REMOTE=1`。扫描件没有文本层，EPUB 会明确标为跳过而不是产出空书，
+裁边分栏 PDF 仍然可用。详细设计取舍、几何算法与已知不足见
+[docs/ebook_conversion_STATUS_2026-08-15.md](docs/ebook_conversion_STATUS_2026-08-15.md)。
+
 ### 悦读FM：本地归档与播放
 
 页面：`http://127.0.0.1:5001/yuedu-fm`。RSS 原始快照、逐集 JSON、封面和音频保存在
@@ -275,7 +349,7 @@ Invoke-RestMethod -Method Post -ContentType application/json `
 python scripts/verify_fiscal_debt.py
 ```
 
-财政收支历史来自财政部国库司“财政收支情况”原文：一般公共预算覆盖 2010 年起，政府性基金覆盖 2012 年起；原始值是 YTD 累计，页面另提供不跨缺月的相邻 YTD 差分流量（1—2 月保留合并窗口），并显示月度覆盖审计。页面中的收支差额均为 `收入 - 支出` 的 derived 分析值，不等于法定预算赤字；“两本账”仅作简单相加，未抵销调入调出。未来三年同时展示最可能、较好、较坏三种透明点估计，并以固定种子的 5,000 次年度联合冲击抽样给出 P10/P50/P90 模型敏感性区间；全部标记为 scenario，不写入 official observation。
+财政收支历史来自财政部国库司“财政收支情况”原文：一般公共预算覆盖 2010 年起，政府性基金覆盖 2012 年起；原始值是 YTD 累计，页面另提供不跨缺月的相邻 YTD 差分流量（1—2 月保留合并窗口），并显示月度覆盖审计。页面中的收支差额均为 `收入 - 支出` 的 derived 分析值，不等于法定预算赤字；“两本账”仅作简单相加，未抵销调入调出。全年推演自动锚定最新非 12 月官方累计月，按历史同截止月/全年比例重算；上半年口径保留为回测对照。未来三年同时展示最可能、较好、较坏三种透明点估计，并以固定种子的 5,000 次年度联合冲击抽样给出 P10/P50/P90 模型敏感性区间；全部标记为 scenario，不写入 official observation。
 
 财政债务调度器默认每 168 小时检查一次已接入来源。抓取失败会写入
 `fiscal_debt_update_logs`，不会清空或用假数据覆盖旧 observation。
@@ -293,6 +367,9 @@ python scripts/verify_fiscal_debt.py
 # 统计局现行 70 城逐城口径（2011 起，公开来源，可复现）
 python scripts/backfill_housing_history.py --source nbs --start-year 2011 --end-year 2026 --nbs-workers 3
 
+# 统计局全国商品房销售面积/销售额（月度累计自2012-02；年度长历史自1991）
+python scripts/backfill_housing_history.py --source nbs-sales --start-year 2012 --end-year 2026 --nbs-workers 3
+
 # 安居客关注十五城年度页（2010 起，低频、本机保存，验证页即跳过）
 python scripts/backfill_housing_history.py --source anjuke --start-year 2010 --end-year 2026 --max-requests 90
 
@@ -300,10 +377,15 @@ python scripts/backfill_housing_history.py --source anjuke --start-year 2010 --e
 python scripts/backfill_housing_history.py --source anjuke-yearly --no-network
 ```
 
-统计局 2010 年仍是旧发布制度，不与 2011 年后的逐城序列拼接。安居客挂牌数据和原始页只写入
+统计局全国商品房年度销售面积与销售额从 1991 年起单独保存；月度累计仅从可连续核验的
+2012 年 1—2 月合并发布期起回填，不把年度值拆成月份。统计局 2010 年仍是旧价格发布制度，
+不与 2011 年后的逐城价格序列拼接。安居客挂牌数据和原始页只写入
 gitignored 的 `data/housing_listing.db` 与 `data/anjuke_raw/`，不会进入公开仓库。全国历史排名页形成
 独立的年度低频快照，城市年度页形成逐月序列；年度点不复制成 12 个月，也不进入与官方二手指数的
 月度对比。页面价格为 `-` 时保留缺失，不补零、不用区县均价替代。
+全国销售区的“当年销售面积累计/当年销售额累计”指统计局年初至今的官方月度 YTD；
+“历史累计销售面积/历史累计销售金额”则是覆盖期内各年度官方总量之和，1991—2004 与
+2005 年以后统计范围存在阶段变化，因此只作规模汇总。
 
 ## 数据说明
 
