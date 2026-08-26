@@ -3515,6 +3515,13 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
             if missing:
                 results.append({"source": "request", "status": "error", "error": "unknown sources: " + ", ".join(missing)})
             if any(item.get("status") == "success" for item in results):
+                # Boards that publish no location column leave a job with none.
+                # This has to run on every update, not once as a migration: a
+                # re-ingested job is rewritten from source values and loses an
+                # adopted city otherwise. Only jobs with neither city nor state
+                # are touched, so posting-level values are never overwritten.
+                _backfill_job_location_from_entity(conn)
+                conn.commit()
                 _record_source_coverage_history(
                     conn,
                     notes="Recorded after a bounded public-source ingestion run; changing source coverage is not market growth.",

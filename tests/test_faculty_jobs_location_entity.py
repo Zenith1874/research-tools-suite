@@ -134,6 +134,33 @@ class EntityLocationTests(unittest.TestCase):
         self.assertEqual(1, stats["from_aacsb_roster"])
         self.assertEqual("aacsb_roster", self.job()["location_evidence"])
 
+    def test_a_reingested_job_does_not_lose_its_adopted_location(self):
+        """The one-shot migration was not enough.
+
+        A job rewritten from source values on the next update loses the adopted
+        city, so the fallback runs at the end of every update_faculty_jobs pass.
+        This asserts the operation is idempotent and re-fills after a wipe.
+        """
+        _backfill_job_location_from_entity(self.conn)
+        self.conn.commit()
+        self.assertEqual("New Orleans", self.job()["city"])
+        # Simulate the re-ingest that overwrote it in production.
+        self.conn.execute(
+            "UPDATE jobs SET city=NULL, state_province=NULL, "
+            "location_evidence='institution_entity' WHERE id=1")
+        self.conn.commit()
+        stats = _backfill_job_location_from_entity(self.conn)
+        self.conn.commit()
+        self.assertEqual(1, stats["from_institution"])
+        self.assertEqual("New Orleans", self.job()["city"])
+
+    def test_running_twice_changes_nothing_the_second_time(self):
+        _backfill_job_location_from_entity(self.conn)
+        self.conn.commit()
+        second = _backfill_job_location_from_entity(self.conn)
+        self.conn.commit()
+        self.assertEqual(0, second["considered"], "a filled job is no longer a candidate")
+
     def test_nothing_is_invented_when_no_evidence_exists(self):
         self.conn.execute("DELETE FROM institutions WHERE id=1")
         self.conn.commit()
