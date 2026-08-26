@@ -26,7 +26,7 @@ from services.faculty_jobs_normalizer import (
     COUNTRY_OPTIONS, DISCIPLINES, REGION_GROUPS, canonical_key, classify_business_scope,
     classify_faculty_market_role,
     country_code_for, country_display, hiring_cycle, hiring_cycle_reason,
-    fingerprint_fields, is_mergeable_official_url,
+    fingerprint_fields, infer_visa, is_mergeable_official_url,
     normalize_name, normalize_source_job, normalize_url, parse_deadline, parse_location,
 )
 from services.faculty_jobs_school_service import (
@@ -1074,6 +1074,41 @@ def ensure_faculty_jobs_tables(db_path=None):
                     f"business_school {before.get('business_school', 0)} -> {after.get('business_school', 0)}; "
                     f"business_discipline {before.get('business_discipline', 0)} -> {after.get('business_discipline', 0)}; "
                     f"non_business {before.get('non_business', 0)} -> {after.get('non_business', 0)}."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=51").fetchone():
+            # visa_status was inverted for every job it claimed to know about:
+            # the affirmative pattern "eligible.*sponsorship" matched inside
+            # "not eligible for sponsorship" and ran before the refusal check.
+            # Replay it with the corrected precedence over the same title +
+            # department + excerpt text the ingest path uses.
+            before = dict(conn.execute(
+                "SELECT COALESCE(visa_status,'unknown'), COUNT(*) FROM jobs GROUP BY 1").fetchall())
+            changed = 0
+            for row in conn.execute(
+                "SELECT id, title_raw, department, description_excerpt, visa_status FROM jobs"
+            ).fetchall():
+                combined = " ".join(item for item in (
+                    row["title_raw"] or "", row["department"] or "",
+                    row["description_excerpt"] or "") if item)
+                status = infer_visa(combined)
+                if status == (row["visa_status"] or "unknown"):
+                    continue
+                # visa_text holds source-quoted text, not derived evidence, so
+                # the replay touches the derived status only.
+                conn.execute("UPDATE jobs SET visa_status=? WHERE id=?", (status, row["id"]))
+                changed += 1
+            after = dict(conn.execute(
+                "SELECT COALESCE(visa_status,'unknown'), COUNT(*) FROM jobs GROUP BY 1").fetchall())
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (51, now_utc(), (
+                    "Replayed visa_status after correcting refusal/offer precedence. "
+                    f"{changed} rows changed; explicit_yes "
+                    f"{before.get('sponsorship_explicit_yes', 0)} -> {after.get('sponsorship_explicit_yes', 0)}; "
+                    f"explicit_no {before.get('sponsorship_explicit_no', 0)} -> "
+                    f"{after.get('sponsorship_explicit_no', 0)}. Every previous explicit_yes was wrong; "
+                    "two stated the opposite of the posting."
                 )),
             )
         _seed_source_coverage_history_if_empty(conn)

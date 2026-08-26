@@ -1204,15 +1204,55 @@ def infer_track(text):
     return "unknown"
 
 
+# Refusals are checked before offers, and the refusal patterns are the specific
+# ones.  The previous order asked "eligible.*sponsorship" first, which matched
+# inside "not eligible for sponsorship" and reported a school that explicitly
+# refuses sponsorship as one that provides it.  For this field an inverted
+# answer is worse than no answer, so negation wins every tie.
+_VISA_REFUSAL_RE = re.compile(
+    r"\b(?:will|can|do(?:es)?)\s*n(?:o|’|')?t\s+sponsor\b|"
+    r"\bcannot\s+sponsor\b|"
+    r"\bunable\s+to\s+(?:provide|offer|sponsor|take\s+over)[^.]{0,60}?(?:sponsor|visa)|"
+    r"\bno\s+(?:visa\s+)?sponsorship\b|"
+    r"\bnot\s+eligible\s+for\s+(?:visa\s+)?sponsorship\b|"
+    r"\bsponsorship\s+is\s+not\s+(?:available|offered|provided)\b|"
+    r"\bwithout\s+(?:the\s+need\s+for\s+)?(?:visa\s+)?sponsorship\b|"
+    r"\bauthori[sz]ed\s+to\s+work[^.]{0,80}?without\s+sponsorship\b",
+    re.I,
+)
+# Hedged wording is not a commitment.  "May be available in limited situations"
+# is real information, but reporting it as an explicit yes would mislead exactly
+# the reader who depends on this field.
+_VISA_HEDGE_RE = re.compile(
+    r"\b(?:may|might|could)\s+be\s+(?:available|possible|considered)\b|"
+    r"\bin\s+(?:very\s+)?limited\s+(?:situations|circumstances|cases)\b|"
+    r"\bcase[- ]by[- ]case\b",
+    re.I,
+)
+_VISA_OFFER_RE = re.compile(
+    r"\bwill\s+sponsor\b|\bwe\s+sponsor\b|"
+    r"\b(?:visa\s+)?sponsorship\s+(?:is\s+)?available\b|"
+    r"\b(?:can|able\s+to|willing\s+to|happy\s+to)\s+sponsor\b|"
+    r"\bsponsor(?:ship)?\s+(?:for\s+)?(?:an?\s+)?(?:h-?1b|work\s+visa)\b|"
+    r"\bh-?1b\s+sponsorship\b|"
+    r"\beligible\s+for\s+(?:visa\s+)?sponsorship\b",
+    re.I,
+)
+_VISA_MENTION_RE = re.compile(
+    r"\bvisa\b|\bwork\s+authori[sz]ation\b|\bright\s+to\s+work\b|\bsponsorship\b",
+    re.I,
+)
+
+
 def infer_visa(text):
     lower = clean_text(text).casefold()
-    if re.search(r"will sponsor|visa sponsorship available|sponsor.*(h-?1b|work visa)|eligible.*sponsorship", lower):
-        return "sponsorship_explicit_yes"
-    if re.search(r"will not sponsor|no visa sponsorship|cannot sponsor|not eligible for sponsorship", lower):
+    if _VISA_REFUSAL_RE.search(lower):
         return "sponsorship_explicit_no"
+    if _VISA_OFFER_RE.search(lower):
+        return "unclear" if _VISA_HEDGE_RE.search(lower) else "sponsorship_explicit_yes"
     if re.search(r"international candidates welcome|welcome applications from international|global applicants welcome", lower):
         return "international_candidates_welcome"
-    if re.search(r"visa|work authorization|work authorisation|right to work", lower):
+    if _VISA_MENTION_RE.search(lower):
         return "unclear"
     return "unknown"
 
