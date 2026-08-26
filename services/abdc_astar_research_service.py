@@ -589,6 +589,9 @@ def _parse_openalex_work(w, issn):
         'journal_issn': issn,
         'publisher': src.get('host_organization_name'),
         'authors': authors,
+        # Kept whole so the institution layer can be filled at ingest time
+        # instead of needing a second pass over the corpus later.
+        'authorships': w.get('authorships') or [],
         'concepts': concepts,
         'keywords': [k.get('display_name') for k in w.get('keywords', [])] if w.get('keywords') else [],
         'url': w.get('doi') or (w.get('primary_location') or {}).get('landing_page_url'),
@@ -1065,6 +1068,7 @@ def _upsert_article(conn, art, journal):
         conn.execute(f'UPDATE astar_articles SET {",".join(sets)} WHERE id=?', vals)
         _persist_classification(conn, existing_id, classification_art)
         _record_source(conn, existing_id, art)
+        _record_affiliations_if_available(conn, existing_id, art)
         return 'updated', existing_id
 
     fields['created_at'] = now
@@ -1078,7 +1082,32 @@ def _upsert_article(conn, art, journal):
         return 'duplicate', None
     _persist_classification(conn, aid, art)
     _record_source(conn, aid, art)
+    _record_affiliations_if_available(conn, aid, art)
     return 'inserted', aid
+
+
+def _record_affiliations_if_available(conn, article_id, art):
+    """Store the institution grain for a freshly fetched OpenAlex work.
+
+    Crossref fallback records carry no authorships, so they stay 'pending' and
+    are picked up by scripts/backfill_astar_affiliations.py rather than being
+    recorded as having no affiliation.
+    """
+    if art.get('source_type') != 'openalex' or 'authorships' not in art:
+        return
+    try:
+        from services.astar_affiliation_service import (
+            ensure_affiliation_tables, now_utc as aff_now, parse_authorships,
+            record_affiliations)
+        ensure_affiliation_tables(conn)
+        checked_at = aff_now()
+        status = record_affiliations(
+            conn, article_id, parse_authorships({'authorships': art['authorships']}), checked_at)
+        conn.execute("UPDATE astar_articles SET affiliation_status=?, affiliation_checked_at=? "
+                     "WHERE id=?", (status, checked_at, article_id))
+    except Exception as exc:
+        # The affiliation layer is additive; never fail an article ingest for it.
+        log.warning('affiliation record failed article_id=%s error=%s', article_id, str(exc)[:200])
 
 
 def _record_source(conn, article_id, art):

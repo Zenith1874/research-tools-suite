@@ -202,7 +202,10 @@
         "scripts/seed_book60_evidence.py",
         "tests/test_business_research*.py",
         "tests/test_research_*.py",
-        "tests/test_book60_evidence_seed.py"
+        "tests/test_book60_evidence_seed.py",
+        "services/astar_affiliation_service.py",
+        "scripts/backfill_astar_affiliations.py",
+        "tests/test_astar_affiliations.py"
       ],
       "tracked_data": [
         "data/abdc_data.json",
@@ -221,7 +224,9 @@
         "data/business_research_state.db*",
         "data/research_source_text/**",
         "data/research_sources/**",
-        "data/research_evidence/**"
+        "data/research_evidence/**",
+        "data/backups/astar_*/**",
+        "outputs/astar_affiliation_backfill_*.log"
       ]
     },
     {
