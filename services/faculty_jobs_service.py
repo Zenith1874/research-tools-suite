@@ -1244,6 +1244,51 @@ def ensure_faculty_jobs_tables(db_path=None):
                     f"{after_scope.get('business_discipline', 0)}."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=57").fetchone():
+            inst_before = conn.execute(
+                "SELECT COUNT(*) FROM institutions WHERE is_current=1").fetchone()[0]
+            inst_stats = _merge_duplicate_institutions(conn)
+            # Merging institutions can bring two spellings of one school
+            # together, so the variant pass runs again afterwards.
+            school_stats = _merge_variant_school_entities(conn)
+            for row in conn.execute(
+                    "SELECT id FROM business_schools WHERE is_current=1").fetchall():
+                refresh_school_classification(conn, row["id"])
+            inst_after = conn.execute(
+                "SELECT COUNT(*) FROM institutions WHERE is_current=1").fetchone()[0]
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (57, now_utc(), (
+                    f"Merged {inst_stats['merged']} duplicate institution rows across "
+                    f"{inst_stats['groups']} identical-name groups ({inst_before}->{inst_after} "
+                    f"current), then {school_stats['merged']} further school variants they "
+                    "brought together. Exact normalized-name equality only; old names kept as "
+                    "aliases, rows retired rather than deleted, and a missing city/state/ROR on "
+                    "the survivor filled from the row it absorbed."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=56").fetchone():
+            before = conn.execute(
+                "SELECT COUNT(*) FROM business_schools WHERE is_current=1").fetchone()[0]
+            merge_stats = _merge_variant_school_entities(conn)
+            # The surviving entity now holds the union of both rows' evidence,
+            # so its tier has to be recomputed.
+            for row in conn.execute(
+                    "SELECT id FROM business_schools WHERE is_current=1").fetchall():
+                refresh_school_classification(conn, row["id"])
+            after = conn.execute(
+                "SELECT COUNT(*) FROM business_schools WHERE is_current=1").fetchone()[0]
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (56, now_utc(), (
+                    f"Merged {merge_stats['merged']} duplicate business-school rows that were "
+                    f"name variants of one school; {merge_stats['groups_skipped_as_distinct']} of "
+                    f"{merge_stats['groups_considered']} multi-school institutions were left "
+                    f"alone as genuinely separate schools. Current entities {before}->{after}. "
+                    "Merged rows are retired as is_current=0, not deleted, and every job link, "
+                    "evidence row, override and roster link moved to the surviving entity."
+                )),
+            )
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:
@@ -1795,6 +1840,183 @@ def _canonical_variant_school(conn, institution_id):
             return None
     best = max(schools, key=lambda row: (len(keys[row["id"]]), -row["id"]))
     return best
+
+
+def _merge_school_entity(conn, old_id, target_id, reason):
+    """Repoint one school entity onto another and retire the old row.
+
+    Nothing is deleted: the old row stays as ``is_current=0`` so the label it
+    carried remains auditable, and every job link, evidence row, override and
+    AACSB roster link moves to the target.
+    """
+    if old_id == target_id:
+        return 0
+    conn.execute("UPDATE jobs SET school_id=? WHERE school_id=?", (target_id, old_id))
+    conn.execute("UPDATE school_evidence SET school_id=? WHERE school_id=?", (target_id, old_id))
+    override = conn.execute(
+        "SELECT 1 FROM school_tier_overrides WHERE school_id=?", (old_id,)).fetchone()
+    target_override = conn.execute(
+        "SELECT 1 FROM school_tier_overrides WHERE school_id=?", (target_id,)).fetchone()
+    if override and not target_override:
+        conn.execute("UPDATE school_tier_overrides SET school_id=? WHERE school_id=?",
+                     (target_id, old_id))
+    conn.execute("UPDATE aacsb_directory_schools SET linked_business_school_id=? "
+                 "WHERE linked_business_school_id=?", (target_id, old_id))
+    conn.execute("UPDATE business_schools SET is_current=0, updated_at=? WHERE id=?",
+                 (now_utc(), old_id))
+    # Repointing can bring an identical evidence row alongside one the target
+    # already had; collapse exact duplicates so the ledger does not double up.
+    conn.execute("""
+        DELETE FROM school_evidence WHERE id NOT IN (
+            SELECT MIN(id) FROM school_evidence WHERE school_id=?
+            GROUP BY evidence_type, COALESCE(value,''), COALESCE(source_url,'')
+        ) AND school_id=?
+    """, (target_id, target_id))
+    conn.execute("""
+        INSERT INTO faculty_job_repair_audit (observed_at,action,job_id,old_value,new_value,reason)
+        VALUES (?,?,?,?,?,?)
+    """, (now_utc(), "merge_variant_school_entity", None, str(old_id), str(target_id),
+          reason[:2000]))
+    return 1
+
+
+def _json_aliases(value):
+    try:
+        parsed = json.loads(value or "[]")
+        return [item for item in parsed if isinstance(item, str)] if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+# Fields worth carrying over when the surviving row is missing them. The old row
+# is never allowed to overwrite a value the target already has.
+_INSTITUTION_FILL_FIELDS = (
+    "city", "state_province", "country", "country_code", "region_group",
+    "institution_url", "ror", "openalex_institution_id", "carnegie_class",
+    "university_research_level", "university_research_level_system",
+)
+
+
+def _merge_institution_entity(conn, old_id, target_id, reason):
+    """Merge one duplicate institution row into another.
+
+    Duplicates arise because sources spell an institution the same way but the
+    importer created separate rows. Merging keeps the old name as an alias,
+    moves the schools (collapsing same-named ones), repoints the jobs, and fills
+    any field the survivor was missing. Nothing is deleted: the old row is
+    retired as ``is_current=0``.
+    """
+    if old_id == target_id:
+        return 0
+    old = conn.execute("SELECT * FROM institutions WHERE id=?", (old_id,)).fetchone()
+    target = conn.execute("SELECT * FROM institutions WHERE id=?", (target_id,)).fetchone()
+    if not old or not target:
+        return 0
+
+    aliases = _json_aliases(target["aliases_json"])
+    for value in [old["official_name"], *_json_aliases(old["aliases_json"])]:
+        if value and value != target["official_name"] and value not in aliases:
+            aliases.append(value)
+    conn.execute("UPDATE institutions SET aliases_json=?, updated_at=? WHERE id=?",
+                 (json.dumps(aliases[:80], ensure_ascii=False), now_utc(), target_id))
+
+    target_columns = {row[1] for row in conn.execute("PRAGMA table_info(institutions)")}
+    for field in _INSTITUTION_FILL_FIELDS:
+        if field not in target_columns:
+            continue
+        if not (target[field] or "") and (old[field] or ""):
+            conn.execute(f"UPDATE institutions SET {field}=? WHERE id=?", (old[field], target_id))
+
+    for school in conn.execute(
+            "SELECT id, normalized_name FROM business_schools WHERE institution_id=?",
+            (old_id,)).fetchall():
+        twin = conn.execute(
+            "SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=? "
+            "AND is_current=1 LIMIT 1", (target_id, school["normalized_name"])).fetchone()
+        if twin:
+            _merge_school_entity(conn, int(school["id"]), int(twin["id"]),
+                                 "Same school name under a merged duplicate institution row.")
+        else:
+            conn.execute("UPDATE business_schools SET institution_id=?, updated_at=? WHERE id=?",
+                         (target_id, now_utc(), school["id"]))
+
+    conn.execute("UPDATE jobs SET institution_id=? WHERE institution_id=?", (target_id, old_id))
+    conn.execute("UPDATE institutions SET is_current=0, updated_at=? WHERE id=?",
+                 (now_utc(), old_id))
+    conn.execute("""
+        INSERT INTO faculty_job_repair_audit (observed_at,action,job_id,old_value,new_value,reason)
+        VALUES (?,?,?,?,?,?)
+    """, (now_utc(), "merge_duplicate_institution", None, str(old_id), str(target_id),
+          reason[:2000]))
+    return 1
+
+
+def _merge_duplicate_institutions(conn):
+    """Collapse institution rows that share an exact normalized name.
+
+    Exact-name equality only. Two rows spelled identically are the same
+    university; anything looser risks merging two real institutions, which would
+    put one school's jobs and publication record under another's name.
+    """
+    merged = 0
+    groups = conn.execute("""
+        SELECT normalized_name FROM institutions
+        WHERE is_current=1 AND normalized_name IS NOT NULL AND normalized_name!=''
+        GROUP BY normalized_name HAVING COUNT(*) > 1
+    """).fetchall()
+    for group in groups:
+        rows = conn.execute("""
+            SELECT i.id,
+                   (SELECT COUNT(*) FROM jobs j WHERE j.institution_id=i.id) AS job_count,
+                   (CASE WHEN i.city IS NOT NULL AND i.city!='' THEN 1 ELSE 0 END
+                    + CASE WHEN i.state_province IS NOT NULL AND i.state_province!='' THEN 1 ELSE 0 END
+                    + CASE WHEN i.ror IS NOT NULL AND i.ror!='' THEN 1 ELSE 0 END) AS completeness
+            FROM institutions i WHERE i.is_current=1 AND i.normalized_name=?
+            ORDER BY job_count DESC, completeness DESC, i.id
+        """, (group["normalized_name"],)).fetchall()
+        if len(rows) < 2:
+            continue
+        target = rows[0]
+        for row in rows[1:]:
+            merged += _merge_institution_entity(
+                conn, row["id"], target["id"],
+                f"Duplicate institution row with the identical normalized name "
+                f"'{group['normalized_name']}'; the row carrying the most jobs survives.")
+    return {"merged": merged, "groups": len(groups)}
+
+
+def _merge_variant_school_entities(conn):
+    """Collapse duplicate rows that are name variants of one business school.
+
+    Duplicates accumulate because different sources spell the same unit
+    differently, and because a posting's programme text sometimes lands in the
+    school name. Only groups where every name contains or is contained by
+    another are merged; an institution with two genuinely separate schools --
+    Virginia's Darden and McIntire -- is left untouched.
+    """
+    merged = skipped = 0
+    groups = conn.execute("""
+        SELECT institution_id FROM business_schools
+        WHERE is_current=1 AND institution_id IS NOT NULL
+        GROUP BY institution_id HAVING COUNT(*) > 1
+    """).fetchall()
+    for group in groups:
+        target = _canonical_variant_school(conn, group["institution_id"])
+        if target is None:
+            skipped += 1
+            continue
+        others = conn.execute(
+            "SELECT id, official_name FROM business_schools "
+            "WHERE institution_id=? AND is_current=1 AND id!=?",
+            (group["institution_id"], target["id"])).fetchall()
+        for row in others:
+            merged += _merge_school_entity(
+                conn, row["id"], target["id"],
+                f"Name variant of the same school: '{row['official_name']}' merged into "
+                f"'{target['official_name']}'. Every name in this institution's group "
+                f"contains or is contained by another, so they are one unit.")
+    return {"merged": merged, "groups_skipped_as_distinct": skipped,
+            "groups_considered": len(groups)}
 
 
 def _link_jobs_to_unique_school(conn):
