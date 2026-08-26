@@ -19,7 +19,7 @@
 <main class="wrap">
   <div class="hero">
     <div><h1>学术语言工作台</h1><div class="sub">围绕同一篇 PDF / DOCX / TXT / MD 完成翻译、文章总结和基于原文证据的追问；访谈与会议录音请使用独立的“研究语音工作台”。</div></div>
-    <div id="model-state" class="model-state">正在检查本地模型隧道…</div>
+    <div id="model-state" class="model-state">按需连接 · 未主动检查</div>
   </div>
 
   <div class="notice"><strong>PDF 边界：</strong>文本型 PDF 会保持原页数、页面尺寸、双栏位置、图片和表格线，在原文本区域回写译文；它是高保真阅读副本，不是无损替换。表格内容、页眉页脚、竖排版权文字和参考文献条目默认保留原文。扫描型 PDF 在本地 OCR 模型尚未配置时会明确失败。</div>
@@ -42,7 +42,7 @@
         <div class="field full"><label for="glossary">术语表（每行：原词 = 译词）</label><textarea id="glossary" placeholder="sensemaking = 意义建构&#10;algorithmic management = 算法管理&#10;turnover intention = 离职意向"></textarea></div>
       </div>
       <label class="check"><input id="preserve-references" type="checkbox" checked><span>保留参考文献条目原文（翻译 “References” 标题，但默认不改动其后的书目信息；若后续出现同级标题则恢复翻译）。</span></label>
-      <div class="actions"><button id="start" class="btn primary" disabled>开始文档翻译</button><button id="refresh-model" class="btn" type="button">重新检查模型</button><span id="submit-message" class="help">请先选择论文文件。</span></div>
+      <div class="actions"><button id="start" class="btn primary" disabled>开始文档翻译</button><button id="refresh-model" class="btn" type="button">连接并检查模型</button><span id="submit-message" class="help">请先选择论文文件。</span></div>
     </section>
 
     <aside class="card">
@@ -55,7 +55,7 @@
         <li><b>问答回到原文：</b>回答不把译文或总结当证据，PDF 标注页码，其他格式标注章节或段落。</li>
         <li><b>审计记录：</b>保存模型名、参数、输入/输出 SHA-256、进度及 OOXML 完整性检查。</li>
       </ul>
-      <div class="help"><ol><li>Qwen 固定使用 Iverson；若机器重启后右上角显示未连接，需要重新启动 Iverson 模型与本机 SSH 隧道，不会回退到 simurgh 或 kaiju。</li><li>页面每 15 秒自动重查模型，也可点击“重新检查模型”。</li><li>可以先选择文件；模型状态显示“可用”后，开始按钮会自动解锁。</li><li>多文件会进入固定并发队列，默认一次只处理 1 篇，避免同时挤占本机和 Iverson。</li><li>完成后核对总结中的覆盖审计；译文仍需目视检查 PDF 小字号区域、表格和特殊公式。</li></ol></div>
+      <div class="help"><ol><li>Qwen 固定使用 Iverson；若机器重启后右上角显示未连接，需要重新启动 Iverson 模型与本机 SSH 隧道，不会回退到 simurgh 或 kaiju。</li><li><b>页面不会自动连接 GPU。</b>打开、停留、刷新任务列表都只读本机数据；只有你点“连接并检查模型”或“开始处理”时才会联系校内主机，两者都会先弹确认。</li><li>选好文件就能点开始，不需要先检查模型；模型没起来时任务会失败并提示，本机原件和检查点都保留，可直接重试。</li><li>多文件会进入固定并发队列，默认一次只处理 1 篇，避免同时挤占本机和 Iverson。</li><li>完成后核对总结中的覆盖审计；译文仍需目视检查 PDF 小字号区域、表格和特殊公式。</li></ol></div>
     </aside>
   </div>
 
@@ -128,9 +128,11 @@
   async function jsonFetch(url, options){const response=await fetch(url, options);let body={};try{body=await response.json();}catch(e){}if(!response.ok)throw new Error(body.error||('HTTP '+response.status));return body;}
 
   function syncStartState(){
-    start.disabled=!chosenFiles.length||!modelAvailable;
+    // 开始按钮不再要求先探活：要求探活等于强制每次都去连 GPU。
+    // 真正连接发生在提交时，并且提交前会明确确认。
+    start.disabled=!chosenFiles.length;
     start.textContent=chosenFiles.length>1?('开始处理 '+chosenFiles.length+' 篇'):'开始处理';
-    start.title=!chosenFiles.length?'请先选择论文文件':(modelAvailable?'':'文件已选择；等待本地模型连接后即可开始');
+    start.title=!chosenFiles.length?'请先选择论文文件':'提交时才会连接校内 GPU，会先向你确认';
   }
   function choose(fileList){
     const incoming=Array.from(fileList||[]);
@@ -144,7 +146,7 @@
     }
     chosenFiles=ok;
     selected.innerHTML=(ok.length?'已选 '+ok.length+' 篇：'+ok.map(f=>esc(f.name)+' · '+bytes(f.size)).join('；'):'')+(bad.length?'<div style="color:#ffc0cb;margin-top:4px">跳过：'+esc(bad.join('；'))+'</div>':(ok.length?'':'没有可用文件'));
-    message.textContent=modelAvailable?'文件已选择，可以开始。':'文件已选择；模型尚未连接，连接后按钮会自动解锁。';
+    message.textContent='文件已选择。点"开始处理"时才会连接校内 GPU。';
     syncStartState();
   }
   drop.addEventListener('click',()=>fileInput.click());drop.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileInput.click();}});
@@ -153,22 +155,35 @@
   ['dragleave','drop'].forEach(name=>drop.addEventListener(name,e=>{e.preventDefault();drop.classList.remove('drag');}));
   drop.addEventListener('drop',e=>choose(e.dataTransfer.files));
 
+  // 只读取本机静态配置，绝不触发任何对 GPU 的连接。
   async function loadConfig(){
-    refreshModel.disabled=true;refreshModel.textContent='正在检查…';
     try{
-      const config=await jsonFetch('/api/translation/config',{cache:'no-store'});maxBytes=config.max_upload_bytes||maxBytes;maxConcurrentJobs=config.max_concurrent_jobs||1;
+      const config=await jsonFetch('/api/translation/config',{cache:'no-store'});
+      maxBytes=config.max_upload_bytes||maxBytes;maxConcurrentJobs=config.max_concurrent_jobs||1;
+      modelState.textContent='按需连接 · '+(config.model||'本地模型')+' · 未主动检查';
+      modelState.className='model-state';
+      syncStartState();
+    }catch(error){modelState.textContent='本机配置读取失败 · '+error.message;modelState.className='model-state bad';}
+  }
+  // 唯一一处任务之外会联系 GPU 的动作，必须由用户明确点击并确认。
+  async function probeModel(){
+    if(!confirm('这会连接校内 GPU 主机检查模型是否在线。\n\n只在需要时检查——之前正是因为页面每 15 秒自动检查一次，才被限流。\n\n确定现在连接吗？'))return;
+    refreshModel.disabled=true;refreshModel.textContent='正在连接…';
+    try{
+      const config=await jsonFetch('/api/translation/probe',{method:'POST'});
       const health=config.model_service||{};
       modelAvailable=Boolean(health.available);
-      modelState.textContent=modelAvailable?'本地模型可用 · '+config.model+' · 并发 '+maxConcurrentJobs:'模型尚未连接 · 文件仍可先选择';
+      const stamp=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+      modelState.textContent=(modelAvailable?'模型在线 · '+(config.model||'')+' · 并发 '+maxConcurrentJobs:'模型未连接')+' · 检查于 '+stamp;
       modelState.className='model-state '+(modelAvailable?'ok':'bad');
-      if(chosenFiles.length)message.textContent=modelAvailable?'模型已连接，可以开始。':'文件已选择；模型尚未连接，连接后按钮会自动解锁。';
-      syncStartState();
-    }catch(error){modelAvailable=false;modelState.textContent='模型状态检查失败 · '+error.message;modelState.className='model-state bad';if(chosenFiles.length)message.textContent='文件已选择；模型状态恢复后按钮会自动解锁。';syncStartState();}
-    finally{refreshModel.disabled=false;refreshModel.textContent='重新检查模型';}
+    }catch(error){modelAvailable=false;modelState.textContent='检查失败 · '+error.message;modelState.className='model-state bad';}
+    finally{refreshModel.disabled=false;refreshModel.textContent='连接并检查模型';syncStartState();}
   }
 
   async function submit(){
-    if(!chosenFiles.length)return;start.disabled=true;
+    if(!chosenFiles.length)return;
+    if(!confirm('开始处理 '+chosenFiles.length+' 篇，这会连接校内 GPU 并占用它直到任务结束。\n\n确定现在开始吗？'))return;
+    start.disabled=true;
     const options={mode:$('mode').value,source_language:$('source-language').value,target_language:$('target-language').value,domain:$('domain').value,preserve_references:$('preserve-references').checked,glossary:glossary()};
     const files=chosenFiles.slice();let created=0,failed=0;
     for(const file of files){
@@ -182,7 +197,7 @@
     choose([]);fileInput.value='';await loadJobs();beginPolling();
   }
   start.addEventListener('click',submit);
-  refreshModel.addEventListener('click',loadConfig);
+  refreshModel.addEventListener('click',probeModel);
 
   function jobHtml(job){
     const p=(job.progress&&job.progress.percent)||0;
@@ -239,8 +254,9 @@
     }
   });
 
+  // 没有任何定时探活。曾经这里每 15 秒调一次会连 GPU 的 config，
+  // 页面开着就等于长期占用校内资源，因此被限流。
   loadConfig();loadJobs().then(jobs=>{if(jobs.some(job=>job.status==='queued'||job.status==='running'))beginPolling();});
-  setInterval(loadConfig,15000);
 })();
 </script>
 </body>

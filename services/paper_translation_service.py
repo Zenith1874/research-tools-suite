@@ -1410,7 +1410,14 @@ class PaperTranslationManager:
         except Exception:
             pass
 
-    def config(self) -> dict:
+    def config(self, probe: bool = False) -> dict:
+        """Describe the module.  Never contacts the GPU unless asked to.
+
+        Reading this endpoint used to health-check the model, and the page
+        polled it every 15 seconds, so simply leaving the tab open kept a
+        connection to the shared cluster alive around the clock.  Probing is
+        now an explicit, user-initiated action; see :meth:`probe_model`.
+        """
         client = self._client_factory()
         return {
             'privacy_mode': 'local_files_ssh_tunnel',
@@ -1422,7 +1429,14 @@ class PaperTranslationManager:
                 'units': TRANSLATION_BATCH_UNITS,
             },
             'max_concurrent_jobs': self.max_concurrent_jobs,
-            'model_service': client.health(),
+            'connection_policy': 'on_demand_only',
+            'model_service': (dict(client.health(), probed=True) if probe else {
+                'probed': False,
+                'available': None,
+                'configured_model': client.model,
+                'served_models': [],
+                'reason': '按需连接：未主动检查，本机没有联系过 GPU',
+            }),
             'job_storage': 'data/translation_jobs (gitignored, local only)',
             'paper_questions': {
                 'supported': True,
@@ -1438,6 +1452,10 @@ class PaperTranslationManager:
                 'tables_preserved_in_original_language': True,
             },
         }
+
+    def probe_model(self) -> dict:
+        """Contact the model once, only because the user explicitly asked."""
+        return self.config(probe=True)
 
     def create_job(self, filename: str, content: bytes, options: dict | None,
                    start: bool = True) -> dict:

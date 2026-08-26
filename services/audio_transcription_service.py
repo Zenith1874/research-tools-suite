@@ -306,11 +306,16 @@ class RemoteAudioRunner:
         self.max_utilization = int(os.environ.get('AUDIO_GPU_MAX_UTILIZATION', 10))
         self.ssh_timeout = int(os.environ.get('AUDIO_SSH_TIMEOUT_SECONDS', 10))
 
-    def config(self) -> dict:
+    def config(self, probe_hosts: bool = False) -> dict:
+        """Describe the runner.  Never opens SSH unless explicitly asked to.
+
+        The probe logs into every candidate host and runs nvidia-smi, so doing
+        it just because a page was opened kept contacting the shared cluster.
+        """
         transport_available = bool(shutil.which('ssh') and shutil.which('scp'))
         host_status = []
         recommendation = None
-        if transport_available:
+        if transport_available and probe_hosts:
             try:
                 with self._transport() as (ssh_command, _scp_command):
                     host_status = [probe(host, ssh_command) for host in self.hosts]
@@ -323,10 +328,12 @@ class RemoteAudioRunner:
                 ]
         return {
             'available': transport_available,
-            'connected': any(row.get('reachable') for row in host_status),
-            'idle_available': recommendation is not None,
+            'probed': bool(probe_hosts),
+            'connected': any(row.get('reachable') for row in host_status) if probe_hosts else None,
+            'idle_available': (recommendation is not None) if probe_hosts else None,
             'hosts': list(self.hosts),
             'host_status': host_status,
+            'connection_policy': 'on_demand_only',
             'selection': 'least_used_idle_gpu',
             'idle_thresholds': {
                 'memory_used_mib': self.max_used_mib,
@@ -542,7 +549,8 @@ class AudioTranscriptionManager:
             except Exception:
                 continue
 
-    def config(self) -> dict:
+    def config(self, probe: bool = False) -> dict:
+        """Describe the module.  Never contacts the cluster unless asked to."""
         runner = self._runner_factory()
         translator = self._translator_factory()
         return {
@@ -552,11 +560,22 @@ class AudioTranscriptionManager:
             'speaker_labels': 'anonymous_only',
             'identity_inference': False,
             'exports': ['json', 'txt', 'srt', 'vtt', 'zip'],
-            'transcription_service': runner.config(),
-            'translation_service': translator.health(),
+            'connection_policy': 'on_demand_only',
+            'transcription_service': runner.config(probe_hosts=probe),
+            'translation_service': (dict(translator.health(), probed=True) if probe else {
+                'probed': False,
+                'available': None,
+                'configured_model': getattr(translator, 'model', None),
+                'served_models': [],
+                'reason': '按需连接：未主动检查，本机没有联系过 GPU',
+            }),
             'job_storage': 'data/audio_jobs (gitignored, local only)',
             'raw_audio_policy': 'local original + encrypted remote staging deleted after verified copy',
         }
+
+    def probe_services(self) -> dict:
+        """Contact the cluster once, only because the user explicitly asked."""
+        return self.config(probe=True)
 
     def create_job(self, filename: str, content: bytes, options: dict | None,
                    start: bool = True) -> dict:

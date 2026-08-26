@@ -83,7 +83,7 @@ class AudioOptionTests(unittest.TestCase):
 
     @patch('services.audio_transcription_service.shutil.which', side_effect=lambda name: name)
     @patch('services.audio_transcription_service.probe')
-    def test_config_connects_to_keller_and_reports_idle_state(self, probe_host, _which):
+    def test_explicit_probe_connects_to_keller_and_reports_idle_state(self, probe_host, _which):
         probe_host.return_value = {
             'host': 'keller.cs.nmsu.edu', 'reachable': True,
             'gpus': [{
@@ -94,8 +94,9 @@ class AudioOptionTests(unittest.TestCase):
         runner = RemoteAudioRunner()
         with patch.object(runner, '_transport') as transport:
             transport.return_value.__enter__.return_value = (['ssh'], ['scp'])
-            config = runner.config()
+            config = runner.config(probe_hosts=True)
         probe_host.assert_called_once_with('keller.cs.nmsu.edu', ['ssh'])
+        self.assertTrue(config['probed'])
         self.assertTrue(config['connected'])
         self.assertTrue(config['idle_available'])
         self.assertEqual(config['host_status'][0]['host'], 'keller.cs.nmsu.edu')

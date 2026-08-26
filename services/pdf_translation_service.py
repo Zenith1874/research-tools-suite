@@ -835,3 +835,380 @@ def write_translated_pdf(input_path: Path, output_path: Path, units: list[PdfUni
         'low_scale_regions': low_scale_regions,
         'scanned_pages_left_original': bundle.scanned_pages,
     }
+
+
+# ---------------------------------------------------------------------------
+# Reading layout
+#
+# The translation path above deliberately drops references, tables and other
+# regions it must not rewrite.  Reading-copy conversion (EPUB / device PDF)
+# needs the opposite: every region a human would read, in reading order, with
+# tables and figures kept as rendered artwork rather than as text.  Both share
+# the same line/column/heading engine, so the extraction lives here.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ReadingBlock:
+    """One renderable item in reading order: prose, a heading, or artwork."""
+    kind: str  # 'heading' | 'paragraph' | 'figure'
+    page_index: int
+    rect: tuple[float, float, float, float]
+    text: str = ''
+    font_size: float = 0.0
+    bold: bool = False
+    italic: bool = False
+    column: str = 'wide'
+
+
+@dataclass
+class PageGeometry:
+    """Per-page crop geometry used to rebuild pages for a small screen."""
+    page_index: int
+    width: float
+    height: float
+    content_rect: tuple[float, float, float, float]
+    column_rects: list[tuple[float, float, float, float]]
+    line_rects: list[tuple[float, float, float, float]]
+    two_column: bool
+
+
+@dataclass
+class ReadingLayout:
+    blocks: list[ReadingBlock]
+    pages: list[PageGeometry]
+    page_count: int
+    page_sizes: list[tuple[float, float]]
+    body_font_size: float | None
+    scanned_pages: list[int]
+    text_chars_by_page: list[int]
+    title: str | None
+    author: str | None
+    figure_count: int
+    heading_count: int
+
+
+def _column_of_rect(rect: tuple[float, float, float, float], page_width: float) -> str:
+    midpoint = page_width / 2
+    if rect[2] <= midpoint + 4:
+        return 'left'
+    if rect[0] >= midpoint - 4:
+        return 'right'
+    return 'wide'
+
+
+def _merge_rects(rects: list[tuple[float, float, float, float]],
+                 tolerance: float = 6.0) -> list[tuple[float, float, float, float]]:
+    """Union overlapping or near-touching rectangles until nothing changes."""
+    merged = [tuple(float(value) for value in rect) for rect in rects]
+    changed = True
+    while changed:
+        changed = False
+        result: list[tuple[float, float, float, float]] = []
+        for rect in merged:
+            for index, existing in enumerate(result):
+                grown = (existing[0] - tolerance, existing[1] - tolerance,
+                         existing[2] + tolerance, existing[3] + tolerance)
+                if _rect_intersects(rect, grown):
+                    result[index] = (
+                        min(existing[0], rect[0]), min(existing[1], rect[1]),
+                        max(existing[2], rect[2]), max(existing[3], rect[3]),
+                    )
+                    changed = True
+                    break
+            else:
+                result.append(rect)
+        merged = result
+    return merged
+
+
+def _page_artwork_rects(page, table_rects, body_lines) -> list[tuple[float, float, float, float]]:
+    """Locate tables, raster images and vector figures worth rendering as art."""
+    page_area = max(1.0, page.rect.width * page.rect.height)
+    candidates: list[tuple[float, float, float, float]] = [
+        tuple(float(value) for value in rect) for rect in table_rects
+    ]
+    try:
+        for image in page.get_image_info():
+            bbox = image.get('bbox')
+            if bbox:
+                candidates.append(tuple(float(value) for value in bbox))
+    except Exception:
+        pass
+    try:
+        # cluster_drawings groups vector paths into figure-sized islands, which
+        # is what catches chart artwork that carries no embedded raster image.
+        for rect in page.cluster_drawings():
+            candidates.append(tuple(float(value) for value in rect))
+    except Exception:
+        pass
+
+    kept: list[tuple[float, float, float, float]] = []
+    for rect in candidates:
+        x0, y0, x1, y1 = rect
+        width, height = x1 - x0, y1 - y0
+        if width < 55 or height < 34:
+            continue
+        area = width * height
+        if area < page_area * .022 or area > page_area * .93:
+            continue
+        kept.append((max(0.0, x0), max(0.0, y0),
+                     min(page.rect.width, x1), min(page.rect.height, y1)))
+    if not kept:
+        return []
+
+    merged = _merge_rects(kept)
+    table_lookup = [tuple(float(value) for value in rect) for rect in table_rects]
+    artwork: list[tuple[float, float, float, float]] = []
+    for rect in merged:
+        is_table = any(_rect_intersects(rect, table_rect) for table_rect in table_lookup)
+        if not is_table:
+            # A rule, a shaded paragraph band or a page frame overlaps prose we
+            # already emit as text.  Rendering it as art would duplicate text.
+            covered = sum(
+                1 for line in body_lines if _rect_intersects(line.rect, rect))
+            if covered >= 4:
+                continue
+        artwork.append(rect)
+    return artwork
+
+
+def _document_title(document, first_page_lines) -> str | None:
+    metadata_title = str((document.metadata or {}).get('title') or '').strip()
+    if len(metadata_title) >= 4 and not metadata_title.casefold().endswith('.pdf'):
+        return metadata_title[:300]
+    ranked = [
+        line for line in first_page_lines
+        if line.locked_reason is None and line.rect[1] < document[0].rect.height * .5
+        and any(char.isalpha() for char in line.text)
+    ]
+    if not ranked:
+        return None
+    largest = max(line.font_size for line in ranked)
+    candidates = sorted(
+        (line for line in ranked if line.font_size >= largest - .4),
+        key=lambda line: (line.rect[1], line.rect[0]))
+    # Only the topmost contiguous run is the title; a same-size section
+    # heading further down the page must not be glued onto it.
+    headline = [candidates[0]]
+    for line in candidates[1:]:
+        if line.rect[1] - headline[-1].rect[3] > max(6.0, line.font_size * 1.6):
+            break
+        headline.append(line)
+    title = _normalize_pdf_text(_join_pdf_lines(headline)).strip()
+    return title[:300] or None
+
+
+def extract_reading_layout(input_path: Path, max_pages: int = 900,
+                           allow_scanned: bool = False) -> ReadingLayout:
+    """Extract every readable region of a text-layer PDF in reading order.
+
+    Unlike :func:`extract_pdf_units`, references are kept, and tables and
+    figures are reported as artwork rectangles so a reading copy can render
+    them instead of dropping or re-typesetting them.
+
+    ``allow_scanned`` keeps page geometry for image-only PDFs.  Those cannot be
+    reflowed into EPUB, but their pages can still be cropped and re-fitted to a
+    device screen, so the caller decides per output format instead of losing
+    the whole document to one exception.
+    """
+    pymupdf = _pymupdf()
+    try:
+        document = pymupdf.open(input_path)
+    except Exception as exc:
+        raise PdfFormatError('PDF 文件损坏或无法读取') from exc
+    with document:
+        if document.needs_pass:
+            raise PdfFormatError('PDF 已加密；请先在本机解除密码保护')
+        if document.page_count < 1:
+            raise PdfFormatError('PDF 没有可处理页面')
+        if document.page_count > max_pages:
+            raise PdfFormatError(f'PDF 超过 {max_pages} 页安全上限')
+
+        page_sizes: list[tuple[float, float]] = []
+        text_chars_by_page: list[int] = []
+        scanned_pages: list[int] = []
+        page_records: list[dict] = []
+        for page_index, page in enumerate(document):
+            page_sizes.append((round(page.rect.width, 3), round(page.rect.height, 3)))
+            table_rects = _page_table_rects(page)
+            lines, body_size, text_chars, image_area = _extract_page_lines(page, table_rects)
+            text_chars_by_page.append(text_chars)
+            if text_chars < 40 and (page.get_images(full=True)
+                                    or image_area > page.rect.width * page.rect.height * .2):
+                scanned_pages.append(page_index + 1)
+            page_records.append({
+                'page_index': page_index, 'lines': lines,
+                'local_body_size': body_size, 'table_rects': table_rects,
+            })
+
+        if (not allow_scanned and scanned_pages
+                and len(scanned_pages) >= max(1, (document.page_count + 3) // 4)):
+            preview = ', '.join(str(page) for page in scanned_pages[:8])
+            raise PdfFormatError(
+                f'检测到扫描型 PDF（页 {preview}）；没有文本层就无法重排，'
+                '请改用"裁边分栏 PDF"输出'
+            )
+
+        document_body_size = _infer_document_body_size(
+            [record['lines'] for record in page_records])
+        blocks: list[ReadingBlock] = []
+        pages: list[PageGeometry] = []
+        for record in page_records:
+            page_index = record['page_index']
+            page = document[page_index]
+            lines = record['lines']
+            body_size = _effective_page_body_size(
+                lines, record['local_body_size'], document_body_size)
+            groups = _group_page_lines(lines, page.rect.width, body_size)
+            body_lines = [line for line in lines if line.locked_reason is None]
+            artwork = _page_artwork_rects(page, record['table_rects'], body_lines)
+
+            page_blocks: list[ReadingBlock] = []
+            for group in groups:
+                text = _normalize_pdf_text(_join_pdf_lines(group)).strip()
+                if not text:
+                    continue
+                rect = _union_rect(group)
+                # Prose that sits inside detected artwork is already part of
+                # the rendered picture; emitting it again would duplicate it.
+                if any(_rect_intersects(rect, art) for art in artwork):
+                    continue
+                page_blocks.append(ReadingBlock(
+                    kind='heading' if any(line.heading for line in group) else 'paragraph',
+                    page_index=page_index, rect=rect, text=text,
+                    font_size=max(6.0, statistics.median(line.font_size for line in group)),
+                    bold=all(line.bold for line in group),
+                    italic=all(line.italic for line in group),
+                    column=group[0].column or _column_of_rect(rect, page.rect.width),
+                ))
+            for rect in artwork:
+                page_blocks.append(ReadingBlock(
+                    kind='figure', page_index=page_index, rect=rect,
+                    column=_column_of_rect(rect, page.rect.width),
+                ))
+
+            column_rank = {'wide': 0, 'left': 1, 'right': 2}
+            page_blocks.sort(key=lambda block: (
+                column_rank.get(block.column, 0), block.rect[1], block.rect[0]))
+            blocks.extend(page_blocks)
+            pages.append(_page_geometry(page, page_index, body_lines, artwork))
+
+        if not blocks and not allow_scanned:
+            raise PdfFormatError('PDF 没有检测到可阅读的文本层或图形')
+
+        first_page_lines = page_records[0]['lines'] if page_records else []
+        author = str((document.metadata or {}).get('author') or '').strip() or None
+        return ReadingLayout(
+            blocks=blocks, pages=pages, page_count=document.page_count,
+            page_sizes=page_sizes, body_font_size=document_body_size,
+            scanned_pages=scanned_pages, text_chars_by_page=text_chars_by_page,
+            title=_document_title(document, first_page_lines),
+            author=author[:200] if author else None,
+            figure_count=sum(1 for block in blocks if block.kind == 'figure'),
+            heading_count=sum(1 for block in blocks if block.kind == 'heading'),
+        )
+
+
+def _page_geometry(page, page_index: int, body_lines, artwork) -> PageGeometry:
+    """Derive the crop box and per-column crop boxes for one source page."""
+    page_width, page_height = page.rect.width, page.rect.height
+    rects = [line.rect for line in body_lines] + list(artwork)
+    if not rects:
+        content = (0.0, 0.0, page_width, page_height)
+        return PageGeometry(
+            page_index=page_index, width=page_width, height=page_height,
+            content_rect=content, column_rects=[content],
+            line_rects=[], two_column=False)
+
+    def union(items):
+        return (min(item[0] for item in items), min(item[1] for item in items),
+                max(item[2] for item in items), max(item[3] for item in items))
+
+    content = union(rects)
+    pad = 3.0
+    content = (max(0.0, content[0] - pad), max(0.0, content[1] - pad),
+               min(page_width, content[2] + pad), min(page_height, content[3] + pad))
+
+    buckets: dict[str, list[tuple[float, float, float, float]]] = {
+        'wide': [], 'left': [], 'right': []}
+    weights = {'wide': 0, 'left': 0, 'right': 0}
+    for line in body_lines:
+        column = line.column or _column_of_rect(line.rect, page_width)
+        buckets[column].append(line.rect)
+        weights[column] += len(line.text.strip())
+    for rect in artwork:
+        buckets[_column_of_rect(rect, page_width)].append(rect)
+
+    left_lines = sum(1 for line in body_lines
+                     if (line.column or _column_of_rect(line.rect, page_width)) == 'left')
+    right_lines = sum(1 for line in body_lines
+                      if (line.column or _column_of_rect(line.rect, page_width)) == 'right')
+    two_column = (
+        weights['left'] >= 120 and weights['right'] >= 120
+        and left_lines >= 3 and right_lines >= 3
+        and weights['wide'] < (weights['left'] + weights['right']) * .55
+    )
+    if not two_column:
+        return PageGeometry(
+            page_index=page_index, width=page_width, height=page_height,
+            content_rect=content, column_rects=[content],
+            line_rects=[line.rect for line in body_lines], two_column=False)
+
+    # A first page mixes a full-width masthead with the two-column body, and
+    # its short title/author/abstract-heading lines end before the midpoint, so
+    # they look like left-column content.  The two-column region only truly
+    # begins where both columns are present; everything above that belongs to
+    # the wide band.  Without this, the left crop would re-show the left half
+    # of the abstract that the wide crop already displayed.
+    tops = [min(rect[1] for rect in buckets[column])
+            for column in ('left', 'right') if buckets[column]]
+    header_cut = max(tops) if len(tops) == 2 else None
+    if header_cut is not None:
+        for column in ('left', 'right'):
+            promoted = [rect for rect in buckets[column] if rect[3] <= header_cut]
+            if promoted:
+                buckets['wide'].extend(promoted)
+                buckets[column] = [rect for rect in buckets[column]
+                                   if rect[3] > header_cut]
+
+    if not buckets['left'] or not buckets['right']:
+        return PageGeometry(
+            page_index=page_index, width=page_width, height=page_height,
+            content_rect=content, column_rects=[content],
+            line_rects=[line.rect for line in body_lines], two_column=False)
+
+    column_span = union(buckets['left'] + buckets['right'])
+    top_band = [rect for rect in buckets['wide'] if rect[3] <= column_span[1] + 2]
+    bottom_band = [rect for rect in buckets['wide'] if rect[1] >= column_span[3] - 2]
+    if len(top_band) + len(bottom_band) != len(buckets['wide']):
+        # Something full-width sits between the columns (a spanning figure or
+        # table).  Splitting around it would reorder or duplicate content, so
+        # this page ships as one uncropped panel instead.
+        return PageGeometry(
+            page_index=page_index, width=page_width, height=page_height,
+            content_rect=content, column_rects=[content],
+            line_rects=[line.rect for line in body_lines], two_column=False)
+
+    upper = union(top_band)[3] if top_band else content[1]
+    lower = union(bottom_band)[1] if bottom_band else content[3]
+    ordered: list[tuple[float, float, float, float]] = []
+    if top_band:
+        ordered.append(union(top_band))
+    for column in ('left', 'right'):
+        rect = union(buckets[column])
+        ordered.append((rect[0], max(rect[1], upper), rect[2], min(rect[3], lower)))
+    if bottom_band:
+        ordered.append(union(bottom_band))
+
+    column_rects = []
+    for rect in ordered:
+        clipped = (max(content[0], rect[0] - pad), max(content[1], rect[1] - pad),
+                   min(content[2], rect[2] + pad), min(content[3], rect[3] + pad))
+        if clipped[2] - clipped[0] > 20 and clipped[3] - clipped[1] > 20:
+            column_rects.append(clipped)
+
+    return PageGeometry(
+        page_index=page_index, width=page_width, height=page_height,
+        content_rect=content, column_rects=column_rects or [content],
+        line_rects=[line.rect for line in body_lines], two_column=True)
