@@ -292,7 +292,7 @@ async function renderArticles(relatedDefault){
   STATE.relatedDefault=relatedDefault;
   const fb=document.getElementById('filterBar');
   fb.innerHTML = `<div class="filters">
-    <input type="text" id="q" placeholder="搜索标题 / 摘要 / 期刊…" value="${esc(STATE.filters.q||'')}">
+    <input type="text" id="q" placeholder="搜索标题 / 摘要 / 期刊 / 作者…" value="${esc(STATE.filters.q||'')}">
     <select id="sort" onchange="applyFilters()">
       <option value="date_desc">最新优先</option>
       <option value="relevance_desc">相关性优先(规则)</option>

@@ -1571,8 +1571,12 @@ def build_astar_articles_payload(params):
 
     q = (params.get('q') or '').strip()
     if q:
-        where.append('(a.title LIKE ? OR a.abstract LIKE ? OR a.journal_title LIKE ?)')
-        args += [f'%{q}%'] * 3
+        # authors_json is the canonical author field for OpenAlex/Crossref
+        # records (currently a JSON array of display-name strings).  Keep the
+        # search text-based so it also remains compatible with older rows that
+        # may store author objects such as {"name": "..."}.
+        where.append('(a.title LIKE ? OR a.abstract LIKE ? OR a.journal_title LIKE ? OR a.authors_json LIKE ?)')
+        args += [f'%{q}%'] * 4
     if params.get('from_date'):
         where.append('a.publication_date >= ?'); args.append(params['from_date'])
     if params.get('to_date'):

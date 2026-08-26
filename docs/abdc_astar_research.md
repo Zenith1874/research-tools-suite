@@ -46,7 +46,7 @@
 | API | 说明 |
 |---|---|
 | `GET /api/abdc/astar/journals` | A\* 期刊列表 + ISSN 覆盖统计 |
-| `GET /api/abdc/astar/articles` | 文章列表，支持 `q/from_date/to_date/journal/broad_area/topic/method/data_type/theory/related_only/min_relevance/limit/offset/sort` |
+| `GET /api/abdc/astar/articles` | 文章列表，支持 `q/from_date/to_date/journal/broad_area/topic/method/data_type/theory/related_only/min_relevance/limit/offset/sort`；`q` 搜索标题、摘要、期刊和作者 |
 | `GET /api/abdc/astar/articles/{id}` | 单篇详情（元数据+摘要+来源+分类+相关文章+DOI/OpenAlex URL） |
 | `GET /api/abdc/astar/recent?days=7&related_only=` | 最近新增 |
 | `GET /api/abdc/astar/digest?period=this_week&related_only=` | 分块 digest |
