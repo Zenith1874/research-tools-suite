@@ -212,6 +212,7 @@ from services.faculty_jobs_service import (
     list_schools,
     patch_application,
     resolve_possible_duplicate,
+    resolve_possible_duplicates_batch,
     save_override,
     save_saved_search,
     save_scope_override,
@@ -2594,6 +2595,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/scrape':
             self.send_json(_run_update_job('pboc_scrape', scrape_and_update))
+        elif path == '/api/faculty-jobs/duplicates/batch':
+            # Batch review is reject/confirm_distinct only; merge repoints job
+            # links and can absorb private state, so it stays per-pair.
+            if self._require_faculty_jobs_private():
+                try:
+                    self.send_json(resolve_possible_duplicates_batch(
+                        FACULTY_DB_PATH, self._read_json_body()),
+                        cache_control='no-store, private')
+                except (TypeError, ValueError) as exc:
+                    self.send_json({'error': str(exc)}, 400, cache_control='no-store, private')
         elif path == '/api/faculty-jobs/update':
             body = self._read_json_body()
             sources = body.get('sources', body.get('source_names'))

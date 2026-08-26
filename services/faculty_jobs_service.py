@@ -1111,6 +1111,53 @@ def ensure_faculty_jobs_tables(db_path=None):
                     "two stated the opposite of the posting."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=52").fetchone():
+            # Fuzzy confidence was scored over a string that included the
+            # institution, city and state, all of which the candidate gate had
+            # already forced to be equal.  The shared prefix inflated every
+            # ratio, so unrelated jobs at one school cleared the 0.82 threshold
+            # ("Dean and Principal" vs "Executive Director of Chiropractic"
+            # scored 0.825).  Re-score the open queue on the discriminating
+            # fields and close the ones that never should have been raised.
+            # Rows are resolved with a recorded reason, never deleted.
+            rescored = closed = 0
+            for row in conn.execute("""
+                SELECT p.id, p.confidence, a.title_normalized AS ta, b.title_normalized AS tb,
+                       a.discipline_primary AS da, b.discipline_primary AS db
+                FROM possible_duplicates p
+                JOIN jobs a ON a.id=p.job_id JOIN jobs b ON b.id=p.possible_job_id
+                WHERE p.resolved=0 AND p.match_basis='fuzzy_review_only'
+            """).fetchall():
+                score = difflib.SequenceMatcher(
+                    None,
+                    "|".join((row["ta"] or "", row["da"] or "")),
+                    "|".join((row["tb"] or "", row["db"] or "")),
+                ).ratio()
+                if abs(score - (row["confidence"] or 0.0)) > 1e-9:
+                    conn.execute("UPDATE possible_duplicates SET confidence=? WHERE id=?",
+                                 (round(score, 4), row["id"]))
+                    rescored += 1
+                if score < 0.82:
+                    conn.execute("""
+                        UPDATE possible_duplicates
+                        SET resolved=1, resolution='rejected', resolved_at=?, resolution_reason=?
+                        WHERE id=?
+                    """, (now_utc(),
+                          "Auto-closed by migration 52: re-scored on title/discipline only "
+                          f"({score:.3f} < 0.82). The original score was inflated by "
+                          "institution/city/state segments the candidate gate already "
+                          "required to be equal.", row["id"]))
+                    closed += 1
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM possible_duplicates WHERE resolved=0").fetchone()[0]
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (52, now_utc(), (
+                    f"Re-scored fuzzy duplicate candidates on discriminating fields only: "
+                    f"{rescored} rescored, {closed} auto-closed as rejected, "
+                    f"{remaining} left for review. No candidate row was deleted."
+                )),
+            )
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:
@@ -1639,8 +1686,16 @@ def _find_existing_job(conn, source_id, source_job, normalized):
             continue
         if normalized.get("city") and candidate["city"] and normalize_name(normalized.get("city")) != normalize_name(candidate["city"]):
             continue
-        left = "|".join((normalized.get("institution_normalized") or "", normalized.get("title_normalized") or "", normalize_name(normalized.get("city")), normalize_name(normalized.get("state_province")), normalized.get("discipline_primary") or ""))
-        right = "|".join((candidate["institution_normalized"] or "", candidate["title_normalized"] or "", normalize_name(candidate["city"]), normalize_name(candidate["state_province"]), candidate["discipline_primary"] or ""))
+        # Score only the fields that can actually differ.  Institution, city
+        # and state are already required to be equal by the gate above, so
+        # including them compared two strings with a long identical prefix and
+        # inflated every ratio: "Dean and Principal" versus "Executive Director
+        # of Chiropractic" scored 0.825 on a 0.82 threshold, purely from the
+        # shared institution segment.
+        left = "|".join((normalized.get("title_normalized") or "",
+                         normalized.get("discipline_primary") or ""))
+        right = "|".join((candidate["title_normalized"] or "",
+                          candidate["discipline_primary"] or ""))
         score = difflib.SequenceMatcher(None, left, right).ratio()
         if best is None or score > best[1]:
             best = (candidate["id"], score)
@@ -5587,6 +5642,73 @@ def list_possible_duplicates(db_path=None, include_resolved=False, limit=100, of
             item["possible_job_sources"] = _source_names(conn, row["possible_job_id"])
             duplicates.append(item)
         return {"ok": True, "duplicates": duplicates, "pagination": {"total": total, "limit": bounded, "offset": start}, "private": True}
+    finally:
+        conn.close()
+
+
+def resolve_possible_duplicates_batch(db_path, payload):
+    """Resolve many review-only duplicate candidates in one recorded decision.
+
+    Merge is deliberately not batchable.  Rejecting or marking distinct only
+    annotates a review row, but a merge repoints job links and can absorb
+    private application state, so it keeps needing per-pair evidence.
+
+    The single reason is stored on every row it closes, so a batch decision
+    stays as auditable as the individual ones it replaces.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be an object")
+    action = str(payload.get("action") or "").strip().casefold()
+    reason = str(payload.get("reason") or "").strip()
+    if action not in {"reject", "confirm_distinct"}:
+        raise ValueError("batch action must be reject or confirm_distinct; "
+                         "merge requires per-pair review")
+    if len(reason) < 10:
+        raise ValueError("a review reason of at least 10 characters is required")
+    raw_ids = payload.get("ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise ValueError("ids must be a non-empty list")
+    if len(raw_ids) > 500:
+        raise ValueError("at most 500 candidates can be resolved in one batch")
+    ids = []
+    for value in raw_ids:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("every id must be an integer") from exc
+
+    ensure_faculty_jobs_tables(db_path)
+    conn = _connect(db_path)
+    try:
+        now = now_utc()
+        resolution = "rejected" if action == "reject" else "confirmed_distinct"
+        placeholders = ",".join("?" * len(ids))
+        open_ids = [row["id"] for row in conn.execute(
+            f"SELECT id FROM possible_duplicates WHERE id IN ({placeholders}) AND resolved=0",
+            ids).fetchall()]
+        with conn:
+            if open_ids:
+                conn.executemany(
+                    "UPDATE possible_duplicates SET resolved=1, resolution=?, resolved_at=?, "
+                    "resolution_reason=? WHERE id=? AND resolved=0",
+                    [(resolution, now, reason[:2000], item) for item in open_ids])
+                conn.executemany("""
+                    INSERT INTO faculty_job_repair_audit
+                      (observed_at,action,job_id,old_value,new_value,reason)
+                    SELECT ?,?,job_id,?,?,? FROM possible_duplicates WHERE id=?
+                """, [(now, "duplicate_review_batch", str(item), resolution,
+                       reason[:2000], item) for item in open_ids])
+        skipped = sorted(set(ids) - set(open_ids))
+        return {
+            "ok": True, "action": action, "resolution": resolution,
+            "resolved": len(open_ids), "resolved_ids": open_ids,
+            # Already-resolved or unknown ids are reported rather than
+            # silently counted as successes.
+            "skipped": len(skipped), "skipped_ids": skipped,
+            "remaining_open": conn.execute(
+                "SELECT COUNT(*) FROM possible_duplicates WHERE resolved=0").fetchone()[0],
+            "private": True,
+        }
     finally:
         conn.close()
 

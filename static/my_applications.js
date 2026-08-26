@@ -49,11 +49,21 @@
     const searchRows = searches.length ? searches.map((search) => `<div class="fc-stat-row"><span><strong>${esc(search.name)}</strong><br><span class="fc-small">${esc(queryLabel(search.query))}</span></span><span class="fc-stat-count">${number(search.match_count)} matches · ${number(search.new_alert_count)} new</span><span class="fc-inline-actions"><button class="fc-button ma-run-search" type="button" data-search-id="${esc(search.id)}">Run</button><button class="fc-button danger ma-delete-search" type="button" data-search-id="${esc(search.id)}">Delete</button></span></div>`).join('') : '<div class="fc-empty">No saved searches. Save the current filters from Faculty Jobs.</div>';
     const duplicateRows = duplicates.length ? duplicates.map((item) => {
       const exactUrl = item.job_official_url && item.possible_official_url && item.job_official_url === item.possible_official_url;
-      return `<article class="fc-job-card"><div class="fc-badges"><span class="fc-badge amber">Possible duplicate · ${esc(Number(item.confidence || 0).toFixed(2))}</span><span class="fc-badge">${esc(known(item.match_basis))}</span></div><h3>${esc(known(item.job_title))} <span class="fc-small">vs.</span> ${esc(known(item.possible_title))}</h3><p class="fc-small">${esc(known(item.job_institution))} · ${esc(known(item.job_city || item.job_country))}<br>${esc(known(item.possible_institution))} · ${esc(known(item.possible_city || item.possible_country))}</p><div class="fc-inline-actions"><button class="fc-button ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="reject">Reject as false positive</button><button class="fc-button secondary ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="confirm_distinct">Mark distinct</button>${exactUrl ? `<button class="fc-button danger ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="merge">Merge exact official URL</button>` : ''}</div></article>`;
+      return `<article class="fc-job-card"><div class="fc-badges"><label class="fc-small"><input type="checkbox" class="ma-dup-pick" value="${esc(item.id)}"> Select</label><span class="fc-badge amber">Possible duplicate · ${esc(Number(item.confidence || 0).toFixed(2))}</span><span class="fc-badge">${esc(known(item.match_basis))}</span></div><h3>${esc(known(item.job_title))} <span class="fc-small">vs.</span> ${esc(known(item.possible_title))}</h3><p class="fc-small">${esc(known(item.job_institution))} · ${esc(known(item.job_city || item.job_country))}<br>${esc(known(item.possible_institution))} · ${esc(known(item.possible_city || item.possible_country))}</p><div class="fc-inline-actions"><button class="fc-button ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="reject">Reject as false positive</button><button class="fc-button secondary ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="confirm_distinct">Mark distinct</button>${exactUrl ? `<button class="fc-button danger ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="merge">Merge exact official URL</button>` : ''}</div></article>`;
     }).join('') : '<div class="fc-empty">No unresolved possible duplicates.</div>';
     $('ma-saved-searches').innerHTML = searchRows;
     $('ma-alerts').innerHTML = `<div class="fc-inline-actions" style="margin-bottom:10px"><span class="fc-small">${number(alerts.filter((item) => !item.seen_at).length)} unread local alert${alerts.filter((item) => !item.seen_at).length === 1 ? '' : 's'}</span><button class="fc-button ma-mark-alerts" type="button"${alerts.length ? '' : ' disabled'}>Mark visible alerts seen</button></div><div class="fc-jobs-grid">${alertRows}</div>`;
-    $('ma-duplicates').innerHTML = duplicateRows;
+    const batchBar = duplicates.length
+      ? `<div class="fc-inline-actions" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">
+           <button class="fc-button secondary ma-dup-all" type="button">Select all ${number(duplicates.length)} shown</button>
+           <button class="fc-button secondary ma-dup-none" type="button">Clear selection</button>
+           <span class="fc-small ma-dup-count">0 selected</span>
+           <button class="fc-button ma-dup-batch" type="button" data-action="reject" disabled>Reject selected as false positives</button>
+           <button class="fc-button secondary ma-dup-batch" type="button" data-action="confirm_distinct" disabled>Mark selected distinct</button>
+           <span class="fc-small">Merge stays per-pair: it repoints job links and can absorb private application state.</span>
+         </div>`
+      : '';
+    $('ma-duplicates').innerHTML = batchBar + duplicateRows;
     document.querySelectorAll('.ma-run-search').forEach((button) => button.addEventListener('click', async () => {
       try { await api('/api/faculty-jobs/saved-searches/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search_id: Number(button.dataset.searchId) }) }); window.location.reload(); }
       catch (error) { button.textContent = `Error: ${error.message}`; }
@@ -67,6 +77,39 @@
       try { await api('/api/faculty-jobs/alerts/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alert_ids: alerts.map((item) => item.id) }) }); window.location.reload(); }
       catch (error) { mark.textContent = `Error: ${error.message}`; }
     });
+    const picks = () => Array.from(document.querySelectorAll('.ma-dup-pick:checked')).map((box) => Number(box.value));
+    const syncBatch = () => {
+      const count = picks().length;
+      const label = document.querySelector('.ma-dup-count');
+      if (label) label.textContent = `${count} selected`;
+      document.querySelectorAll('.ma-dup-batch').forEach((button) => { button.disabled = count === 0; });
+    };
+    document.querySelectorAll('.ma-dup-pick').forEach((box) => box.addEventListener('change', syncBatch));
+    const selectAll = document.querySelector('.ma-dup-all');
+    if (selectAll) selectAll.addEventListener('click', () => {
+      document.querySelectorAll('.ma-dup-pick').forEach((box) => { box.checked = true; });
+      syncBatch();
+    });
+    const selectNone = document.querySelector('.ma-dup-none');
+    if (selectNone) selectNone.addEventListener('click', () => {
+      document.querySelectorAll('.ma-dup-pick').forEach((box) => { box.checked = false; });
+      syncBatch();
+    });
+    document.querySelectorAll('.ma-dup-batch').forEach((button) => button.addEventListener('click', async () => {
+      const ids = picks();
+      if (!ids.length) return;
+      // One reason covers the batch and is stored on every row it closes, so a
+      // bulk decision stays as auditable as the individual ones.
+      const reason = window.prompt(`Review reason for ${ids.length} candidate(s) (at least 10 characters):`);
+      if (!reason || reason.trim().length < 10) return;
+      button.disabled = true;
+      try {
+        const result = await api('/api/faculty-jobs/duplicates/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, action: button.dataset.action, reason: reason.trim() }) });
+        if (result.skipped) window.alert(`${result.resolved} resolved; ${result.skipped} already resolved and left unchanged.`);
+        window.location.reload();
+      } catch (error) { button.disabled = false; button.textContent = `Error: ${error.message}`; }
+    }));
+    syncBatch();
     document.querySelectorAll('.ma-review-duplicate').forEach((button) => button.addEventListener('click', async () => {
       const reason = window.prompt('Review reason (at least 10 characters):'); if (!reason || reason.trim().length < 10) return;
       try { await api(`/api/faculty-jobs/duplicates/${encodeURIComponent(button.dataset.duplicateId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: button.dataset.action, reason: reason.trim() }) }); window.location.reload(); }

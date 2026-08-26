@@ -489,7 +489,19 @@ class FacultyJobSchemaTests(unittest.TestCase):
         self.assertEqual(0, business['pagination']['total'])
         self.assertEqual(1, audit['pagination']['total'])
 
-    def test_borderline_fuzzy_records_are_not_silently_merged(self):
+    def test_different_disciplines_at_one_school_are_not_merged_or_flagged(self):
+        """Management and Marketing at one school are two jobs, not a duplicate.
+
+        This assertion changed on 2026-08-26. Fuzzy confidence used to be scored
+        over a string containing the institution, city and state, which the
+        candidate gate had already forced to be equal; the identical prefix
+        inflated the ratio so that any two jobs at one school cleared the 0.82
+        threshold. Scoring the discriminating fields only puts this pair at
+        0.744, and it is no longer raised for review -- correctly, since the two
+        postings are different vacancies. The guarantee the original test was
+        written for, that borderline records are never silently merged, is
+        unchanged and still asserted here.
+        """
         jobs = [
             fixture_job('a', 'Assistant Professor of Management', 'Example University'),
             fixture_job('b', 'Assistant Professor of Marketing', 'Example University'),
@@ -499,8 +511,24 @@ class FacultyJobSchemaTests(unittest.TestCase):
         count = conn.execute('SELECT COUNT(*) FROM possible_duplicates').fetchone()[0]
         jobs_count = conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
         conn.close()
-        self.assertEqual(2, jobs_count)
+        self.assertEqual(2, jobs_count, 'the two postings must both survive')
+        self.assertEqual(0, count, 'different disciplines are not a duplicate candidate')
+
+    def test_near_identical_titles_are_still_raised_for_review(self):
+        """The review path must still fire for pairs that really do look alike."""
+        jobs = [
+            fixture_job('a', 'Assistant Professor of Marketing', 'Example University'),
+            fixture_job('b', 'Assistant Professor of Marketing (2 Positions)', 'Example University'),
+        ]
+        update_faculty_jobs(self.db, source_names=['ais'], adapters=[FakeAdapter([jobs])])
+        conn = sqlite3.connect(self.db)
+        count = conn.execute('SELECT COUNT(*) FROM possible_duplicates').fetchone()[0]
+        jobs_count = conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
+        basis = conn.execute('SELECT match_basis FROM possible_duplicates').fetchone()
+        conn.close()
+        self.assertEqual(2, jobs_count, 'a review signal is never an identity decision')
         self.assertGreaterEqual(count, 1)
+        self.assertEqual('fuzzy_review_only', basis[0])
 
     def test_same_official_url_can_merge_but_source_records_remain(self):
         first = fixture_job('url-a', 'Assistant Professor of Finance')
