@@ -26,6 +26,7 @@ from services.faculty_jobs_normalizer import (
     COUNTRY_OPTIONS, DISCIPLINES, REGION_GROUPS, canonical_key, classify_business_scope,
     classify_faculty_market_role,
     country_code_for, country_display, hiring_cycle, hiring_cycle_reason,
+    STATE_PROVINCE_ALIASES,
     fingerprint_fields, infer_visa, is_mergeable_official_url,
     normalize_name, normalize_source_job, normalize_url, parse_deadline, parse_location,
 )
@@ -1158,6 +1159,31 @@ def ensure_faculty_jobs_tables(db_path=None):
                     f"{remaining} left for review. No candidate row was deleted."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=53").fetchone():
+            # 420 jobs rendered as bare "United States" because their board
+            # publishes no location column at all (the POMS table is Position /
+            # University / Date). The school's city is already observed in this
+            # database from other sources; adopt it as entity-level evidence and
+            # label it as such. First strip the leaked "Location <province>"
+            # labels so the adopted values are places rather than form fragments.
+            label_stats = _repair_institution_city_labels(conn)
+            fill_stats = _backfill_job_location_from_entity(conn)
+            missing = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE (city IS NULL OR city='') "
+                "AND (state_province IS NULL OR state_province='')").fetchone()[0]
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (53, now_utc(), (
+                    "Institution city labels: "
+                    f"{label_stats['cleaned']} cleaned, {label_stats['moved_to_state']} moved to "
+                    f"state_province, {label_stats['dropped']} dropped as parser artifacts. "
+                    f"Job location adopted from entity evidence for {fill_stats['from_institution']} "
+                    f"jobs (matching institution record) and {fill_stats['from_aacsb_roster']} jobs "
+                    f"(AACSB roster) of {fill_stats['considered']} with no location at all; "
+                    f"{missing} still have neither city nor state. Posting-level locations were "
+                    "not overwritten and derived values are marked in location_evidence."
+                )),
+            )
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:
@@ -1557,6 +1583,120 @@ def _school(conn, institution_id, school_raw, source_job):
         VALUES (?,?,?,?,?,?)
     """, (institution_id, name, normalized_name, source_job.extra.get("school_url"), timestamp, timestamp))
     return cur.lastrowid
+
+
+_CITY_STATES = {"singapore", "luxembourg", "monaco", "hong kong", "macau", "macao"}
+_CITY_LABEL_PREFIX_RE = re.compile(r"^\s*(?:work\s+)?locations?\s*[:\-]?\s+", re.I)
+# A city value carrying a colon, a digit or a form label is a parser leak, not a
+# place: "Work Locations: Number of offers: 1", "Mekelweg 5", "Princetonlaan 8a".
+_IMPLAUSIBLE_CITY_RE = re.compile(r"\d|:|\bnumber\s+of\b|\boffers?\b|\bapply\b|\bdeadline\b", re.I)
+
+
+def _plausible_city(value):
+    """Return a usable city string, or None when the value is a parser artifact."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    text = _CITY_LABEL_PREFIX_RE.sub("", text).strip()
+    if not text or len(text) > 60 or _IMPLAUSIBLE_CITY_RE.search(text):
+        return None
+    # "Location United States" cleans up to a country, which is not a city.
+    # The genuine city-states are kept, since there the name really is both.
+    if text.casefold() not in _CITY_STATES and country_code_for(text):
+        return None
+    return text
+
+
+def _repair_institution_city_labels(conn):
+    """Strip leaked form labels from institution city values.
+
+    University Affairs cards render "Location Ontario"; the label came through
+    with the value, so the city column held a province with a prefix. When the
+    remainder is a known state/province it belongs in state_province, and the
+    city stays empty rather than being filled with a region name.
+    """
+    cleaned = moved = dropped = 0
+    for row in conn.execute(
+        "SELECT id, city, state_province, country_code FROM institutions "
+        "WHERE city IS NOT NULL AND city!=''"
+    ).fetchall():
+        original = row["city"]
+        candidate = _plausible_city(original)
+        if candidate == original:
+            continue
+        if candidate is None:
+            conn.execute("UPDATE institutions SET city=NULL WHERE id=?", (row["id"],))
+            dropped += 1
+            continue
+        code = STATE_PROVINCE_ALIASES.get(candidate.casefold().title())
+        if code:
+            conn.execute(
+                "UPDATE institutions SET city=NULL, state_province=COALESCE(NULLIF(state_province,''),?) "
+                "WHERE id=?", (code, row["id"]))
+            moved += 1
+        else:
+            conn.execute("UPDATE institutions SET city=? WHERE id=?", (candidate, row["id"]))
+            cleaned += 1
+    return {"cleaned": cleaned, "moved_to_state": moved, "dropped": dropped}
+
+
+def _backfill_job_location_from_entity(conn):
+    """Give a job its institution's location when the posting carried none.
+
+    Some boards publish no location at all -- the POMS table is Position /
+    University / Date, with no location column -- so 420 jobs rendered as just
+    "United States". The school's own city is already observed elsewhere in this
+    database, from another source's posting or from the AACSB roster.
+
+    This is entity-level evidence, not posting-level: ``location_evidence`` is
+    set to ``institution_entity`` or ``aacsb_roster`` so a derived city is never
+    mistaken for something the posting said. A job that already has any
+    posting-level city or state is left alone.
+    """
+    filled_entity = filled_roster = 0
+    rows = conn.execute("""
+        SELECT j.id, i.id AS institution_id, i.official_name, i.normalized_name
+        FROM jobs j JOIN institutions i ON i.id=j.institution_id
+        WHERE (j.city IS NULL OR j.city='') AND (j.state_province IS NULL OR j.state_province='')
+    """).fetchall()
+    for row in rows:
+        source = None
+        match = conn.execute("""
+            SELECT city, state_province, country, country_code FROM institutions
+            WHERE normalized_name=? AND id!=? AND city IS NOT NULL AND city!=''
+            ORDER BY CASE WHEN state_province IS NOT NULL AND state_province!='' THEN 0 ELSE 1 END,
+                     is_current DESC, id
+            LIMIT 1
+        """, (row["normalized_name"], row["institution_id"])).fetchone()
+        if match and _plausible_city(match["city"]):
+            source = ("institution_entity", _plausible_city(match["city"]),
+                      match["state_province"], match["country"], match["country_code"])
+        else:
+            roster = conn.execute("""
+                SELECT city, state_province, country FROM aacsb_directory_schools
+                WHERE LOWER(institution_name)=LOWER(?) AND city IS NOT NULL AND city!=''
+                LIMIT 1
+            """, (row["official_name"] or "",)).fetchone()
+            if roster and _plausible_city(roster["city"]):
+                source = ("aacsb_roster", _plausible_city(roster["city"]),
+                          roster["state_province"], roster["country"], None)
+        if not source:
+            continue
+        evidence, city, state, country, code = source
+        conn.execute("""
+            UPDATE jobs
+            SET city=?, state_province=COALESCE(NULLIF(state_province,''),?),
+                country=COALESCE(NULLIF(country,''),?),
+                country_code=COALESCE(NULLIF(country_code,''),?),
+                location_evidence=?
+            WHERE id=?
+        """, (city, state, country, code, evidence, row["id"]))
+        if evidence == "institution_entity":
+            filled_entity += 1
+        else:
+            filled_roster += 1
+    return {"from_institution": filled_entity, "from_aacsb_roster": filled_roster,
+            "considered": len(rows)}
 
 
 def _backfill_business_scope(conn):
