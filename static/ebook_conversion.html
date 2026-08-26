@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>阅读副本工坊 · Research Tools Suite</title>
+<link rel="stylesheet" href="/research-nav.css">
+<script src="/research-nav.js" defer></script>
+<style>
+:root{--bg:#07111f;--panel:#0c192b;--panel2:#102039;--bd:#223651;--text:#e8eef8;--muted:#91a2bb;--blue:#6da5ff;--green:#4dd6aa;--yellow:#f5bd61;--red:#ff7b91}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:24px 20px 64px}h1{font-size:24px;margin:0 0 8px}h2{font-size:16px;margin:0 0 14px}.sub{color:var(--muted);font-size:13px;line-height:1.7}.hero{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;margin-bottom:18px}.model-state{border:1px solid var(--bd);border-radius:8px;padding:9px 12px;font-size:12px;white-space:nowrap}.model-state.ok{border-color:#2f896f;color:#a9f0d9}.model-state.bad{border-color:#8d4f5d;color:#ffc0cb}.notice{border-left:3px solid var(--blue);background:#0a1728;padding:12px 14px;margin:16px 0;color:#b9c8db;font-size:12px;line-height:1.75}.notice strong{color:var(--text)}.grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(330px,.75fr);gap:16px}.card{background:var(--panel);border:1px solid var(--bd);border-radius:9px;padding:18px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--bd);margin-bottom:14px;flex-wrap:wrap}.tab{border:1px solid transparent;border-bottom:none;border-radius:7px 7px 0 0;background:none;color:var(--muted);padding:8px 12px;font:inherit;font-size:12px;cursor:pointer}.tab[aria-selected="true"]{border-color:var(--bd);background:var(--panel2);color:var(--text)}
+.drop{border:1px dashed #44658c;border-radius:8px;padding:26px 18px;text-align:center;background:#081525;cursor:pointer;transition:.15s}.drop:hover,.drop.drag{border-color:var(--blue);background:#0b1b30}.drop-title{font-weight:700;margin-bottom:6px}.drop-detail{font-size:12px;color:var(--muted);line-height:1.6}
+.path-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px}.field input,.field select{width:100%;border:1px solid var(--bd);border-radius:6px;background:#081426;color:var(--text);padding:9px;font:inherit;font-size:12px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.field.full{grid-column:1/-1}
+.check{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#bdcadc;line-height:1.55;margin:9px 0}.check input{margin-top:3px}
+.actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:15px}.actions .help{flex:1;min-width:200px}
+.btn{border:1px solid var(--bd);border-radius:6px;background:var(--panel2);color:var(--text);padding:9px 13px;font:inherit;font-size:12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.primary{border-color:#477fcf;background:#17447e}.btn.danger{border-color:#77414c;color:#ffc0cb}.btn:disabled{opacity:.45;cursor:not-allowed}
+.help{font-size:11px;color:var(--muted);line-height:1.8}.help ol{margin:8px 0 0;padding-left:19px}.privacy-list{margin:12px 0 0;padding-left:18px;color:#c6d2e2;font-size:12px;line-height:1.8}.privacy-list b{color:#9fdcff}
+.filelist{margin-top:12px;border:1px solid var(--bd);border-radius:7px;max-height:250px;overflow:auto}.filerow{display:flex;gap:9px;align-items:center;padding:7px 10px;border-bottom:1px solid #16273d;font-size:12px}.filerow:last-child{border-bottom:none}.filerow:hover{background:#0b1b30}.filerow .name{flex:1;word-break:break-all}.filerow .size{color:var(--muted);font-size:11px;white-space:nowrap}
+.selected{margin:10px 0 0;color:#b9d3ff;font-size:12px;word-break:break-all}
+.jobs{margin-top:18px}.job-list{display:grid;gap:10px}.job{background:#091627;border:1px solid var(--bd);border-radius:8px;padding:13px}.job-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.job-name{font-size:13px;font-weight:650;word-break:break-all;display:flex;gap:8px;align-items:baseline}.badge{font-size:10px;border:1px solid var(--bd);border-radius:999px;padding:3px 7px;height:max-content;white-space:nowrap}.badge.completed{color:#a9f0d9;border-color:#2f896f}.badge.running,.badge.queued{color:#bdd6ff;border-color:#3f6da8}.badge.failed,.badge.interrupted{color:#ffc0cb;border-color:#8d4f5d}.badge.skipped{color:#f5bd61;border-color:#7d6231}
+.progress{height:6px;border-radius:6px;background:#15263b;overflow:hidden;margin:10px 0}.progress>span{display:block;height:100%;background:linear-gradient(90deg,#4d8fff,#4dd6aa)}
+.job-meta,.job-error,.job-audit{font-size:11px;color:var(--muted);line-height:1.65}.job-error{color:#ffc0cb}.job-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.empty{padding:18px;border:1px dashed var(--bd);border-radius:7px;text-align:center;color:var(--muted);font-size:12px}
+.deliver{border:1px solid var(--bd);border-radius:8px;background:#0a1728;padding:13px;margin-bottom:14px}.deliver h3{margin:0 0 10px;font-size:13px}.deliver-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:12px}.deliver-block{display:grid;gap:7px;align-content:start}.deliver-note{font-size:11px;color:var(--muted);line-height:1.6}
+.result{font-size:11px;line-height:1.7;margin-top:7px;color:#a9f0d9}.result.bad{color:#ffc0cb}
+@media(max-width:820px){.grid{grid-template-columns:1fr}.hero{flex-direction:column}.model-state{white-space:normal}.form-grid{grid-template-columns:1fr}.field.full{grid-column:auto}.path-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="hero">
+    <div><h1>阅读副本工坊</h1><div class="sub">把本机 PDF 转成 Kindle 和手机适合读的格式：EPUB 重排给手机，裁边分栏 PDF 给墨水屏。可以选单个文件、整个文件夹，或直接填本机目录批量转换。</div></div>
+    <div id="state" class="model-state">正在读取本机配置…</div>
+  </div>
+
+  <div class="notice"><strong>两种输出的边界：</strong><b>EPUB</b> 重排正文，字号由阅读器控制；表格和图形按原样渲染成图片插入，不重排为 HTML，公式若是图形也会保留成图。<b>裁边分栏 PDF</b> 不改动任何内容，只切白边、按栏切开、按屏幕比例重排页面，公式图表 100% 保真但字号固定。<b>扫描件</b>没有文本层，只能出裁边分栏 PDF，EPUB 会明确标为跳过而不是产出空书。</div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>选择要转换的 PDF</h2>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-mode="folder" aria-selected="true">本机文件夹路径</button>
+        <button class="tab" role="tab" data-mode="picker" aria-selected="false">浏览器选文件夹</button>
+        <button class="tab" role="tab" data-mode="files" aria-selected="false">选文件</button>
+      </div>
+
+      <div id="pane-folder" class="pane">
+        <div class="path-row">
+          <div class="field"><label for="folder-path">本机文件夹（服务器这台电脑上的路径）</label><input id="folder-path" placeholder="D:\papers\to-read" spellcheck="false"></div>
+          <button id="scan" class="btn" type="button">扫描</button>
+        </div>
+        <label class="check"><input id="recursive" type="checkbox" checked><span>包含子文件夹。原文件只读取不改动，转换结果不会写回这个目录。</span></label>
+        <div id="scan-result" class="selected">还没有扫描。填好路径后点"扫描"。</div>
+        <div id="filelist" class="filelist" hidden></div>
+      </div>
+
+      <div id="pane-picker" class="pane" hidden>
+        <input id="dir-input" type="file" accept=".pdf" webkitdirectory directory multiple hidden>
+        <div id="drop-dir" class="drop" tabindex="0" role="button">
+          <div class="drop-title">选择整个文件夹</div>
+          <div class="drop-detail">浏览器会把该文件夹里的 PDF 全部上传到本机私有任务目录。适合从别的电脑或手机浏览器操作；在服务器本机上更推荐用"本机文件夹路径"，不产生副本。</div>
+        </div>
+        <div id="picker-result" class="selected">尚未选择文件夹</div>
+      </div>
+
+      <div id="pane-files" class="pane" hidden>
+        <input id="file-input" type="file" accept=".pdf" multiple hidden>
+        <div id="drop-files" class="drop" tabindex="0" role="button">
+          <div class="drop-title">选择或拖入 PDF（可多选）</div>
+          <div class="drop-detail">单个最大 <span id="max-size">120 MB</span>。文件保存在 gitignored 的本机任务目录，不上传任何第三方服务。</div>
+        </div>
+        <div id="files-result" class="selected">尚未选择文件</div>
+      </div>
+
+      <div class="form-grid">
+        <div class="field full">
+          <label>输出格式</label>
+          <label class="check"><input id="fmt-epub" type="checkbox" checked><span><b>EPUB 重排</b> —— 手机、平板，以及支持 EPUB 的 Kindle（2022 年后的机型经 Send-to-Kindle 自动转换）。</span></label>
+          <label class="check"><input id="fmt-pdf" type="checkbox" checked><span><b>裁边分栏 PDF</b> —— 墨水屏读双栏论文的首选，公式图表不失真。</span></label>
+        </div>
+        <div class="field full"><label for="device">目标设备（决定裁边分栏 PDF 的页面比例）</label><select id="device"></select></div>
+      </div>
+      <label class="check"><input id="split-columns" type="checkbox" checked><span>双栏页面按栏切开，每栏单独占屏（关掉则整页裁白边后缩放）。</span></label>
+      <label class="check"><input id="include-figures" type="checkbox" checked><span>EPUB 里插入渲染后的表格与图形（关掉则只保留正文，文件更小）。</span></label>
+
+      <div class="actions"><button id="start" class="btn primary" disabled>开始转换</button><span id="message" class="help">先选择要转换的 PDF。</span></div>
+    </section>
+
+    <aside class="card">
+      <h2>护栏</h2>
+      <ul class="privacy-list">
+        <li><b>原件只读：</b>用本机路径选的 PDF 只被读取，绝不改动、移动或删除；删除任务只清理私有输出目录。</li>
+        <li><b>不出本机：</b>没有任何云服务参与，转换全部由本机 PyMuPDF 完成。</li>
+        <li><b>仅本机可见：</b>文件夹浏览和转换结果默认只允许服务器本机访问，校园网其他电脑看不到，除非显式设 <code>EBOOK_ALLOW_REMOTE=1</code>。</li>
+        <li><b>不写脏数据：</b>写入目标文件夹时同名文件默认跳过而不是覆盖，结果逐个报告。</li>
+        <li><b>失败即说明：</b>扫描件、加密 PDF、无文本层都按格式分别标记原因，不产出空书。</li>
+        <li><b>可复现：</b>同一 PDF 与同一选项生成的 EPUB 字节一致，任务里记录输出 SHA-256。</li>
+      </ul>
+      <div class="help"><ol>
+        <li>发到 Kindle 需要在 <code>.secrets</code> 配好 SMTP，并在 Amazon 后台把发件邮箱加进"已认可的发件人"白名单。</li>
+        <li>裁边分栏 PDF 的页数会明显多于原文——一页双栏通常拆成 2–4 屏，这是正常的。</li>
+        <li>EPUB 的目录来自识别出的标题；论文正文页码保留为 EPUB 页标记，方便引用。</li>
+      </ol></div>
+    </aside>
+  </div>
+
+  <section class="card jobs">
+    <h2>本机转换任务</h2>
+    <div class="deliver">
+      <h3>投递（作用于下方勾选的任务；一个都没勾则作用于全部已完成任务）</h3>
+      <div class="deliver-grid">
+        <div class="deliver-block">
+          <button id="download-zip" class="btn primary" type="button">打包 ZIP 下载</button>
+          <div class="deliver-note">把选中的 EPUB 和 PDF 打成一个压缩包下载。</div>
+        </div>
+        <div class="deliver-block">
+          <div class="field"><label for="kindle-mail">Kindle 收件地址</label><input id="kindle-mail" placeholder="你的名字@kindle.com" spellcheck="false"></div>
+          <button id="send-kindle" class="btn" type="button">发到 Kindle</button>
+          <div id="kindle-note" class="deliver-note">每个文件单独发一封信。</div>
+        </div>
+        <div class="deliver-block">
+          <div class="field"><label for="deliver-path">写入本机文件夹</label><input id="deliver-path" placeholder="E:\ 或 D:\sync\kindle" spellcheck="false"></div>
+          <label class="check" style="margin:0"><input id="overwrite" type="checkbox"><span>允许覆盖同名文件</span></label>
+          <button id="deliver" class="btn" type="button">写入文件夹</button>
+          <div class="deliver-note">Kindle 插 USB 后可直接选它的盘符。</div>
+        </div>
+      </div>
+      <div id="deliver-result" class="result" hidden></div>
+    </div>
+    <div id="jobs" class="job-list"><div class="empty">正在读取任务…</div></div>
+  </section>
+</main>
+
+<script>
+(function(){
+  'use strict';
+  const $ = id => document.getElementById(id);
+  let config = null, mode = 'folder', scanned = [], chosenFiles = [], pollTimer = null;
+
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function bytes(v){if(v==null)return '-';const u=['B','KB','MB','GB'];let n=Number(v),i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];}
+  function statusLabel(s){return ({queued:'排队中',running:'转换中',completed:'已完成',failed:'失败',interrupted:'已中断',skipped:'已跳过'})[s]||s;}
+  function formatLabel(f){return f==='epub'?'EPUB':'裁边 PDF';}
+  function localTime(iso){if(!iso)return '';const d=new Date(iso);return isNaN(d)?'':d.toLocaleString('zh-CN',{hour12:false});}
+  function hex32(){const a=new Uint8Array(16);crypto.getRandomValues(a);return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');}
+  function encodeOptions(v){const raw=new TextEncoder().encode(JSON.stringify(v));let s='';raw.forEach(b=>s+=String.fromCharCode(b));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+  async function jsonFetch(url,options){const r=await fetch(url,options);let b={};try{b=await r.json();}catch(e){}if(!r.ok)throw new Error(b.error||('HTTP '+r.status));return b;}
+
+  function options(){
+    const formats=[];
+    if($('fmt-epub').checked)formats.push('epub');
+    if($('fmt-pdf').checked)formats.push('device_pdf');
+    return {formats, device:$('device').value, split_columns:$('split-columns').checked,
+            include_figures:$('include-figures').checked};
+  }
+  function selectedCount(){
+    if(mode==='folder')return $('filelist').querySelectorAll('input[type=checkbox]:checked').length;
+    return chosenFiles.length;
+  }
+  function syncStart(){
+    const count=selectedCount(), formats=options().formats.length;
+    $('start').disabled=!count||!formats;
+    $('start').textContent=count>1?('开始转换 '+count+' 个文件'):'开始转换';
+    if(!formats)$('message').textContent='至少选择一种输出格式。';
+    else if(!count)$('message').textContent='先选择要转换的 PDF。';
+    else $('message').textContent='已选 '+count+' 个文件，可以开始。';
+  }
+
+  // ── source tabs ────────────────────────────────────────────────────────
+  document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click',()=>{
+    mode=tab.dataset.mode;
+    document.querySelectorAll('.tab').forEach(t=>t.setAttribute('aria-selected',String(t===tab)));
+    ['folder','picker','files'].forEach(name=>{$('pane-'+name).hidden=name!==mode;});
+    syncStart();
+  }));
+
+  async function scanFolder(){
+    const path=$('folder-path').value.trim();
+    if(!path){$('scan-result').textContent='请先填写文件夹路径。';return;}
+    $('scan').disabled=true;$('scan').textContent='扫描中…';
+    try{
+      const data=await jsonFetch('/api/ebook/scan?path='+encodeURIComponent(path)+'&recursive='+($('recursive').checked?'1':'0'),{cache:'no-store'});
+      scanned=data.files;
+      $('scan-result').innerHTML='在 <b>'+esc(data.root)+'</b> 找到 '+data.count+' 个 PDF'+(data.truncated?('（已达 '+data.limit+' 个上限，只列出前面的）'):'')+'。默认全选。';
+      $('filelist').hidden=!data.count;
+      $('filelist').innerHTML=data.files.map((f,i)=>
+        '<label class="filerow"><input type="checkbox" data-index="'+i+'" checked><span class="name">'+esc(f.relative)+'</span><span class="size">'+bytes(f.bytes)+'</span></label>').join('')
+        || '<div class="empty">这个文件夹里没有 PDF</div>';
+    }catch(error){
+      scanned=[];$('filelist').hidden=true;
+      $('scan-result').innerHTML='<span style="color:#ffc0cb">'+esc(error.message)+'</span>';
+    }finally{$('scan').disabled=false;$('scan').textContent='扫描';syncStart();}
+  }
+  $('scan').addEventListener('click',scanFolder);
+  $('folder-path').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();scanFolder();}});
+  $('filelist').addEventListener('change',syncStart);
+
+  function chooseFiles(list,target){
+    const incoming=Array.from(list||[]).filter(f=>f.name.toLowerCase().endsWith('.pdf'));
+    const max=(config&&config.max_upload_bytes)||120*1024*1024;
+    const ok=incoming.filter(f=>f.size<=max), tooBig=incoming.filter(f=>f.size>max);
+    chosenFiles=ok;
+    $(target).innerHTML=(ok.length?'已选 '+ok.length+' 个 PDF，合计 '+bytes(ok.reduce((s,f)=>s+f.size,0)):'没有可用的 PDF')
+      +(tooBig.length?'<div style="color:#ffc0cb;margin-top:4px">跳过 '+tooBig.length+' 个超过 '+bytes(max)+' 的文件</div>':'');
+    syncStart();
+  }
+  $('dir-input').addEventListener('change',()=>chooseFiles($('dir-input').files,'picker-result'));
+  $('file-input').addEventListener('change',()=>chooseFiles($('file-input').files,'files-result'));
+  $('drop-dir').addEventListener('click',()=>$('dir-input').click());
+  $('drop-files').addEventListener('click',()=>$('file-input').click());
+  [['drop-dir','dir-input'],['drop-files','file-input']].forEach(([drop,input])=>{
+    $(drop).addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$(input).click();}});
+  });
+  ['dragenter','dragover'].forEach(n=>$('drop-files').addEventListener(n,e=>{e.preventDefault();$('drop-files').classList.add('drag');}));
+  ['dragleave','drop'].forEach(n=>$('drop-files').addEventListener(n,e=>{e.preventDefault();$('drop-files').classList.remove('drag');}));
+  $('drop-files').addEventListener('drop',e=>chooseFiles(e.dataTransfer.files,'files-result'));
+  ['fmt-epub','fmt-pdf'].forEach(id=>$(id).addEventListener('change',syncStart));
+
+  // ── submit ─────────────────────────────────────────────────────────────
+  async function submit(){
+    $('start').disabled=true;
+    const opts=options();
+    try{
+      if(mode==='folder'){
+        const paths=Array.from($('filelist').querySelectorAll('input[type=checkbox]:checked'))
+          .map(box=>scanned[Number(box.dataset.index)]).filter(Boolean).map(f=>f.path);
+        const data=await jsonFetch('/api/ebook/batches',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({paths,options:opts})});
+        $('message').textContent='已排队 '+data.created+' 个任务'+(data.failed.length?('，'+data.failed.length+' 个无法读取'):'')+'。';
+      }else{
+        const batchId=hex32();let created=0,failed=0;
+        for(const file of chosenFiles.slice()){
+          $('message').textContent='正在上传 '+(created+failed+1)+' / '+chosenFiles.length+'…';
+          try{
+            await jsonFetch('/api/ebook/jobs',{method:'POST',body:file,headers:{
+              'Content-Type':'application/pdf','X-File-Name':encodeURIComponent(file.name),
+              'X-Ebook-Options':encodeOptions(Object.assign({batch_id:batchId},opts))}});
+            created++;
+          }catch(error){failed++;}
+        }
+        $('message').textContent='已排队 '+created+' 个任务'+(failed?('，'+failed+' 个失败'):'')+'。';
+        chosenFiles=[];$('file-input').value='';$('dir-input').value='';
+        $('picker-result').textContent='尚未选择文件夹';$('files-result').textContent='尚未选择文件';
+      }
+      await loadJobs();beginPolling();
+    }catch(error){$('message').textContent=error.message;}
+    finally{syncStart();}
+  }
+  $('start').addEventListener('click',submit);
+
+  // ── jobs ───────────────────────────────────────────────────────────────
+  function outputHtml(job){
+    return (job.outputs||[]).map(out=>{
+      if(out.status==='completed'){
+        return '<a class="btn" href="/api/ebook/jobs/'+job.job_id+'/download?format='+out.format+'">下载 '+formatLabel(out.format)+'（'+bytes(out.bytes)+'）</a>';
+      }
+      return '<span class="badge skipped" title="'+esc(out.reason||'')+'">'+formatLabel(out.format)+'：'+statusLabel(out.status)+'</span>';
+    }).join('');
+  }
+  function auditHtml(job){
+    const parts=[];
+    const a=job.audit||{};
+    if(a.pages)parts.push('原文 '+a.pages+' 页');
+    if(a.two_column_pages)parts.push('双栏 '+a.two_column_pages+' 页');
+    if(a.figures_detected)parts.push('图表 '+a.figures_detected+' 处');
+    (job.outputs||[]).forEach(out=>{
+      const d=out.audit||{};
+      if(out.format==='epub'&&out.status==='completed')parts.push('EPUB '+d.chapters+' 章 / 插图 '+d.figures_rendered+' 张');
+      if(out.format==='device_pdf'&&out.status==='completed')parts.push('裁边 PDF '+d.output_pages+' 屏（'+d.device_label+'）');
+    });
+    (job.outputs||[]).filter(o=>o.reason).forEach(o=>parts.push(formatLabel(o.format)+'跳过：'+o.reason));
+    return parts.length?'<div class="job-audit">'+esc(parts.join(' · '))+'</div>':'';
+  }
+  function jobHtml(job){
+    const p=(job.progress&&job.progress.percent)||0;
+    const done=job.completed_at?' · 完成 '+localTime(job.completed_at):'';
+    const where=job.source_mode==='local_path'?('本机路径 · '+(job.local_path||'')):'上传副本';
+    const pick=job.status==='completed'?'<input type="checkbox" class="pick" data-id="'+job.job_id+'" checked>':'';
+    return '<article class="job"><div class="job-top"><div class="job-name">'+pick+'<span>'+esc(job.original_filename||'')+'</span></div>'
+      +'<span class="badge '+esc(job.status)+'">'+esc(statusLabel(job.status))+'</span></div>'
+      +'<div class="progress"><span style="width:'+Number(p)+'%"></span></div>'
+      +'<div class="job-meta">'+esc(where)+' · '+bytes(job.source_bytes)+done+'</div>'
+      +(job.error?'<div class="job-error">'+esc(job.error)+'</div>':'')+auditHtml(job)
+      +'<div class="job-actions">'+outputHtml(job)
+      +(job.status==='failed'||job.status==='interrupted'?'<button class="btn" data-action="retry" data-id="'+job.job_id+'">重试</button>':'')
+      +'<button class="btn danger" data-action="delete" data-id="'+job.job_id+'">删除结果</button></div></article>';
+  }
+  async function loadJobs(){
+    try{
+      const data=await jsonFetch('/api/ebook/jobs',{cache:'no-store'});
+      // Rebuilding the list must not silently re-select jobs the user cleared.
+      const cleared=new Set(Array.from(document.querySelectorAll('.pick:not(:checked)')).map(b=>b.dataset.id));
+      $('jobs').innerHTML=data.jobs.length?data.jobs.map(jobHtml).join(''):'<div class="empty">暂无本机转换任务</div>';
+      document.querySelectorAll('.pick').forEach(box=>{if(cleared.has(box.dataset.id))box.checked=false;});
+      return data.jobs;
+    }catch(error){$('jobs').innerHTML='<div class="empty">'+esc(error.message)+'</div>';return [];}
+  }
+  function beginPolling(){
+    if(pollTimer)return;
+    pollTimer=setInterval(async()=>{
+      const jobs=await loadJobs();
+      if(!jobs.some(j=>j.status==='queued'||j.status==='running')){clearInterval(pollTimer);pollTimer=null;}
+    },1800);
+  }
+  $('jobs').addEventListener('click',async event=>{
+    const button=event.target.closest('button[data-action]');if(!button)return;
+    const id=button.dataset.id, action=button.dataset.action;
+    if(action==='delete'&&!confirm('删除该任务的转换结果和私有任务目录？\n用本机路径选中的原 PDF 不会被删除。'))return;
+    button.disabled=true;
+    try{await jsonFetch('/api/ebook/jobs/'+id+'/'+action,{method:'POST'});await loadJobs();if(action==='retry')beginPolling();}
+    catch(error){alert(error.message);button.disabled=false;}
+  });
+
+  // ── delivery ───────────────────────────────────────────────────────────
+  function selectedJobIds(){
+    const picks=Array.from(document.querySelectorAll('.pick:checked')).map(b=>b.dataset.id);
+    return picks.length?picks:Array.from(document.querySelectorAll('.pick')).map(b=>b.dataset.id);
+  }
+  function report(text,bad){
+    const node=$('deliver-result');node.hidden=false;node.className='result'+(bad?' bad':'');node.textContent=text;
+  }
+  $('download-zip').addEventListener('click',()=>{
+    const ids=selectedJobIds();
+    if(!ids.length){report('没有已完成的任务可以打包。',true);return;}
+    report('正在准备 '+ids.length+' 个任务的压缩包…');
+    window.location.href='/api/ebook/bundle?job_ids='+ids.join(',');
+  });
+  $('deliver').addEventListener('click',async()=>{
+    const ids=selectedJobIds(), target=$('deliver-path').value.trim();
+    if(!ids.length){report('没有已完成的任务可以写入。',true);return;}
+    if(!target){report('请先填写目标文件夹。',true);return;}
+    $('deliver').disabled=true;
+    try{
+      const data=await jsonFetch('/api/ebook/deliver',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({job_ids:ids,target,overwrite:$('overwrite').checked})});
+      report('已写入 '+data.written_count+' 个文件到 '+data.target
+        +(data.skipped_count?('；跳过 '+data.skipped_count+' 个：'+data.skipped.map(s=>s.filename+'（'+s.reason+'）').join('、')):''),
+        data.written_count===0);
+    }catch(error){report(error.message,true);}
+    finally{$('deliver').disabled=false;}
+  });
+  $('send-kindle').addEventListener('click',async()=>{
+    const ids=selectedJobIds(), recipient=$('kindle-mail').value.trim();
+    if(!ids.length){report('没有已完成的任务可以发送。',true);return;}
+    if(!confirm('确认把 '+ids.length+' 个任务的结果发送到 '+(recipient||'默认 Kindle 地址')+'？'))return;
+    $('send-kindle').disabled=true;$('send-kindle').textContent='发送中…';
+    try{
+      const data=await jsonFetch('/api/ebook/send-to-kindle',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({job_ids:ids,recipient})});
+      report('已发送 '+data.sent_count+' 个文件到 '+data.recipient_masked
+        +(data.skipped_count?('；'+data.skipped_count+' 个未发送：'+data.skipped.map(s=>s.filename+'（'+s.reason+'）').join('、')):''),
+        data.sent_count===0);
+    }catch(error){report(error.message,true);}
+    finally{$('send-kindle').disabled=false;$('send-kindle').textContent='发到 Kindle';}
+  });
+
+  // ── boot ───────────────────────────────────────────────────────────────
+  async function loadConfig(){
+    try{
+      config=await jsonFetch('/api/ebook/config',{cache:'no-store'});
+      $('device').innerHTML=config.devices.map(d=>
+        '<option value="'+d.value+'"'+(d.value===config.default_device?' selected':'')+'>'+esc(d.label)+'（'+d.screen[0]+'×'+d.screen[1]+'）</option>').join('');
+      $('max-size').textContent=bytes(config.max_upload_bytes);
+      $('state').textContent='本机转换 · 并发 '+config.max_concurrent_jobs+' · 结果存 '+config.job_storage;
+      $('state').className='model-state ok';
+      const mail=config.email||{};
+      $('kindle-note').textContent=mail.configured
+        ? ('每个文件单独发一封信，发件人 '+(mail.sender_masked||'本机 SMTP')+(mail.default_recipient_masked?('，默认收件 '+mail.default_recipient_masked):'')+'。')
+        : ('本机 SMTP 未配置，缺 '+(mail.missing||[]).join('、')+'；在 .secrets 里补上后即可发送。');
+      if(mail.default_recipient_masked&&!$('kindle-mail').value)$('kindle-mail').placeholder=mail.default_recipient_masked+'（留空即用它）';
+    }catch(error){
+      $('state').textContent='配置读取失败 · '+error.message;$('state').className='model-state bad';
+    }
+  }
+  loadConfig();
+  loadJobs().then(jobs=>{if(jobs.some(j=>j.status==='queued'||j.status==='running'))beginPolling();});
+  syncStart();
+})();
+</script>
+</body>
+</html>
