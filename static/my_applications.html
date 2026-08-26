@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Local-only faculty job application tracker and transparent fit profile.">
+  <title>My Applications · Academic Career</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <link rel="stylesheet" href="/faculty_jobs.css">
+  <script src="/research-nav.js" defer></script>
+  <script src="/my_applications.js" defer></script>
+</head>
+<body class="faculty-career-body">
+  <main class="fc-shell">
+    <header class="fc-hero"><p class="fc-kicker">Academic Career / Private local workspace</p><h1>My Applications</h1><p>个人资料、匹配分数、收藏、申请状态和笔记只写入本机的 gitignored 文件/SQLite 数据库。此页面不会把个人状态加入公开职位 API。</p><div class="fc-hero-actions"><a class="fc-button secondary" href="/faculty-jobs">← Faculty Jobs</a><a class="fc-button secondary" href="/api/faculty-jobs/export.csv?private=1">Export private CSV</a></div></header>
+    <div class="fc-main" id="ma-app"><div class="fc-loading">Checking local-only access…</div></div>
+  </main>
+</body>
+</html>

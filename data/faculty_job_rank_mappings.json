@@ -1,0 +1,14 @@
+{
+  "version": "2026-08-23",
+  "status": "tracked_public_rulebook",
+  "principle": "Local rank text is retained; normalized stage is not a claim of cross-country equivalence.",
+  "examples": [
+    {"country": "US/Canada", "source_terms": ["Assistant Professor"], "normalized_rank": "Assistant Professor", "career_stage": "early_career_faculty"},
+    {"country": "US/Canada", "source_terms": ["Associate Professor"], "normalized_rank": "Associate Professor", "career_stage": "mid_career_faculty"},
+    {"country": "UK", "source_terms": ["Lecturer"], "normalized_rank": "Lecturer (UK local rank)", "career_stage": "early_career_faculty", "note": "Not relabeled as US Assistant Professor."},
+    {"country": "UK", "source_terms": ["Senior Lecturer", "Reader"], "normalized_rank": "Senior Lecturer / Reader (UK local rank)", "career_stage": "mid_career_faculty"},
+    {"country": "France", "source_terms": ["Maître de conférences"], "normalized_rank": "Maître de conférences (local rank)", "career_stage": "early_career_faculty"},
+    {"country": "Any", "source_terms": ["Postdoctoral", "Postdoc"], "normalized_rank": "Postdoctoral Researcher", "career_stage": "postdoctoral"},
+    {"country": "Any", "source_terms": ["Visiting", "Clinical", "Teaching", "Practice"], "normalized_rank": "Local appointment term retained", "career_stage": "appointment-specific"}
+  ]
+}

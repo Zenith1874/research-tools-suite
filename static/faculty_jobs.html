@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Public-source business-school and business-discipline faculty job market explorer for the United States, Canada, and Europe.">
+  <title>Business Faculty Jobs · Academic Career</title>
+  <link rel="stylesheet" href="/research-nav.css">
+  <link rel="stylesheet" href="/faculty_jobs.css">
+  <script src="/research-nav.js" defer></script>
+  <script src="/faculty_jobs.js" defer></script>
+</head>
+<body class="faculty-career-body">
+  <main class="fc-shell">
+    <header class="fc-hero">
+      <p class="fc-kicker">Academic Career / Faculty Job Market</p>
+      <h1>Business Faculty Jobs</h1>
+      <p>默认只显示商学院明确岗位与商科相关岗位；医学、建筑、诗歌、技术/产品等非商科记录保留在原始目录中，但不会混入默认市场视图。</p>
+      <div class="fc-hero-actions">
+        <a class="fc-button secondary" href="/school-explorer">School Explorer</a>
+        <a class="fc-button secondary" href="/job-market-analytics">Market Analytics</a>
+        <a class="fc-button secondary fc-manage-only" href="/my-applications">My Applications</a>
+        <button class="fc-button secondary fc-manage-only" id="fc-save-search" type="button">Save current search</button>
+        <button class="fc-button primary fc-manage-only" id="fc-update" type="button">Update public sources</button>
+        <a class="fc-button secondary" id="fc-export" href="/api/faculty-jobs/export.csv">Export current results CSV</a>
+      </div>
+    </header>
+
+    <div class="fc-main">
+      <div class="fc-kpis" id="fc-summary" aria-live="polite">
+        <div class="fc-kpi"><div class="fc-kpi-value">—</div><div class="fc-kpi-label">Loading active jobs</div></div>
+      </div>
+
+      <section class="fc-section" aria-labelledby="fc-filters-title">
+        <div class="fc-section-head">
+          <div><h2 id="fc-filters-title">Search and filter</h2><p>Filters apply to the normalized local snapshot. Refresh time and source health are shown below.</p></div>
+          <div class="fc-inline-actions"><span class="fc-small" id="fc-last-updated">Loading…</span><button class="fc-button" id="fc-reset" type="button">Reset</button></div>
+        </div>
+        <div class="fc-section-body">
+          <div class="fc-region-tabs" id="fc-regions" aria-label="Region filters"></div>
+          <form class="fc-toolbar" id="fc-filter-form">
+            <label class="fc-visually-hidden" for="fc-q">Search</label>
+            <input class="fc-input fc-search" id="fc-q" name="q" type="search" placeholder="Institution, title, department, city, or evidence text">
+            <select class="fc-select" id="fc-scope" name="scope" aria-label="Job market scope">
+              <option value="business">Business school / business discipline</option>
+              <option value="business_school">Explicit business-school evidence</option>
+              <option value="all">All observed postings (audit)</option>
+            </select>
+            <select class="fc-select" id="fc-discipline" name="discipline"><option value="">All disciplines</option></select>
+            <select class="fc-select" id="fc-rank" name="rank"><option value="">All ranks</option></select>
+            <select class="fc-select" id="fc-track" name="track"><option value="">All tracks</option></select>
+            <select class="fc-select" id="fc-country" name="country"><option value="">All countries</option></select>
+            <select class="fc-select" id="fc-state" name="state_province"><option value="">All states / provinces</option></select>
+            <select class="fc-select" id="fc-career-stage" name="career_stage"><option value="">All career stages</option></select>
+            <select class="fc-select" id="fc-status" name="status"><option value="">All statuses</option></select>
+            <select class="fc-select" id="fc-school-tier" name="school_tier"><option value="">All business tiers</option></select>
+            <select class="fc-select" id="fc-university-level" name="university_level"><option value="">All university levels</option></select>
+            <select class="fc-select" id="fc-salary-known" name="salary_known"><option value="">Salary known / unknown</option><option value="yes">Salary known</option><option value="no">Salary unknown</option></select>
+            <label class="fc-date-filter">Posted after <input class="fc-input" id="fc-posted-after" name="posted_after" type="date"></label>
+            <label class="fc-date-filter">Closing before <input class="fc-input" id="fc-closing-before" name="closing_before" type="date"></label>
+            <select class="fc-select" id="fc-sort" name="sort"><option value="newest">Newest observed</option><option value="closing_soon">Closing soon</option><option value="salary">Known salary</option><option value="school_tier">School evidence</option></select>
+            <button class="fc-button primary" type="submit">Apply filters</button>
+          </form>
+          <div class="fc-note info" id="fc-boundary">Source coverage is loading. The default business view excludes explicit non-business and non-academic postings; “business discipline” means the school itself still needs verification.</div>
+        </div>
+      </section>
+
+      <div class="fc-layout-2">
+        <section class="fc-section" aria-labelledby="fc-jobs-title">
+          <div class="fc-section-head"><div><h2 id="fc-jobs-title">Open and recently observed business jobs</h2><p id="fc-job-count">Loading…</p></div><div class="fc-inline-actions"><span class="fc-badge blue" id="fc-private-state">Business view</span></div></div>
+          <div class="fc-section-body"><div class="fc-jobs-grid" id="fc-jobs"><div class="fc-loading">Loading public job snapshot…</div></div><div class="fc-pager" id="fc-pager"></div></div>
+        </section>
+        <aside class="fc-sidebar">
+          <section class="fc-section"><div class="fc-section-head"><div><h2>Source health</h2><p>Adapter status and live coverage.</p></div></div><div class="fc-section-body"><div class="fc-stat-list" id="fc-sources"><div class="fc-loading">Loading sources…</div></div></div></section>
+          <section class="fc-section"><div class="fc-section-head"><div><h2>Evidence rules</h2><p>How to read this page.</p></div></div><div class="fc-section-body"><div class="fc-note info">Rank mappings preserve local terms. Business-school evidence is separate from business-discipline evidence. Visa sponsorship is positive only when the source says so. “Unclassified” school tier means evidence has not been verified here.</div><p class="fc-small">Public listing URLs remain available for verification. Individual source failures are recorded independently; a partial update does not erase the last successful snapshot.</p><p class="fc-private-lock fc-note">Personal matching, notes, and applications are local-only. Open My Applications on the service machine.</p></div></section>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <dialog class="fc-dialog" id="fc-detail-dialog" aria-labelledby="fc-detail-title"><div class="fc-dialog-head"><h2 id="fc-detail-title">Job detail</h2><button class="fc-button" id="fc-detail-close" type="button">Close</button></div><div class="fc-dialog-body" id="fc-detail-body"><div class="fc-loading">Loading…</div></div></dialog>
+</body>
+</html>

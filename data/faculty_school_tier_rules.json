@@ -1,0 +1,20 @@
+{
+  "version": "2026-08-23",
+  "status": "tracked_public_rulebook",
+  "principle": "Business-school tiers are evidence classifications, not official rankings.",
+  "tiers": {
+    "T1": "Verified high research/publication evidence + business PhD evidence + accreditation evidence.",
+    "T2": "Verified business PhD + accreditation + research-network/Carnegie evidence.",
+    "T3": "Verified business PhD + accreditation evidence.",
+    "T4": "Verified accreditation evidence without enough research/doctoral evidence.",
+    "Unclassified": "Insufficient verified evidence; no tier is assigned."
+  },
+  "university_levels": [
+    {"value": "R1", "meaning": "Research-intensive level from an explicitly recorded institutional system."},
+    {"value": "R2", "meaning": "Research-active level from an explicitly recorded institutional system."},
+    {"value": "RCU", "meaning": "Research-focused or comprehensive university label when explicitly recorded."},
+    {"value": "Other", "meaning": "Explicit non-R1/R2 research classification."},
+    {"value": "Unknown", "meaning": "No verified level recorded."}
+  ],
+  "manual_override": "Requires a reason and a public source URL; it is stored separately from automated evidence."
+}

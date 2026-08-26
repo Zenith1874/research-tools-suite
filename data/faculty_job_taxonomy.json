@@ -1,0 +1,53 @@
+{
+  "version": "2026-08-23",
+  "status": "tracked_public_rulebook",
+  "purpose": "Small, auditable taxonomy used by the Academic Career normalizer.",
+  "disciplines": [
+    "Management",
+    "Organizational Behavior / HR",
+    "Strategy",
+    "Entrepreneurship",
+    "Information Systems / MIS",
+    "Business Analytics / AI",
+    "Marketing",
+    "Finance",
+    "Accounting",
+    "Operations / Supply Chain",
+    "International Business",
+    "General Business",
+    "Other"
+  ],
+  "region_groups": [
+    "United States",
+    "Canada",
+    "Europe",
+    "Australia / New Zealand",
+    "Asia-Pacific",
+    "Middle East",
+    "Other"
+  ],
+  "career_stages": [
+    "postdoctoral",
+    "early_career_faculty",
+    "mid_career_faculty",
+    "senior_faculty",
+    "teaching_faculty",
+    "practice_faculty",
+    "visiting_faculty",
+    "unknown"
+  ],
+  "business_scopes": [
+    "business_school",
+    "business_discipline",
+    "non_business",
+    "non_academic",
+    "unknown"
+  ],
+  "evidence_policy": {
+    "official_url": "Captured from source detail/listing or remains unknown.",
+    "visa": "Positive values require explicit source language; institution-level inference is not used.",
+    "salary": "Only amounts parsed from captured source text are retained.",
+    "deadline": "Fixed dates and explicit rolling/open-until-filled language are stored separately.",
+    "business_scope": "Explicit business-school evidence outranks business-discipline evidence. Non-business and non-academic records remain in the raw catalogue but are excluded from the default business view."
+  }
+}

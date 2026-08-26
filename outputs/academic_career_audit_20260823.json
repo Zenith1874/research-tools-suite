@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-23T08:21:02.050252+00:00",
+  "layout": "one_plus_six",
+  "git": {
+    "branch": "codex/one-plus-five-migration",
+    "commit": "7b7656f678554b5edabf07750a6892c1b405c352",
+    "origin": "https://github.com/Zenith1874/research-tools-suite.git",
+    "tracked_file_count": 258,
+    "changed_tracked_file_count": 45,
+    "untracked_file_count": 107,
+    "ignored_file_count": 6510
+  },
+  "projects": [
+    {
+      "id": "china_macro",
+      "name": "中国宏观、财政、城市与住房",
+      "routes": [
+        "/dashboard",
+        "/china-macro",
+        "/hong-kong-macro",
+        "/macro-analytics",
+        "/gdp",
+        "/housing",
+        "/fiscal-debt",
+        "/debt-ceiling",
+        "/china-rates",
+        "/city-economy",
+        "/housing-scenario"
+      ],
+      "source_file_count": 69,
+      "source_bytes": 2260967
+    },
+    {
+      "id": "us_macro",
+      "name": "美国宏观",
+      "routes": [
+        "/us-macro"
+      ],
+      "source_file_count": 3,
+      "source_bytes": 63756
+    },
+    {
+      "id": "abdc_research",
+      "name": "ABDC 商科研究",
+      "routes": [
+        "/abdc",
+        "/abdc-astar-research"
+      ],
+      "source_file_count": 30,
+      "source_bytes": 340694
+    },
+    {
+      "id": "research_tools",
+      "name": "科研语言、语音与阅读副本工具",
+      "routes": [
+        "/paper-translation",
+        "/audio-transcription",
+        "/ebook-conversion"
+      ],
+      "source_file_count": 22,
+      "source_bytes": 514730
+    },
+    {
+      "id": "personal_tools",
+      "name": "个人归档与按需监控",
+      "routes": [
+        "/yuedu-fm",
+        "/cardcookie-monitor"
+      ],
+      "source_file_count": 9,
+      "source_bytes": 169641
+    },
+    {
+      "id": "academic_career",
+      "name": "Academic Career / Faculty Job Market",
+      "routes": [
+        "/faculty-jobs",
+        "/school-explorer",
+        "/job-market-analytics",
+        "/my-applications"
+      ],
+      "source_file_count": 34,
+      "source_bytes": 211833
+    }
+  ],
+  "private_boundary": {
+    "matched_file_count": 6330,
+    "matched_bytes": 20682983282,
+    "tracked_private_files": [],
+    "unignored_private_file_count": 0
+  },
+  "ignored_policy": {
+    "ignored_file_count": 6510,
+    "registered_private_file_count": 6330,
+    "disposable_only_file_count": 180,
+    "unexplained_file_count": 0
+  },
+  "public_boundary": {
+    "max_file_bytes": 20971520,
+    "oversized_tracked_files": [],
+    "high_confidence_secret_findings": []
+  },
+  "warnings": [],
+  "errors": [],
+  "status": "pass"
+}

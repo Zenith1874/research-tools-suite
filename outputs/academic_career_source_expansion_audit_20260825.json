@@ -1,0 +1,197 @@
+{
+  "observed_at": "2026-08-26T01:41:10Z",
+  "snapshot_type": "observed_public_source_snapshot",
+  "no_bypass": true,
+  "database": {
+    "quick_check": "ok",
+    "foreign_key_violations": 0,
+    "journal_mode": "wal",
+    "canonical_jobs": 1522,
+    "source_job_records": 1525,
+    "job_source_links": 1525,
+    "job_field_provenance": 126891,
+    "job_status_history": 20548,
+    "possible_duplicates_unresolved": 385,
+    "institutions_all": 1658,
+    "institutions_current": 1250,
+    "business_schools_all": 1213,
+    "business_schools_current": 1014,
+    "school_evidence": 939,
+    "private_user_job_state": 1,
+    "private_application_events": 0
+  },
+  "default_business_view": {
+    "total": 357,
+    "business_school": 190,
+    "business_discipline": 167,
+    "possible_duplicates_unresolved": 56,
+    "coverage_percent": {
+      "posted_date": 81.5,
+      "deadline_or_rolling": 14.8,
+      "official_application_url": 18.8,
+      "parsed_salary": 17.6,
+      "location": 94.1,
+      "phd_evidence": 0.6,
+      "visa_evidence": 0.6,
+      "start_term_or_year": 11.8,
+      "status_history": 100.0,
+      "current_provenance": 100.0
+    }
+  },
+  "new_enabled_sources": [
+    {
+      "source_id": "chronicle_business",
+      "url": "https://jobs.chronicle.com/jobs/business-and-management/",
+      "pages_fetched": 1,
+      "source_records": 22,
+      "faculty_role_eligible": 12,
+      "accepted_business_links": 12,
+      "default_current_contribution": 12,
+      "field_percent": {"institution": 100.0, "location": 95.5, "posted": 59.1, "deadline_or_rolling": 9.1, "salary": 27.3, "official_url": 9.1, "rank": 100.0}
+    },
+    {
+      "source_id": "aaa_career_center",
+      "url": "https://careercenter.aaahq.org/jobs",
+      "pages_fetched": 1,
+      "source_records": 20,
+      "faculty_role_eligible": 18,
+      "accepted_business_links": 16,
+      "default_current_contribution": 16,
+      "field_percent": {"institution": 100.0, "location": 100.0, "posted": 100.0, "deadline_or_rolling": 60.0, "salary": 20.0, "official_url": 15.0, "rank": 100.0}
+    },
+    {
+      "source_id": "poms",
+      "url": "https://www.poms.org/opportunities",
+      "pages_fetched": 1,
+      "source_records": 119,
+      "faculty_role_eligible": 109,
+      "accepted_business_links": 76,
+      "default_current_contribution": 64,
+      "field_percent": {"institution": 100.0, "location": 68.9, "posted": 100.0, "deadline_or_rolling": 0.0, "salary": 0.0, "official_url": 0.0, "rank": 100.0}
+    },
+    {
+      "source_id": "decision_sciences",
+      "url": "https://decisionsciences.org/professional-growth/open-positions/",
+      "pages_fetched": 1,
+      "source_records": 10,
+      "faculty_role_eligible": 10,
+      "accepted_business_links": 9,
+      "default_current_contribution": 9,
+      "field_percent": {"institution": 100.0, "location": 100.0, "posted": 100.0, "deadline_or_rolling": 0.0, "salary": 10.0, "official_url": 100.0, "rank": 100.0}
+    },
+    {
+      "source_id": "sms",
+      "url": "https://sms.careerwebsite.com/jobs",
+      "pages_fetched": 1,
+      "source_records": 22,
+      "faculty_role_eligible": 20,
+      "accepted_business_links": 16,
+      "default_current_contribution": 16,
+      "field_percent": {"institution": 100.0, "location": 100.0, "posted": 54.5, "deadline_or_rolling": 22.7, "salary": 31.8, "official_url": 9.1, "rank": 100.0}
+    },
+    {
+      "source_id": "academic_jobs_online",
+      "url": "https://academicjobsonline.org/ajo/jobs",
+      "pages_fetched": 41,
+      "source_records": 40,
+      "faculty_role_eligible": 34,
+      "accepted_business_links": 4,
+      "default_current_contribution": 3,
+      "field_percent": {"institution": 100.0, "location": 95.0, "posted": 82.5, "deadline_or_rolling": 40.0, "salary": 17.5, "official_url": 0.0, "rank": 100.0, "phd": 5.0}
+    },
+    {
+      "source_id": "akadeus",
+      "url": "https://akadeus.com/announcements",
+      "pages_fetched": 1,
+      "source_records": 69,
+      "faculty_role_eligible": 51,
+      "accepted_business_links": 39,
+      "default_current_contribution": 39,
+      "field_percent": {"institution": 100.0, "location": 100.0, "posted": 100.0, "deadline_or_rolling": 0.0, "salary": 0.0, "official_url": 11.3, "rank": 100.0}
+    }
+  ],
+  "aacsb": {
+    "roster_rows": 1054,
+    "official_websites": 1053,
+    "website_checked": 1053,
+    "current_rule_checked": 1053,
+    "stale_or_unchecked_remaining": 0,
+    "latest_batch": {
+      "schools": 78,
+      "candidates_seen": 539,
+      "candidates_rejected": 535,
+      "jobs_found": 4,
+      "items_inserted": 4,
+      "items_updated": 0,
+      "errors": 0,
+      "scan_rule_version": "faculty_market_v2_20260824"
+    },
+    "completed_current_rule_batches": [
+      {"schools": 100, "candidates_seen": 796, "candidates_rejected": 796, "jobs_found": 0, "items_inserted": 0, "items_updated": 0, "errors": 0},
+      {"schools": 100, "candidates_seen": 703, "candidates_rejected": 690, "jobs_found": 13, "items_inserted": 0, "items_updated": 13, "errors": 0},
+      {"schools": 100, "candidates_seen": 717, "candidates_rejected": 715, "jobs_found": 2, "items_inserted": 0, "items_updated": 2, "errors": 0},
+      {"schools": 100, "candidates_seen": 904, "candidates_rejected": 904, "jobs_found": 0, "items_inserted": 0, "items_updated": 0, "errors": 0},
+      {"schools": 100, "candidates_seen": 1032, "candidates_rejected": 1028, "jobs_found": 2, "items_inserted": 0, "items_updated": 2, "errors": 0},
+      {"schools": 78, "candidates_seen": 539, "candidates_rejected": 535, "jobs_found": 4, "items_inserted": 4, "items_updated": 0, "errors": 0}
+    ],
+    "current_rule_status_counts": {
+      "blocked": 2,
+      "jobs_found": 12,
+      "no_current_jobs": 101,
+      "no_eligible_business_faculty_jobs": 573,
+      "not_found": 106,
+      "unknown": 259
+    },
+    "status_counts": {
+      "blocked": 2,
+      "jobs_found": 12,
+      "no_current_jobs": 101,
+      "no_eligible_business_faculty_jobs": 573,
+      "not_found": 106,
+      "unknown": 259,
+      "not_checked": 1
+    },
+    "source_records": 223,
+    "canonical_jobs": 221,
+    "accepted_business_links": 35,
+    "quarantined_links": 5
+  },
+  "manual_or_blocked_sources": {
+    "aacsb_career_connection": "Cloudflare challenge",
+    "aom": "Cloudflare/dynamic public boundary",
+    "ama_academic_placement": "Cloudflare challenge",
+    "fma": "Cloudflare challenge",
+    "informs": "Cloudflare challenge",
+    "higheredjobs": "anti-bot challenge",
+    "herc": "requested endpoint not stable during audit",
+    "efmd_jobs": "public endpoint not stable during audit"
+  },
+  "final_verification": {
+    "school_api": {
+      "queries": ["/api/schools?limit=3", "/api/schools?country=GB&limit=3", "/api/schools?region=Europe&limit=3"],
+      "http_status": 200,
+      "elapsed_seconds_observed": "0.26-0.33"
+    },
+    "browser": {
+      "pages": ["/faculty-jobs", "/school-explorer", "/job-market-analytics", "/my-applications"],
+      "viewports": ["desktop", "375x812"],
+      "console_errors": 0,
+      "horizontal_overflow": false,
+      "screenshots": ["output/playwright/faculty_jobs_desktop.png", "output/playwright/faculty_jobs_mobile_375.png"]
+    },
+    "privacy_http": {
+      "remote_public_jobs_status": 200,
+      "remote_private_route_status": 403,
+      "private_fields_in_public_job": false
+    },
+    "tests": {
+      "academic_career_targeted_passed": 108,
+      "full_repository_tests": 801,
+      "full_repository_errors": 1,
+      "full_repository_error_scope": "unrelated fiscal pboc_data.db disk I/O error",
+      "project_audit_projects": 6,
+      "project_audit_errors": 0,
+      "project_audit_warnings": 0
+    }
+  }
+}

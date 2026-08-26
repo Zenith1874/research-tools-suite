@@ -1,0 +1,90 @@
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const known = (value, fallback = 'Unknown') => value == null || value === '' ? fallback : String(value);
+  const number = (value) => Number.isFinite(Number(value)) ? Number(value).toLocaleString() : '—';
+  const api = async (url, options) => { const response = await fetch(url, options); let data = {}; try { data = await response.json(); } catch (e) {} if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`); return data; };
+  const stateOptions = ['Saved', 'Interested', 'Preparing', 'Applied', 'Screening Interview', 'Campus Interview', 'Offer', 'Rejected', 'Withdrawn', 'Closed'];
+
+  function textAreaValues(profile) {
+    const weights = profile.weights || {};
+    return `<div class="fc-form-grid"><div class="fc-form-field"><label for="ma-disciplines">Target disciplines</label><input class="fc-input" id="ma-disciplines" value="${esc((profile.target_disciplines || []).join(', '))}" placeholder="Management, Information Systems / MIS"></div><div class="fc-form-field"><label for="ma-stages">Desired career stages</label><input class="fc-input" id="ma-stages" value="${esc((profile.desired_career_stages || []).join(', '))}"></div><div class="fc-form-field"><label for="ma-research">Research keywords</label><textarea class="fc-textarea" id="ma-research" placeholder="digital work, AI, remote work">${esc((profile.research_keywords || []).join(', '))}</textarea></div><div class="fc-form-field"><label for="ma-teaching">Teaching areas</label><textarea class="fc-textarea" id="ma-teaching" placeholder="strategy, organizational behavior">${esc((profile.teaching_areas || []).join(', '))}</textarea></div><div class="fc-form-field"><label for="ma-regions">Preferred regions</label><input class="fc-input" id="ma-regions" value="${esc((profile.preferred_regions || []).join(', '))}"></div><div class="fc-form-field"><label for="ma-countries">Preferred countries (name or ISO)</label><input class="fc-input" id="ma-countries" value="${esc((profile.preferred_countries || []).join(', '))}" placeholder="United States, GB, Canada"></div><div class="fc-form-field"><label for="ma-states">Preferred states / provinces</label><input class="fc-input" id="ma-states" value="${esc((profile.preferred_states_provinces || []).join(', '))}" placeholder="NM, Ontario, CA"></div><div class="fc-form-field"><label for="ma-contracts">Contract preferences</label><input class="fc-input" id="ma-contracts" value="${esc((profile.contract_preferences || []).join(', '))}"></div><div class="fc-form-field"><label for="ma-intensity">Research intensity preference</label><select class="fc-select" id="ma-intensity"><option value="high">High research</option><option value="balanced">Balanced</option><option value="teaching">Teaching-focused</option></select></div><div class="fc-form-field"><label for="ma-strong">Strong-match threshold (0–100)</label><input class="fc-input" id="ma-strong" type="number" min="0" max="100" value="${esc(profile.strong_match_threshold ?? 75)}"></div><div class="fc-form-field"><label for="ma-possible">Possible-match threshold (0–100)</label><input class="fc-input" id="ma-possible" type="number" min="0" max="100" value="${esc(profile.possible_match_threshold ?? 50)}"></div><div class="fc-form-field full"><label>Custom score weights (normalized to 100)</label><div class="fc-toolbar">${['field_match','research_topic_match','teaching_match','career_stage_match','school_fit','contract_fit','geography','visa_evidence'].map((key) => `<label class="fc-small">${esc(key)} <input class="fc-input ma-weight" data-weight="${esc(key)}" type="number" min="0" step="0.1" value="${esc(weights[key] ?? 0)}"></label>`).join('')}</div></div></div>`;
+  }
+
+  function renderProfile(profile) {
+    $('ma-profile').innerHTML = textAreaValues(profile) + '<div class="fc-inline-actions" style="margin-top:12px"><button class="fc-button primary" id="ma-save-profile" type="button">Save local profile</button><span class="fc-small">The score is deterministic and displays its breakdown on each private job record.</span></div>';
+    $('ma-intensity').value = profile.research_intensity_preference || 'balanced';
+    $('ma-save-profile').onclick = async () => {
+      const split = (id) => ($(id).value || '').split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+      const weights = {}; document.querySelectorAll('.ma-weight').forEach((input) => { weights[input.dataset.weight] = Number(input.value); });
+      const payload = { target_disciplines: split('ma-disciplines'), desired_career_stages: split('ma-stages'), research_keywords: split('ma-research'), teaching_areas: split('ma-teaching'), preferred_regions: split('ma-regions'), preferred_countries: split('ma-countries'), preferred_states_provinces: split('ma-states'), contract_preferences: split('ma-contracts'), research_intensity_preference: $('ma-intensity').value, strong_match_threshold: Number($('ma-strong').value), possible_match_threshold: Number($('ma-possible').value), weights };
+      try { await api('/api/faculty-jobs/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); $('ma-profile-note').textContent = 'Saved locally at the configured private profile path.'; }
+      catch (error) { $('ma-profile-note').textContent = `Profile was not saved: ${error.message}`; }
+    };
+  }
+
+  function renderApplications(applications) {
+    $('ma-applications').innerHTML = applications.length ? applications.map((job) => {
+      const current = job.personal_state || {}; const fit = job.fit || {}; const id = job.id;
+      const timeline = (job.application_events || []).map((event) => `<li>${esc(event.event_date)} · ${esc(event.event_type)}${event.note ? ` · ${esc(event.note)}` : ''}</li>`).join('') || '<li>Unknown</li>';
+      return `<article class="fc-job-card"><h3><a href="/faculty-jobs?job_id=${esc(id)}">${esc(known(job.title_raw, 'Untitled job'))}</a></h3><div class="fc-job-institution">${esc(known(job.institution_name))}</div><div class="fc-badges"><span class="fc-badge blue">${esc(known(fit.label, 'No score'))} · ${esc(fit.score == null ? '—' : fit.score)}</span><span class="fc-badge purple">${esc(known(job.discipline_primary))}</span><span class="fc-badge amber">${esc(known(job.status))}</span></div><div class="fc-form-grid" style="margin-top:11px"><div class="fc-form-field"><label for="ma-state-${esc(id)}">Application state</label><select class="fc-select" id="ma-state-${esc(id)}">${stateOptions.map((value) => `<option${value === current.state ? ' selected' : ''}>${esc(value)}</option>`).join('')}</select></div><div class="fc-form-field"><label for="ma-priority-${esc(id)}">Priority (0–5)</label><input class="fc-input" id="ma-priority-${esc(id)}" type="number" min="0" max="5" value="${esc(current.priority || 0)}"></div><div class="fc-form-field"><label for="ma-cv-${esc(id)}">CV version</label><input class="fc-input" id="ma-cv-${esc(id)}" value="${esc(current.cv_version || '')}" placeholder="CV-2026-08"></div><div class="fc-form-field full"><label for="ma-notes-${esc(id)}">Private notes</label><textarea class="fc-textarea" id="ma-notes-${esc(id)}">${esc(current.notes || '')}</textarea></div><div class="fc-form-field"><label for="ma-event-type-${esc(id)}">New event type</label><input class="fc-input" id="ma-event-type-${esc(id)}" placeholder="Application submitted"></div><div class="fc-form-field"><label for="ma-event-date-${esc(id)}">Event date</label><input class="fc-input" id="ma-event-date-${esc(id)}" type="date"></div><div class="fc-form-field full"><label for="ma-event-note-${esc(id)}">Event note</label><input class="fc-input" id="ma-event-note-${esc(id)}" placeholder="Private timeline note"></div></div><div class="fc-inline-actions" style="margin-top:10px"><button class="fc-button success ma-save-app" type="button" data-job-id="${esc(id)}">Save application state</button><span class="fc-small">Fit score is guidance, not a hiring prediction.</span></div><details style="margin-top:10px"><summary class="fc-small">Application event timeline</summary><ul class="fc-small">${timeline}</ul></details><details style="margin-top:10px"><summary class="fc-small">View score breakdown</summary><div class="fc-table-wrap" style="margin-top:8px"><table class="fc-table"><thead><tr><th>Dimension</th><th>Earned</th><th>Reason</th></tr></thead><tbody>${(fit.breakdown || []).map((item) => `<tr><td>${esc(item.label)}</td><td>${esc(item.earned)} / ${esc(item.maximum)}</td><td>${esc(item.reason)}</td></tr>`).join('') || '<tr><td colspan="3">No score breakdown.</td></tr>'}</tbody></table></div></details></article>`;
+    }).join('') : '<div class="fc-empty"><strong>No saved applications</strong>Use Save to My Applications from a local Faculty Jobs detail view.</div>';
+    document.querySelectorAll('.ma-save-app').forEach((button) => button.addEventListener('click', async () => {
+      const id = button.dataset.jobId; const payload = { state: $(`ma-state-${id}`).value, priority: Number($(`ma-priority-${id}`).value), notes: $(`ma-notes-${id}`).value, cv_version: $(`ma-cv-${id}`).value, event_type: $(`ma-event-type-${id}`).value, event_date: $(`ma-event-date-${id}`).value, event_note: $(`ma-event-note-${id}`).value };
+      try { await api(`/api/my-applications/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); button.textContent = 'Saved'; button.disabled = true; }
+      catch (error) { button.textContent = `Error: ${error.message}`; }
+    }));
+  }
+
+  function queryLabel(query) {
+    return Object.entries(query || {}).filter(([key, value]) => value && key !== 'sort').map(([key, value]) => `${key}=${value}`).join(' · ') || 'Business view';
+  }
+
+  function renderSavedWorkspace(searches, alerts, duplicates) {
+    const alertRows = alerts.length ? alerts.map((alert) => {
+      const job = alert.job || {};
+      return `<article class="fc-job-card"><div class="fc-badges"><span class="fc-badge blue">${esc(known(alert.search_name, 'Saved search'))}</span><span class="fc-badge ${alert.seen_at ? '' : 'amber'}">${alert.seen_at ? 'Seen' : 'New match'}</span></div><h3>${esc(known(job.title_raw, 'Untitled job'))}</h3><div class="fc-job-institution">${esc(known(job.institution_name))}</div><p class="fc-small">${esc([job.city, job.state_province, job.country].filter(Boolean).join(', ') || 'Unknown location')} · matched ${esc(known(alert.matched_at))} · ${esc(known(job.deadline_date || job.deadline_mode, 'Deadline unknown'))}</p>${job.official_url ? `<a class="fc-link" href="${esc(job.official_url)}" target="_blank" rel="noopener">Official application ↗</a>` : ''}</article>`;
+    }).join('') : '<div class="fc-empty">No local alerts yet. Run a saved search after new source observations.</div>';
+    const searchRows = searches.length ? searches.map((search) => `<div class="fc-stat-row"><span><strong>${esc(search.name)}</strong><br><span class="fc-small">${esc(queryLabel(search.query))}</span></span><span class="fc-stat-count">${number(search.match_count)} matches · ${number(search.new_alert_count)} new</span><span class="fc-inline-actions"><button class="fc-button ma-run-search" type="button" data-search-id="${esc(search.id)}">Run</button><button class="fc-button danger ma-delete-search" type="button" data-search-id="${esc(search.id)}">Delete</button></span></div>`).join('') : '<div class="fc-empty">No saved searches. Save the current filters from Faculty Jobs.</div>';
+    const duplicateRows = duplicates.length ? duplicates.map((item) => {
+      const exactUrl = item.job_official_url && item.possible_official_url && item.job_official_url === item.possible_official_url;
+      return `<article class="fc-job-card"><div class="fc-badges"><span class="fc-badge amber">Possible duplicate · ${esc(Number(item.confidence || 0).toFixed(2))}</span><span class="fc-badge">${esc(known(item.match_basis))}</span></div><h3>${esc(known(item.job_title))} <span class="fc-small">vs.</span> ${esc(known(item.possible_title))}</h3><p class="fc-small">${esc(known(item.job_institution))} · ${esc(known(item.job_city || item.job_country))}<br>${esc(known(item.possible_institution))} · ${esc(known(item.possible_city || item.possible_country))}</p><div class="fc-inline-actions"><button class="fc-button ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="reject">Reject as false positive</button><button class="fc-button secondary ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="confirm_distinct">Mark distinct</button>${exactUrl ? `<button class="fc-button danger ma-review-duplicate" type="button" data-duplicate-id="${esc(item.id)}" data-action="merge">Merge exact official URL</button>` : ''}</div></article>`;
+    }).join('') : '<div class="fc-empty">No unresolved possible duplicates.</div>';
+    $('ma-saved-searches').innerHTML = searchRows;
+    $('ma-alerts').innerHTML = `<div class="fc-inline-actions" style="margin-bottom:10px"><span class="fc-small">${number(alerts.filter((item) => !item.seen_at).length)} unread local alert${alerts.filter((item) => !item.seen_at).length === 1 ? '' : 's'}</span><button class="fc-button ma-mark-alerts" type="button"${alerts.length ? '' : ' disabled'}>Mark visible alerts seen</button></div><div class="fc-jobs-grid">${alertRows}</div>`;
+    $('ma-duplicates').innerHTML = duplicateRows;
+    document.querySelectorAll('.ma-run-search').forEach((button) => button.addEventListener('click', async () => {
+      try { await api('/api/faculty-jobs/saved-searches/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ search_id: Number(button.dataset.searchId) }) }); window.location.reload(); }
+      catch (error) { button.textContent = `Error: ${error.message}`; }
+    }));
+    document.querySelectorAll('.ma-delete-search').forEach((button) => button.addEventListener('click', async () => {
+      if (!window.confirm('Delete this saved-search definition and its local alerts? Jobs and source records are not deleted.')) return;
+      try { await api('/api/faculty-jobs/saved-searches/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: Number(button.dataset.searchId) }) }); window.location.reload(); }
+      catch (error) { button.textContent = `Error: ${error.message}`; }
+    }));
+    const mark = document.querySelector('.ma-mark-alerts'); if (mark) mark.addEventListener('click', async () => {
+      try { await api('/api/faculty-jobs/alerts/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ alert_ids: alerts.map((item) => item.id) }) }); window.location.reload(); }
+      catch (error) { mark.textContent = `Error: ${error.message}`; }
+    });
+    document.querySelectorAll('.ma-review-duplicate').forEach((button) => button.addEventListener('click', async () => {
+      const reason = window.prompt('Review reason (at least 10 characters):'); if (!reason || reason.trim().length < 10) return;
+      try { await api(`/api/faculty-jobs/duplicates/${encodeURIComponent(button.dataset.duplicateId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: button.dataset.action, reason: reason.trim() }) }); window.location.reload(); }
+      catch (error) { button.textContent = `Error: ${error.message}`; }
+    }));
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    try {
+      const [profile, applications, savedSearches, alerts, duplicates] = await Promise.all([
+        api('/api/faculty-jobs/profile'), api('/api/my-applications'),
+        api('/api/faculty-jobs/saved-searches'), api('/api/faculty-jobs/alerts?limit=100'),
+        api('/api/faculty-jobs/duplicates?limit=100'),
+      ]);
+      const data = applications.applications || [];
+      $('ma-app').innerHTML = `<section class="fc-section"><div class="fc-section-head"><div><h2>Private fit profile</h2><p>Only normalized job fields and your local preferences are used; profile contents are never returned inside the public jobs response.</p></div><span class="fc-badge green">Local-only</span></div><div class="fc-section-body"><div id="ma-profile"></div><p class="fc-small" id="ma-profile-note"></p></div></section><section class="fc-section"><div class="fc-section-head"><div><h2>Application tracker</h2><p>${number(data.length)} saved record${data.length === 1 ? '' : 's'} · notes and state changes stay in the private database.</p></div></div><div class="fc-section-body"><div class="fc-jobs-grid" id="ma-applications"></div></div></section><section class="fc-section"><div class="fc-section-head"><div><h2>Saved searches and local alerts</h2><p>Definitions and match notifications stay in this machine. No email or external alert service is used.</p></div><span class="fc-badge blue">Private</span></div><div class="fc-section-body"><div class="fc-stat-list" id="ma-saved-searches"></div><div id="ma-alerts" style="margin-top:16px"></div></div></section><section class="fc-section"><div class="fc-section-head"><div><h2>Duplicate review queue</h2><p>Fuzzy candidates remain separate until a human records a reason. Exact-URL merge is guarded and auditable.</p></div></div><div class="fc-section-body"><div class="fc-jobs-grid" id="ma-duplicates"></div></div></section>`;
+      renderProfile(profile.profile || {}); renderApplications(data);
+      renderSavedWorkspace(savedSearches.saved_searches || [], alerts.alerts || [], duplicates.duplicates || []);
+    } catch (error) { $('ma-app').innerHTML = `<div class="fc-note error"><strong>Local-only access required.</strong><br>${esc(error.message)}<br>Open this task through the service machine or enable the explicit remote-private setting only after reviewing its privacy implications.</div>`; }
+  });
+})();
