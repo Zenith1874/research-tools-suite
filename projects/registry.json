@@ -205,7 +205,10 @@
         "tests/test_book60_evidence_seed.py",
         "services/astar_affiliation_service.py",
         "scripts/backfill_astar_affiliations.py",
-        "tests/test_astar_affiliations.py"
+        "tests/test_astar_affiliations.py",
+        "services/openalex_budget.py",
+        "tests/test_openalex_budget.py",
+        "tests/test_astar_radar_budget.py"
       ],
       "tracked_data": [
         "data/abdc_data.json",

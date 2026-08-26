@@ -18,6 +18,9 @@ import time
 
 import requests
 
+from services.openalex_budget import (
+    BUDGET_RESET_THRESHOLD, MAX_RATE_LIMIT_RETRIES, RateLimited, raise_for_rate_limit)
+
 LOG = logging.getLogger(__name__)
 
 OPENALEX_WORKS = 'https://api.openalex.org/works'
@@ -26,15 +29,9 @@ HTTP_TIMEOUT = 45
 POLITE_DELAY = 0.3
 # OpenAlex accepts up to 50 OR-ed values in one filter.
 ID_BATCH = 50
-# How many times one batch waits out a 429 before giving up on it.
-MAX_RATE_LIMIT_RETRIES = 5
 # Consecutive failed batches that end the run. Without this the first full-corpus
 # run pushed 1,714 doomed requests after OpenAlex had already cut it off.
 MAX_CONSECUTIVE_ERRORS = 5
-# A Retry-After longer than this means the daily budget is gone, not that a burst
-# limit needs riding out. OpenAlex meters at 1,000 requests/day on the free tier
-# and resets at midnight UTC, so the wait can be most of a day.
-BUDGET_RESET_THRESHOLD = 900.0
 
 SCHEMA = (
     """CREATE TABLE IF NOT EXISTS astar_article_affiliations (
@@ -152,30 +149,6 @@ def record_affiliations(conn, article_id, rows, captured_at=None):
     return 'authors_no_institution'
 
 
-class RateLimited(RuntimeError):
-    """OpenAlex refused the request for rate reasons; back off before retrying."""
-
-    def __init__(self, retry_after=None, remaining=None, limit=None, message=None):
-        super().__init__(f"429 Too Many Requests (Retry-After={retry_after})")
-        self.retry_after = retry_after
-        self.remaining = remaining
-        self.limit = limit
-        self.message = message
-
-    @property
-    def budget_exhausted(self):
-        """True when waiting would mean sleeping until the daily reset.
-
-        OpenAlex meters by daily request budget (1,000/day on the free tier,
-        reset at midnight UTC). A Retry-After of several hours is not a burst
-        limit to ride out inside a run; it means the run is over.
-        """
-        try:
-            return float(self.retry_after) > BUDGET_RESET_THRESHOLD
-        except (TypeError, ValueError):
-            return False
-
-
 def _fetch_works(ids, session=None):
     """Fetch authorships for up to ID_BATCH work ids in one request."""
     getter = session.get if session is not None else requests.get
@@ -188,18 +161,7 @@ def _fetch_works(ids, session=None):
     response = getter(OPENALEX_WORKS, params=params,
                       headers={'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'},
                       timeout=HTTP_TIMEOUT)
-    status = getattr(response, 'status_code', 200)
-    if status == 429:
-        headers = getattr(response, 'headers', {}) or {}
-        message = None
-        try:
-            message = (response.json() or {}).get('message')
-        except Exception:
-            message = None
-        raise RateLimited(headers.get('Retry-After'),
-                          remaining=headers.get('x-ratelimit-remaining'),
-                          limit=headers.get('x-ratelimit-limit'),
-                          message=message)
+    raise_for_rate_limit(response)
     response.raise_for_status()
     return (response.json() or {}).get('results') or []
 
@@ -220,16 +182,7 @@ def _fetch_with_backoff(ids, session=None, attempts=MAX_RATE_LIMIT_RETRIES, base
             if exc.budget_exhausted:
                 # Sleeping until midnight UTC inside a run is not backoff.
                 raise
-            # An explicit Retry-After is the server stating what it wants; honour
-            # it rather than overriding it with our own exponential guess.
-            wait = None
-            if exc.retry_after is not None:
-                try:
-                    wait = min(300.0, max(0.0, float(exc.retry_after)))
-                except (TypeError, ValueError):
-                    wait = None
-            if wait is None:
-                wait = base_delay * (2 ** attempt)
+            wait = exc.wait_seconds(attempt, base_delay)
             if attempt < attempts - 1:
                 LOG.warning("rate limited; waiting %.1fs before retry %s/%s",
                             wait, attempt + 2, attempts)

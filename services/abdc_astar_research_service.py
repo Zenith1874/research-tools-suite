@@ -556,13 +556,33 @@ def reconstruct_abstract(inverted_index):
     return text.strip() or None
 
 
-def _http_get_json(url, params=None, headers=None):
+from services.openalex_budget import (  # noqa: E402
+    BudgetState, MAX_RATE_LIMIT_RETRIES, RateLimited, raise_for_rate_limit)
+
+
+def _http_get_json(url, params=None, headers=None, retries=MAX_RATE_LIMIT_RETRIES):
     h = {'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'}
     if headers:
         h.update(headers)
-    r = requests.get(url, params=params, headers=h, timeout=HTTP_TIMEOUT)
-    r.raise_for_status()
-    return r.json()
+    last = None
+    for attempt in range(max(1, retries)):
+        r = requests.get(url, params=params, headers=h, timeout=HTTP_TIMEOUT)
+        try:
+            raise_for_rate_limit(r)
+        except RateLimited as exc:
+            # A spent daily budget is not something backoff can fix; surface it
+            # so the caller can stop asking instead of retrying into the reset.
+            if exc.budget_exhausted or attempt == retries - 1:
+                raise
+            last = exc
+            wait = exc.wait_seconds(attempt)
+            log.warning('OpenAlex rate limited; waiting %.1fs before retry %s/%s',
+                        wait, attempt + 2, retries)
+            time.sleep(wait)
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise last
 
 
 def _parse_openalex_work(w, issn):
@@ -678,22 +698,32 @@ def fetch_crossref(issn, from_date, to_date, rows=100):
     return out
 
 
-def fetch_recent_articles_for_journal(journal, from_date, to_date, per_journal_cap=200):
+def fetch_recent_articles_for_journal(journal, from_date, to_date, per_journal_cap=200,
+                                      budget=None):
     """对一个期刊（dict，含 issn_print/issn_online）抓最近文章。
-    OpenAlex 优先，失败或 0 结果再试 Crossref。返回 (articles, source_used, error)。"""
+    OpenAlex 优先，失败或 0 结果再试 Crossref。返回 (articles, source_used, error)。
+
+    ``budget`` 是本次运行共享的 OpenAlex 预算状态。一旦当日预算耗尽，后续期刊
+    直接跳过 OpenAlex 走 Crossref 兜底，不再每个期刊都花请求去重新发现这件事。
+    """
     issns = [i for i in [journal.get('issn_print'), journal.get('issn_online')] if i]
     if not issns:
         return [], None, 'no_issn'
     last_err = None
     # OpenAlex
-    for issn in issns:
-        try:
-            arts = fetch_openalex(issn, from_date, to_date, max_total=per_journal_cap)
-            if arts:
-                return arts[:per_journal_cap], 'openalex', None
-        except Exception as e:
-            last_err = f'openalex:{e}'
-            time.sleep(POLITE_DELAY)
+    if budget is not None and budget.should_skip():
+        last_err = 'openalex:daily budget exhausted; skipped'
+    else:
+        for issn in issns:
+            try:
+                arts = fetch_openalex(issn, from_date, to_date, max_total=per_journal_cap)
+                if arts:
+                    return arts[:per_journal_cap], 'openalex', None
+            except Exception as e:
+                last_err = f'openalex:{e}'
+                if budget is not None and budget.note(e):
+                    break
+                time.sleep(POLITE_DELAY)
     # Crossref 兜底
     for issn in issns:
         try:
@@ -1313,6 +1343,9 @@ def _run_update(update_mode, days, version='latest', single_journal=None, per_jo
                     articles_found=0, articles_inserted=0, articles_updated=0,
                     duplicates_skipped=0, failed_journals=0)
     failed_sources, warnings = [], []
+    # Shared across every journal in this run: the daily OpenAlex budget is a
+    # single pot, so the first refusal tells us about all the remaining ones.
+    budget = BudgetState()
 
     for jrow in journals:
         j = dict(jrow)
@@ -1326,7 +1359,8 @@ def _run_update(update_mode, days, version='latest', single_journal=None, per_jo
             continue
         counters['journals_with_issn'] += 1
 
-        arts, src_used, err = fetch_recent_articles_for_journal(j, from_date, to_date, per_journal_cap)
+        arts, src_used, err = fetch_recent_articles_for_journal(
+            j, from_date, to_date, per_journal_cap, budget=budget)
         time.sleep(POLITE_DELAY)
         if err and not arts:
             if err != 'no_issn':
@@ -1345,21 +1379,35 @@ def _run_update(update_mode, days, version='latest', single_journal=None, per_jo
         conn.commit()
 
     finished = datetime.now().isoformat(timespec='seconds')
-    logrow = dict(started_at=started, finished_at=finished, success=1,
+    if budget.exhausted:
+        warnings.append(
+            f"{budget.detail}; OpenAlex skipped for {budget.skipped_calls} journal(s), "
+            "Crossref fallback used where available")
+    # A run where every journal with an ISSN failed is not a success, whatever
+    # the loop managed to finish.  Recording it as one hid the 2026-08-26
+    # budget exhaustion behind success=1.
+    attempted = counters['journals_with_issn']
+    success = 0 if (attempted and counters['failed_journals'] >= attempted) else 1
+    error_message = None
+    if not success:
+        error_message = (budget.detail if budget.exhausted
+                         else f"all {attempted} journals with an ISSN failed")
+    logrow = dict(started_at=started, finished_at=finished, success=success,
                   update_mode=update_mode, abdc_version=version,
                   failed_sources=json.dumps(failed_sources[:50], ensure_ascii=False),
                   warnings=json.dumps(warnings[:50], ensure_ascii=False),
-                  error_message=None, **counters)
+                  error_message=error_message, **counters)
+    logrow.update(budget.as_dict())
     conn.execute("""INSERT INTO astar_update_logs
         (started_at,finished_at,success,update_mode,abdc_version,journals_checked,
          journals_with_issn,journals_missing_issn,articles_found,articles_inserted,
          articles_updated,duplicates_skipped,failed_journals,failed_sources,warnings,error_message)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (logrow['started_at'], logrow['finished_at'], 1, update_mode, version,
+        (logrow['started_at'], logrow['finished_at'], success, update_mode, version,
          counters['journals_checked'], counters['journals_with_issn'], counters['journals_missing_issn'],
          counters['articles_found'], counters['articles_inserted'], counters['articles_updated'],
          counters['duplicates_skipped'], counters['failed_journals'],
-         logrow['failed_sources'], logrow['warnings'], None))
+         logrow['failed_sources'], logrow['warnings'], error_message))
     conn.commit()
     conn.close()
     logrow['journal_stats'] = jstat
