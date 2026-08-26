@@ -1,0 +1,414 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "香港宏观最终修复与中国人口婚姻功能技术审计",
+    "description": "对香港宏观与中国 SAFE 最终修复提示词的完成度，以及中国宏观页面新增人口、婚姻、离婚数据功能的数据质量、来源、口径和信息架构进行独立复核。",
+    "generatedAt": "2026-08-14T04:06:37Z",
+    "cards": [
+      {
+        "id": "demography_snapshot",
+        "description": "新增人口婚姻年度快照的观测规模。",
+        "dataset": "demography_summary",
+        "sourceId": "demography_summary_sql",
+        "metrics": [
+          { "label": "年度观测", "field": "demography_rows", "format": "number" },
+          { "label": "序列", "field": "series_count", "format": "number" }
+        ]
+      },
+      {
+        "id": "primary_provenance",
+        "description": "快照中直接指向国家统计局一手页面或年鉴图的观测。",
+        "dataset": "demography_summary",
+        "sourceId": "demography_summary_sql",
+        "metrics": [
+          { "label": "一手来源观测", "field": "primary_rows", "format": "number" },
+          { "label": "一手占比", "field": "primary_share", "format": "percent" },
+          { "label": "转载或转引", "field": "secondary_rows", "format": "number" }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "source_status_composition",
+        "title": "人口婚姻快照的来源状态构成",
+        "subtitle": "167 条年度观测中，133 条指向国家统计局一手页面或年鉴图，34 条依赖转载或媒体转引。",
+        "headerMarkdown": "四类状态保留在源数据中；图中不把转载或媒体报道重新标成一手官方来源。",
+        "type": "bar",
+        "dataset": "source_status",
+        "sourceId": "source_status_sql",
+        "valueFormat": "number",
+        "yAxisTitle": "观测行数",
+        "encodings": {
+          "x": { "field": "status", "type": "nominal", "label": "来源状态" },
+          "y": { "field": "rows", "type": "quantitative", "label": "观测行数" },
+          "tooltip": [
+            { "field": "share", "type": "quantitative", "label": "占比", "format": "percent" },
+            { "field": "evidence_tier", "type": "nominal", "label": "证据层级" },
+            { "field": "example", "type": "nominal", "label": "典型来源" }
+          ]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "series_coverage",
+        "title": "人口婚姻年度序列覆盖与最新值",
+        "subtitle": "四条新增序列键值唯一、声明区间内无缺年；最新值的证据层级并不相同。",
+        "dataset": "coverage",
+        "sourceId": "coverage_sql",
+        "defaultSort": { "field": "series_code", "direction": "asc" },
+        "density": "spacious",
+        "columns": [
+          { "field": "series_code", "label": "序列代码", "type": "text" },
+          { "field": "definition", "label": "定义", "type": "text" },
+          { "field": "unit", "label": "单位", "type": "text" },
+          { "field": "observations", "label": "观测数", "format": "number" },
+          { "field": "coverage", "label": "覆盖", "type": "text" },
+          { "field": "latest", "label": "最新值", "type": "text" },
+          { "field": "latest_source_tier", "label": "最新值证据层级", "type": "text" }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "hk_prompt_audit",
+        "label": "香港宏观与 SAFE 最终修复提示词及逐项验收",
+        "path": "docs/hong_kong_macro_final_remediation_prompts_2026-08-12.md"
+      },
+      {
+        "id": "test_suite",
+        "label": "项目完整 Python 回归测试",
+        "path": "tests"
+      },
+      {
+        "id": "demography_csv",
+        "label": "中国人口婚姻年度整理快照",
+        "path": "data/china_demography_annual_official.csv"
+      },
+      {
+        "id": "demography_summary_sql",
+        "label": "人口婚姻 SQLite 汇总查询",
+        "path": "pboc_data.db"
+      },
+      {
+        "id": "source_status_sql",
+        "label": "人口婚姻来源状态构成查询",
+        "path": "pboc_data.db"
+      },
+      {
+        "id": "coverage_sql",
+        "label": "人口婚姻序列覆盖与最新值查询",
+        "path": "pboc_data.db"
+      },
+      {
+        "id": "ui_code",
+        "label": "中国宏观页面和仪表板配置",
+        "path": "services/china_macro_dashboard_service.py"
+      },
+      {
+        "id": "browser_evidence",
+        "label": "中国宏观与香港宏观浏览器验收截图",
+        "path": "output/playwright/china-demography-audit"
+      },
+      {
+        "id": "official_nbs_2025",
+        "label": "国家统计局：2025 年国民经济和社会发展统计公报",
+        "href": "https://www.stats.gov.cn/sj/zxfb/202602/t20260228_1962662.html"
+      },
+      {
+        "id": "audit_bundle",
+        "label": "本次代码、数据库、接口、浏览器与测试联合审计",
+        "path": "docs/china_demography_hk_prompt_AUDIT_2026-08-13/artifact.json"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# 香港宏观最终修复与中国人口婚姻功能技术审计"
+      },
+      {
+        "id": "technical_conclusion",
+        "type": "markdown",
+        "sourceId": "audit_bundle",
+        "body": "## 技术结论\n\n**香港宏观与中国 SAFE 最终修复：完整实现。** P0、P1、P2 共 12 项验收门槛全部通过；当前数据库、API、页面和回归测试没有显示人口婚姻新增功能破坏香港独立模块。\n\n**人口婚姻功能：数据管道基本可用，但产品表达只能判定为部分完成。** 四条新增年度序列已入库且内部一致，真正的问题不是数据被写进外贸表，而是全站入口仍把 `/china-macro` 叫作“实体外贸/实体经济与外贸”，与页面内已经扩展出的“就业与人口”范围不一致。\n\n在研究使用前应先修复三个 P0 问题：混合单位图表、静态快照被表达成实时官方更新，以及转载/转引数据被英雄区文案概括成“官方原始/修订口径”。"
+      },
+      {
+        "id": "metrics",
+        "type": "metric-strip",
+        "cardIds": ["demography_snapshot", "primary_provenance"]
+      },
+      {
+        "id": "key_issues",
+        "type": "markdown",
+        "sourceId": "audit_bundle",
+        "body": "## 人口婚姻功能的关键问题\n\n1. `出生、结婚与离婚合计` 把“万人”和“万对”画在同一共享纵轴上，数值可计算但构念不可直接比较。\n2. 同步服务只读取仓库内 CSV，却在每次同步时重写全部行的 `updated_at`；页面按钮和页脚因此会把本地同步时间误读为官方数据发布时间。\n3. 167 条观测中有 34 条依赖转载或媒体转引，当前首页式文案没有把这一证据层级差异说清。\n4. “实体外贸”是过期的全局导航标签；页面内部已经把“就业与人口”和“外贸”分成不同分组，因此这是信息架构问题，不是数据库归类错误。"
+      },
+      { "id": "source_chart", "type": "chart", "chartId": "source_status_composition" },
+      {
+        "id": "scope_definitions",
+        "type": "markdown",
+        "sourceId": "demography_csv",
+        "body": "## 范围、数据与口径定义\n\n新增快照包含出生人口、结婚登记、协议离婚和法院判决/调解离婚四条年度序列，共 167 条观测。键为 `(series_code, period)`；审计未发现重复键、声明覆盖区间内缺年、CSV 与 SQLite 值不一致或单位漂移。\n\n离婚总量只能在“协议离婚 + 法院判决/调解离婚”两个组成项都存在时派生，因此当前正确止于 2024 年，没有用 2025 年协议离婚值冒充总离婚。2025 年出生人口 792 万人的国家统计局一手公报可直接复核；2025 年结婚、协议离婚以及 2024 年法院离婚的当前快照链接仍属于转载或转引证据。"
+      },
+      { "id": "coverage_table", "type": "table", "tableId": "series_coverage" },
+      {
+        "id": "method_acceptance",
+        "type": "markdown",
+        "sourceId": "audit_bundle",
+        "body": "## 审计方法与验收\n\n本次复核覆盖需求文档、服务代码、HTML/导航、CSV、SQLite、HTTP API、浏览器桌面与 390px 移动视口，以及完整 unittest。香港部分另外检查了 CSD 人口流量/存量语义、SAFE 日期证据、HKMA 频率、RVD 半年度累计、恒等式状态、原始文件哈希、GET 只读性、重复值和香港/内地数据隔离。\n\n结果：完整测试 573 项通过、0 失败；数据库 `quick_check` 为 `ok`；香港页面和中国宏观页面均无控制台错误或全局横向溢出；香港四类原始来源文件 42/42 哈希匹配。"
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "sourceId": "audit_bundle",
+        "body": "## 限制、未确定性与稳健性\n\n- 本次公开检索没有定位到可直接复核的 2025 年民政部一手婚姻季度页面，因此不能把当前媒体转引升级为一手官方证据。\n- 中国宏观页另有死亡人口、16—59 岁人口和城镇新增就业等只有 1 个年度点的序列；单点折线图不构成趋势，应补齐后再画，或暂时只显示指标卡/表格。\n- CSV 解析器尚未对重复键、`data_status` 枚举、CSV 单位与规范单位一致性、来源域名层级做硬校验；现有测试也没有锁定关键最新值和证据层级。\n- 香港恒等式审计当前为 4 项通过、4 项警告、0 项失败；SAFE 最大残差 1.45 处于警告带，页面没有把它掩盖成通过。"
+      },
+      {
+        "id": "recommendations",
+        "type": "markdown",
+        "body": "## 建议的最小整改顺序\n\n1. **P0｜修正图表构念。** 家庭流量图只保留结婚和离婚（单位均为万对）；出生和死亡继续放在人口图（单位均为万人）。\n2. **P0｜修正时间语义。** 分开保存并显示资料期、来源发布日期/抓取时间和本地同步时间；按钮改为“同步本地整理快照”，除非真的调用官方接口。\n3. **P0｜修正证据文案。** 将“官方原始/修订口径”改为“经核验整理快照”，逐行保留一手、修订、转载、转引状态；对二手行继续寻找并归档一手原件、哈希和获取时间。\n4. **P1｜修正入口与分组。** 全局 `/china-macro` 标签改为“实体、人口与外贸”；页面内将“就业与人口”拆为“就业与收入”和“人口与家庭”。\n5. **P1｜处理稀疏序列。** 补齐死亡、劳动年龄人口和城镇新增就业的历史值；在不足两个可比期时不渲染趋势图。\n6. **P1｜加强防回归。** 增加重复键、单位、来源层级、幂等同步时间、关键最新值和派生离婚总量的硬断言。"
+      },
+      {
+        "id": "next_question",
+        "type": "markdown",
+        "body": "## 后续问题\n\n从现有代码边界看，优先推荐保留 `/china-macro` 路由并拆出独立的“人口与家庭”页签，而不是立即新建第二套模块。只有当后续要加入省级人口、年龄结构、婚育政策、预测或专题研究工作流时，再升级成独立 `/china-demography` 模块会更合算。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-14T04:06:37Z",
+    "status": "ready",
+    "datasets": {
+      "demography_summary": [
+        {
+          "demography_rows": 167,
+          "series_count": 4,
+          "primary_rows": 133,
+          "primary_share": 0.7964071856,
+          "secondary_rows": 34
+        }
+      ],
+      "source_status": [
+        {
+          "status": "一手官方原始",
+          "rows": 118,
+          "share": 0.7065868263,
+          "evidence_tier": "一手",
+          "first_party": 1,
+          "source_type": "official",
+          "example": "国家统计局统计公报或年鉴图",
+          "status_order": 1
+        },
+        {
+          "status": "一手官方修订",
+          "rows": 15,
+          "share": 0.0898203593,
+          "evidence_tier": "一手修订",
+          "first_party": 1,
+          "source_type": "official_revised",
+          "example": "国家统计局修订口径页面",
+          "status_order": 2
+        },
+        {
+          "status": "转载来源",
+          "rows": 28,
+          "share": 0.1676646707,
+          "evidence_tier": "二手转载",
+          "first_party": 0,
+          "source_type": "official_reprinted",
+          "example": "统计资料转载站或研究机构转录",
+          "status_order": 3
+        },
+        {
+          "status": "媒体转引",
+          "rows": 6,
+          "share": 0.0359281437,
+          "evidence_tier": "二手转引",
+          "first_party": 0,
+          "source_type": "official_relayed",
+          "example": "财经媒体或新闻网站引用官方数字",
+          "status_order": 4
+        }
+      ],
+      "findings": [
+        {
+          "priority": "P0-1",
+          "severity": "高",
+          "finding": "家庭流量图混合不可比单位",
+          "evidence": "同一共享纵轴同时绘制出生人口（万人）与结婚/离婚（万对）。",
+          "impact": "柱线高低会诱导数量级比较，但人和婚姻对数不是同一构念。",
+          "recommended_fix": "家庭图只保留结婚和离婚；出生、死亡放到万人口径的人口图。"
+        },
+        {
+          "priority": "P0-2",
+          "severity": "高",
+          "finding": "本地同步时间被表达成数据更新时间",
+          "evidence": "服务从仓库 CSV 读取，但每次同步会重写全部行 updated_at；当前 167 行时间完全相同。",
+          "impact": "用户可能误以为官方刚发布或刚更新了历史数据。",
+          "recommended_fix": "分别保存资料期、来源发布时间/抓取时间和 local_sync_at，并改按钮文案。"
+        },
+        {
+          "priority": "P0-3",
+          "severity": "高",
+          "finding": "来源文案高估一手证据覆盖",
+          "evidence": "34/167 行依赖转载或媒体转引，但英雄区统一写作官方原始/修订口径。",
+          "impact": "研究复核时无法从界面识别一手与二手证据边界。",
+          "recommended_fix": "改为经核验整理快照，展示逐行来源层级并补归档一手原件。"
+        },
+        {
+          "priority": "P1-1",
+          "severity": "中",
+          "finding": "全局入口仍命名为实体外贸",
+          "evidence": "导航和 README 使用实体外贸/实体经济与外贸；页面内部已有独立就业与人口分组。",
+          "impact": "人口婚姻功能看起来像被错误归入外贸，用户难以预期页面范围。",
+          "recommended_fix": "入口改为实体、人口与外贸，并拆出人口与家庭页签。"
+        },
+        {
+          "priority": "P1-2",
+          "severity": "中",
+          "finding": "单点序列被绘制成趋势图",
+          "evidence": "死亡人口、16—59 岁人口、城镇新增就业目前各只有 2025 年一个点。",
+          "impact": "视觉上像时间序列，但没有趋势信息，也妨碍读者判断数据缺口。",
+          "recommended_fix": "补齐历史值；在可比点少于两个时显示卡片或表格而不是折线。"
+        },
+        {
+          "priority": "P1-3",
+          "severity": "中",
+          "finding": "解析与测试缺少关键硬门槛",
+          "evidence": "解析器未校验重复键、状态枚举、规范单位和来源域；测试未锁定最新值、证据层级和幂等时间。",
+          "impact": "未来增量数据可能静默覆盖、错标单位或改变来源可信度。",
+          "recommended_fix": "导入前 fail-fast，并为关键值、来源层级和幂等同步增加回归测试。"
+        }
+      ],
+      "coverage": [
+        {
+          "series_code": "CN_BIRTHS",
+          "definition": "出生人口",
+          "unit": "万人",
+          "observations": 24,
+          "coverage": "2002—2025；无缺年",
+          "latest": "2025：792",
+          "latest_source_tier": "国家统计局一手"
+        },
+        {
+          "series_code": "CN_DIVORCES_AGREEMENT",
+          "definition": "协议离婚（民政部门登记）",
+          "unit": "万对",
+          "observations": 48,
+          "coverage": "1978—2025；无缺年",
+          "latest": "2025：274.3",
+          "latest_source_tier": "媒体转引"
+        },
+        {
+          "series_code": "CN_DIVORCES_COURT",
+          "definition": "法院离婚（判决/调解）",
+          "unit": "万对",
+          "observations": 47,
+          "coverage": "1978—2024；无缺年",
+          "latest": "2024：89.1",
+          "latest_source_tier": "媒体转引"
+        },
+        {
+          "series_code": "CN_MARRIAGES",
+          "definition": "结婚登记",
+          "unit": "万对",
+          "observations": 48,
+          "coverage": "1978—2025；无缺年",
+          "latest": "2025：676.3",
+          "latest_source_tier": "媒体转引"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "hk_prompt_audit",
+      "label": "香港宏观与 SAFE 最终修复提示词及逐项验收",
+      "path": "docs/hong_kong_macro_final_remediation_prompts_2026-08-12.md",
+      "description": "将最终修复提示词的 12 项验收门槛与当前代码、数据库、API 和页面状态逐项对照；联合证据详见本报告的审计方法部分。"
+    },
+    {
+      "id": "test_suite",
+      "label": "项目完整 Python 回归测试",
+      "path": "tests",
+      "description": "命令：python.exe -X utf8 -m unittest discover -s tests -q；执行时间 2026-08-14T03:48:00Z；结果 573 tests、0 failures。"
+    },
+    {
+      "id": "demography_csv",
+      "label": "中国人口婚姻年度整理快照",
+      "path": "data/china_demography_annual_official.csv",
+      "description": "以 (series_code, period) 为键审计全部 167 条记录的覆盖、缺年、重复、单位、最新值、来源 URL、data_status 以及 CSV/SQLite 一致性；一手观测要求指向国家统计局域名且状态为 official 或 official_revised。"
+    },
+    {
+      "id": "demography_summary_sql",
+      "label": "人口婚姻 SQLite 汇总查询",
+      "path": "pboc_data.db",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "sql": "WITH d AS (SELECT * FROM china_macro_observations WHERE indicator_code IN ('CN_BIRTHS','CN_MARRIAGES','CN_DIVORCES_AGREEMENT','CN_DIVORCES_COURT')) SELECT COUNT(*) AS demography_rows, COUNT(DISTINCT indicator_code) AS series_count, SUM(CASE WHEN source_url LIKE 'https://www.stats.gov.cn/%' AND data_status IN ('official','official_revised') THEN 1 ELSE 0 END) AS primary_rows, 1.0 * SUM(CASE WHEN source_url LIKE 'https://www.stats.gov.cn/%' AND data_status IN ('official','official_revised') THEN 1 ELSE 0 END) / COUNT(*) AS primary_share, SUM(CASE WHEN NOT (source_url LIKE 'https://www.stats.gov.cn/%' AND data_status IN ('official','official_revised')) THEN 1 ELSE 0 END) AS secondary_rows FROM d;",
+        "description": "计算四条人口婚姻序列的观测数、序列数和一手/二手来源覆盖。",
+        "executed_at": "2026-08-14T04:04:00Z",
+        "tables_used": ["china_macro_observations"],
+        "filters": ["indicator_code in CN_BIRTHS, CN_MARRIAGES, CN_DIVORCES_AGREEMENT, CN_DIVORCES_COURT"],
+        "metric_definitions": ["一手来源要求 source_url 位于 www.stats.gov.cn 且 data_status 为 official 或 official_revised。", "二手来源为不满足一手来源条件的转载或媒体转引观测。"]
+      }
+    },
+    {
+      "id": "source_status_sql",
+      "label": "人口婚姻来源状态构成查询",
+      "path": "pboc_data.db",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "sql": "WITH d AS (SELECT * FROM china_macro_observations WHERE indicator_code IN ('CN_BIRTHS','CN_MARRIAGES','CN_DIVORCES_AGREEMENT','CN_DIVORCES_COURT')), counts AS (SELECT data_status, COUNT(*) AS rows FROM d GROUP BY data_status) SELECT CASE data_status WHEN 'official' THEN '一手官方原始' WHEN 'official_revised' THEN '一手官方修订' WHEN 'official_reprinted' THEN '转载来源' WHEN 'official_relayed' THEN '媒体转引' ELSE data_status END AS status, rows, 1.0 * rows / (SELECT COUNT(*) FROM d) AS share, CASE WHEN data_status='official' THEN '一手' WHEN data_status='official_revised' THEN '一手修订' WHEN data_status='official_reprinted' THEN '二手转载' ELSE '二手转引' END AS evidence_tier, CASE WHEN data_status IN ('official','official_revised') THEN 1 ELSE 0 END AS first_party, data_status AS source_type, CASE data_status WHEN 'official' THEN '国家统计局统计公报或年鉴图' WHEN 'official_revised' THEN '国家统计局修订口径页面' WHEN 'official_reprinted' THEN '统计资料转载站或研究机构转录' ELSE '财经媒体或新闻网站引用官方数字' END AS example, CASE data_status WHEN 'official' THEN 1 WHEN 'official_revised' THEN 2 WHEN 'official_reprinted' THEN 3 ELSE 4 END AS status_order FROM counts ORDER BY status_order;",
+        "description": "按 data_status 统计来源层级，并保留占比、一手标记和典型来源说明。",
+        "executed_at": "2026-08-14T04:04:00Z",
+        "tables_used": ["china_macro_observations"],
+        "filters": ["indicator_code in CN_BIRTHS, CN_MARRIAGES, CN_DIVORCES_AGREEMENT, CN_DIVORCES_COURT"]
+      }
+    },
+    {
+      "id": "coverage_sql",
+      "label": "人口婚姻序列覆盖与最新值查询",
+      "path": "pboc_data.db",
+      "query": {
+        "engine": "SQLite",
+        "language": "sql",
+        "sql": "WITH d AS (SELECT * FROM china_macro_observations WHERE indicator_code IN ('CN_BIRTHS','CN_MARRIAGES','CN_DIVORCES_AGREEMENT','CN_DIVORCES_COURT')), stats AS (SELECT indicator_code AS series_code, MAX(indicator_name) AS definition, MAX(unit) AS unit, COUNT(*) AS observations, MIN(period) AS first_period, MAX(period) AS last_period FROM d GROUP BY indicator_code), latest AS (SELECT d.* FROM d JOIN (SELECT indicator_code, MAX(period) AS last_period FROM d GROUP BY indicator_code) m ON d.indicator_code=m.indicator_code AND d.period=m.last_period) SELECT s.series_code, s.definition, s.unit, s.observations, s.first_period || '—' || s.last_period || CASE WHEN s.observations = CAST(s.last_period AS INTEGER)-CAST(s.first_period AS INTEGER)+1 THEN '；无缺年' ELSE '；有缺年' END AS coverage, l.period || '：' || printf('%g', l.value) AS latest, CASE WHEN l.source_url LIKE 'https://www.stats.gov.cn/%' AND l.data_status IN ('official','official_revised') THEN '国家统计局一手' WHEN l.data_status='official_relayed' THEN '媒体转引' WHEN l.data_status='official_reprinted' THEN '媒体转载' ELSE l.data_status END AS latest_source_tier FROM stats s JOIN latest l ON s.series_code=l.indicator_code ORDER BY s.series_code;",
+        "description": "计算每条序列的定义、单位、观测数、连续覆盖、最新值和最新值证据层级。",
+        "executed_at": "2026-08-14T04:04:00Z",
+        "tables_used": ["china_macro_observations"],
+        "filters": ["indicator_code in CN_BIRTHS, CN_MARRIAGES, CN_DIVORCES_AGREEMENT, CN_DIVORCES_COURT"]
+      }
+    },
+    {
+      "id": "ui_code",
+      "label": "中国宏观页面和仪表板配置",
+      "path": "services/china_macro_dashboard_service.py",
+      "description": "检查 static/research-nav.js、static/index.html、static/china_macro.html、README.md 和相关服务中的入口标签、页面分组、图表单位、同步按钮与更新时间文案。"
+    },
+    {
+      "id": "browser_evidence",
+      "label": "中国宏观与香港宏观浏览器验收截图",
+      "path": "output/playwright/china-demography-audit",
+      "description": "Playwright 打开 /china-macro 与 /hong-kong-macro，检查标题、页签、图表、说明、控制台、桌面溢出及 390x844 移动视口；香港截图位于 output/playwright/hong-kong-prompt-recheck。"
+    },
+    {
+      "id": "official_nbs_2025",
+      "label": "国家统计局：2025 年国民经济和社会发展统计公报",
+      "href": "https://www.stats.gov.cn/sj/zxfb/202602/t20260228_1962662.html",
+      "description": "一手核对 2025 年出生人口、死亡人口和年龄结构等人口指标。"
+    },
+    {
+      "id": "audit_bundle",
+      "label": "本次代码、数据库、接口、浏览器与测试联合审计",
+      "path": "docs/china_demography_hk_prompt_AUDIT_2026-08-13/artifact.json",
+      "description": "联合执行 CSV/SQLite 一致性、香港验收门槛、GET 只读、API 状态/行数、桌面/移动浏览器、Python 编译、JavaScript 语法、完整 unittest 与 git diff --check。"
+    }
+  ]
+}
