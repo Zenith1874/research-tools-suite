@@ -39,6 +39,10 @@ from services.housing_demographic_capacity_service import (
     build_demographic_capacity_payload,
     normalise_formation_adjustments,
 )
+from services.macro_housing_link_service import (
+    apply_macro_housing_linkage,
+    build_macro_housing_linkage,
+)
 
 MOM_INDICATORS = {'second': 'second_home_mom_idx', 'new': 'new_home_mom_idx'}
 SOURCE_OFFICIAL = 'official'
@@ -780,8 +784,22 @@ def list_housing_scenario_cities(db_path, source=SOURCE_OFFICIAL,
     }
 
 
+def _compact_macro_linked_scenarios(series, scenarios, macro_linkage,
+                                    price_scale=None):
+    linked = apply_macro_housing_linkage(series, scenarios, macro_linkage)
+    _add_projected_prices(linked, {}, price_scale)
+    fields = (
+        'key', 'label', 'monthly_rate', 'annualised', 'end_period',
+        'end_vs_peak', 'end_vs_now', 'end_price', 'base_momentum_monthly_rate',
+        'macro_adjustment_mean_pp', 'macro_adjustment_end_pp',
+        'macro_contributions', 'ordering_valid', 'ordering_warning',
+    )
+    return [{field: item.get(field) for field in fields} for item in linked]
+
+
 def _comparison_row(city, series, horizon, source, driver_snapshot=None,
-                    structural_weight=DEFAULT_STRUCTURAL_WEIGHT):
+                    structural_weight=DEFAULT_STRUCTURAL_WEIGHT,
+                    macro_linkage=None):
     minimum = 4 if source == SOURCE_ANJUKE_YEARLY else max(DEFAULT_WINDOWS.values()) + 1
     if len(series) < minimum:
         return {'city': city, 'status': 'insufficient_history',
@@ -804,6 +822,9 @@ def _comparison_row(city, series, horizon, source, driver_snapshot=None,
     structural = (_compact_structural_scenarios(
         series, scenarios, driver_snapshot, structural_weight)
         if driver_snapshot else [])
+    macro_linked = (_compact_macro_linked_scenarios(
+        series, scenarios, macro_linkage, price_scale)
+        if macro_linkage and source != SOURCE_ANJUKE_YEARLY else [])
     return {
         'city': city, 'status': 'ok', 'sample_start': series[0]['period'],
         'sample_end': series[-1]['period'], 'n_obs': len(series),
@@ -814,6 +835,7 @@ def _comparison_row(city, series, horizon, source, driver_snapshot=None,
         'momentum_windows': summary.get('momentum_windows'),
         'history_grain': 'annual' if source == SOURCE_ANJUKE_YEARLY else 'monthly',
         'structural_scenarios': structural,
+        'macro_linked_scenarios': macro_linked,
         'driver_coverage': ((driver_snapshot or {}).get('coverage') or {}),
         'scenarios': [dict(
             {field: item[field] for field in
@@ -831,7 +853,8 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
                                       source=SOURCE_OFFICIAL,
                                       listing_payload=None, end_period=None,
                                       structural_weight=DEFAULT_STRUCTURAL_WEIGHT,
-                                      formation_adjustments=None):
+                                      formation_adjustments=None,
+                                      macro_linkage=None):
     """多城市三档终值比较；不为每城运行重抽样，保持页面响应轻量。"""
     source = _normalise_source(source)
     if source == SOURCE_OFFICIAL and kind not in MOM_INDICATORS:
@@ -840,6 +863,20 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
     horizon = max(6, min(120, int(horizon)))
     structural_weight = max(0.0, min(1.0, float(structural_weight)))
     formation_adjustments = normalise_formation_adjustments(formation_adjustments)
+    linkage = None
+    if macro_linkage:
+        if source == SOURCE_ANJUKE_YEARLY:
+            linkage = {
+                'status': 'not_applicable', 'data_status': 'not_applicable',
+                'reason': '年度房价层不把低频年点伪装成月度宏观联动路径。',
+                'selectors': macro_linkage.get('selectors') or {},
+            }
+        elif macro_linkage.get('components'):
+            linkage = macro_linkage
+        else:
+            linkage = build_macro_housing_linkage(
+                db_path, horizon_months=horizon,
+                selectors=(macro_linkage.get('selectors') or {}))
     default_cities = LISTING_FOCUS_CITIES if _is_listing_source(source) else FOCUS_CITIES
     selected = list(dict.fromkeys(_canonical_city(city) for city in
                                   (cities or default_cities)))[:20]
@@ -855,7 +892,8 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
                 drivers = (build_structural_driver_snapshot(
                     conn, city, series[-1]['period']) if series else None)
                 rows.append(_comparison_row(
-                    city, series, city_horizon, source, drivers, structural_weight))
+                    city, series, city_horizon, source, drivers, structural_weight,
+                    linkage))
         finally:
             conn.close()
         method_prefix = '安居客二手房挂牌均价（卖方要价）'
@@ -874,7 +912,8 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
                 drivers = (build_structural_driver_snapshot(
                     conn, city, series[-1]['period']) if series else None)
                 rows.append(_comparison_row(
-                    city, series, city_horizon, source, drivers, structural_weight))
+                    city, series, city_horizon, source, drivers, structural_weight,
+                    linkage))
         finally:
             conn.close()
         history_status = 'listing_annual_reference'
@@ -892,7 +931,8 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
                 drivers = (build_structural_driver_snapshot(
                     conn, city, series[-1]['period']) if series else None)
                 rows.append(_comparison_row(
-                    city, series, city_horizon, source, drivers, structural_weight))
+                    city, series, city_horizon, source, drivers, structural_weight,
+                    linkage))
         finally:
             conn.close()
         method_prefix = '统计局 70 城同质可比月度指数'
@@ -905,6 +945,8 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
     method += (f'另提供结构驱动修正路径：修正强度 {structural_weight * 100:.0f}%，'
                '把乐观/压力驱动贡献相对基准的偏差叠加到原价格动能；结构系数为公开'
                '压力测试假设。')
+    if linkage and linkage.get('status') != 'not_applicable':
+        method += '另提供宏观联动路径：组件轨道差值按透明系数叠加到纯动能月速；不替代原始路径。'
     # 长期人口层固定覆盖十五个关注城市，与当前房价来源是否有该城历史无关。
     # 这样安居客缺失不会被误读成人口容量缺失，反之亦然。
     demographic_conn = sqlite3.connect(db_path, timeout=30)
@@ -929,6 +971,7 @@ def build_housing_scenario_comparison(db_path, cities=None, kind='second',
         'history_grain': history_grain, 'horizon_months': horizon,
         'end_period': end_period, 'structural_weight': structural_weight, 'rows': rows,
         'method': method, 'demographic_capacity': demographic_capacity,
+        'macro_linkage': linkage,
     }
 
 
@@ -1082,7 +1125,8 @@ def build_housing_scenario_payload(db_path, city, horizon=DEFAULT_HORIZON,
                                    simulations=DEFAULT_SIMULATIONS,
                                    source=SOURCE_OFFICIAL,
                                    listing_payload=None, end_period=None,
-                                   structural_weight=DEFAULT_STRUCTURAL_WEIGHT):
+                                   structural_weight=DEFAULT_STRUCTURAL_WEIGHT,
+                                   macro_linkage=None):
     source = _normalise_source(source)
     city = _canonical_city(city)
     horizon = max(6, min(120, int(horizon)))
@@ -1173,6 +1217,33 @@ def build_housing_scenario_payload(db_path, city, horizon=DEFAULT_HORIZON,
         'national_history': [], 'caveats': ['价格历史不足，未运行结构驱动层。'],
     }
     result['valuation_anchor'] = anchor
+    linkage = None
+    if macro_linkage:
+        if source == SOURCE_ANJUKE_YEARLY:
+            result['macro_linkage'] = {
+                'status': 'not_applicable', 'data_status': 'not_applicable',
+                'reason': '年度房价层不把低频年点伪装成月度宏观联动路径。',
+                'selectors': macro_linkage.get('selectors') or {},
+            }
+        else:
+            linkage = (macro_linkage if macro_linkage.get('components') else
+                       build_macro_housing_linkage(
+                           db_path, horizon_months=result['horizon_months'],
+                           selectors=(macro_linkage.get('selectors') or {})))
+            result['macro_linkage'] = linkage
+            for series_payload in result['series'].values():
+                if series_payload.get('status') != 'ok':
+                    continue
+                linked = apply_macro_housing_linkage(
+                    series_payload['points'], series_payload.get('scenarios') or [], linkage)
+                _add_projected_prices(linked, {}, series_payload.get('price_scale'))
+                series_payload['macro_linked_scenarios'] = linked
+                series_payload['macro_linked_equity'] = equity_impact(
+                    series_payload['points'], linked,
+                    [row['purchase_period'] for row in
+                     (series_payload.get('equity') or {}).get('rows', [])],
+                    (series_payload.get('equity') or {}).get(
+                        'down_payment', DEFAULT_DOWN_PAYMENT))
     result['caveats'] = [
         '本模块全部为情景推演（scenario），不是预测。',
         '自有资金变动为价格变动的杠杆放大，未计已还本金与利息支出，不等于家庭净值变动。',
@@ -1182,6 +1253,8 @@ def build_housing_scenario_payload(db_path, city, horizon=DEFAULT_HORIZON,
          '机械压力测试假设，不是回归估计。'),
     ]
     result['caveats'].extend((driver_snapshot or {}).get('caveats') or [])
+    if result.get('macro_linkage'):
+        result['caveats'].extend((result['macro_linkage'].get('caveats') or [])[:4])
     if source == SOURCE_ANJUKE:
         listing_series = result['series'].get('listing') or {}
         imputation = listing_series.get('imputation') or {}
@@ -1245,6 +1318,8 @@ def build_housing_scenario_payload(db_path, city, horizon=DEFAULT_HORIZON,
             'structural': (driver_snapshot or {}).get('method'),
             'status': 'scenario',
         }
+    if result.get('macro_linkage'):
+        result['method']['macro_linkage'] = result['macro_linkage'].get('method')
     return result
 
 

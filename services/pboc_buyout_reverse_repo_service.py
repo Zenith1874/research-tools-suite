@@ -121,6 +121,11 @@ def ensure_pboc_buyout_reverse_repo_tables(conn):
     for name, ddl in [
         ('active_operation_dates', 'TEXT'),
         ('active_operations_json', 'TEXT'),
+        ('monthly_bucket_outstanding_amount', 'REAL'),
+        ('monthly_bucket_operation_count', 'INTEGER'),
+        ('monthly_bucket_active_operation_dates', 'TEXT'),
+        ('monthly_bucket_active_operations_json', 'TEXT'),
+        ('monthly_bucket_formula', 'TEXT'),
     ]:
         _add_column(conn, 'pboc_buyout_reverse_repo_monthly_stock', name, ddl)
 
@@ -229,13 +234,23 @@ def parse_operation_page(item):
     text = text_from_html(html)
     compact = re.sub(r'\s+', '', text)
     published_date = parse_published(text, item.get('listed_date'))
-    if '招标公告' not in title:
+    announcement_kind = classify_announcement(title)
+    if announcement_kind not in ('tender', 'business'):
         return [], {
             'published_date': published_date,
             'raw_text': text[-1500:],
-            'parser_notes': '公告已归档；非招标公告，不参与逐笔操作和月末存量测算。',
+            'parser_notes': '公告已归档；未识别为含逐笔操作明细的买断式逆回购公告。',
         }
-    operation_date = parse_date_cn(compact)
+    # Older monthly business announcements state the operation month in the
+    # prose and put the exact month-end date in the signature.  Discovery
+    # already carries that listed date, so use it as the conservative fallback
+    # instead of dropping the entire historical operation.
+    operation_date = parse_date_cn(compact) or item.get('listed_date')
+    if not operation_date:
+        month_match = re.search(r'(20\d{2})年(\d{1,2})月', compact)
+        if month_match:
+            year, month = int(month_match.group(1)), int(month_match.group(2))
+            operation_date = f'{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}'
     if not operation_date:
         raise RuntimeError('未解析出操作日期')
     body_match = re.search(r'(为保持.*?中国人民银行公开市场业务操作室)', text, re.S)
@@ -288,7 +303,7 @@ def parse_operation_page(item):
             'term_months': tranche['term_months'],
             'term_days': tranche['term_days'],
             'unit': '亿元',
-            'announcement_kind': 'tender',
+            'announcement_kind': announcement_kind,
             'source_name': PBOC_SOURCE_NAME,
             'source_type': SOURCE_TYPE,
             'source_url': final_url,
@@ -301,7 +316,7 @@ def parse_operation_page(item):
     return operations, {
         'published_date': published_date,
         'raw_text': raw_text,
-        'parser_notes': '招标公告已解析为逐笔买断式逆回购操作，并用于月末未到期本金存量测算。',
+        'parser_notes': '中国人民银行官方业务/招标公告已解析为逐笔买断式逆回购操作，并用于月末未到期本金存量测算。',
     }
 
 
@@ -310,11 +325,161 @@ def month_end(date_str):
     return d.replace(day=calendar.monthrange(d.year, d.month)[1])
 
 
+def _monthly_bucket_term_months(operation):
+    if operation.get('term_months'):
+        return int(operation['term_months'])
+    if operation.get('term_days'):
+        # All current PBoC announcements expose 3/6 months. Keep a
+        # deterministic fallback for a future day-only announcement.
+        return max(1, round(float(operation['term_days']) / 30.5))
+    return 0
+
+
+def build_monthly_bucket_stock(operations):
+    """Build the screenshot-compatible calendar-month stock series.
+
+    The transcript/screenshot groups the older monthly business notices from
+    the following calendar month, while the later tender notices use their
+    explicit operation month. Each tranche then contributes for its stated
+    number of calendar months. This is a derived reconciliation series, not a
+    replacement for the exact-date series.
+    """
+    buckets = {}
+    for operation in operations:
+        term_months = _monthly_bucket_term_months(operation)
+        if not term_months:
+            continue
+        operation_date = datetime.strptime(operation['operation_date'], '%Y-%m-%d')
+        start_offset = 1 if operation.get('announcement_kind') == 'business' else 0
+        start_period = add_months(operation_date.replace(day=1), start_offset)
+        end_period = add_months(start_period, term_months - 1)
+        for offset in range(term_months):
+            period_date = add_months(start_period, offset)
+            period = f'{period_date.year:04d}-{period_date.month:02d}'
+            bucket = buckets.setdefault(period, {'amount': 0.0, 'operations': []})
+            bucket['amount'] += float(operation['amount'])
+            bucket['operations'].append({
+                'operation_id': operation['operation_id'],
+                'buy_date': operation['buy_date'],
+                'maturity_date': operation['maturity_date'],
+                'maturity_date_status': operation['maturity_date_status'],
+                'amount': operation['amount'],
+                'term_months': operation['term_months'],
+                'term_days': operation['term_days'],
+                'announcement_kind': operation.get('announcement_kind'),
+                'source_title': operation['source_title'],
+                'source_url': operation['source_url'],
+                'bucket_start_period': f'{start_period.year:04d}-{start_period.month:02d}',
+                'bucket_end_period': f'{end_period.year:04d}-{end_period.month:02d}',
+            })
+    for bucket in buckets.values():
+        bucket['operations'].sort(key=lambda row: (row['buy_date'], row['amount'], row['operation_id']))
+        bucket['amount'] = round(bucket['amount'], 2)
+    return buckets
+
+
+def build_buyout_reverse_repo_matrix(operations, stocks, current_period=None):
+    """Build the auditable operation-by-month matrix used by the screenshot view.
+
+    The rows use the derived calendar-month bucket convention, while the
+    summary rows retain the exact-date month-end series from ``stocks``. This
+    keeps the visual reconciliation useful without silently replacing the
+    official operation records or the exact-date calculation.
+    """
+    current_period = current_period or datetime.now().strftime('%Y-%m')
+    bucket_by_period = build_monthly_bucket_stock(operations)
+    stock_by_period = {
+        row.get('period'): row for row in stocks
+        if row.get('period') and row.get('period') <= current_period
+    }
+    periods = sorted(set(stock_by_period) | {
+        period for period in bucket_by_period if period <= current_period
+    })
+
+    matrix_operations = []
+    for row_no, operation in enumerate(operations, start=1):
+        operation_buckets = build_monthly_bucket_stock([operation])
+        visible_values = {
+            period: round(float(bucket.get('amount') or 0), 2)
+            for period, bucket in operation_buckets.items()
+            if period <= current_period
+        }
+        matrix_operations.append({
+            'row_no': row_no,
+            'operation_id': operation.get('operation_id'),
+            'operation_date': operation.get('operation_date'),
+            'buy_date': operation.get('buy_date'),
+            'maturity_date': operation.get('maturity_date'),
+            'amount': operation.get('amount'),
+            'term_months': operation.get('term_months'),
+            'term_days': operation.get('term_days'),
+            'announcement_kind': operation.get('announcement_kind'),
+            'data_status': operation.get('data_status') or 'official',
+            'source_url': operation.get('source_url'),
+            'source_title': operation.get('source_title'),
+            'bucket_start_period': min(visible_values) if visible_values else None,
+            'bucket_end_period': max(visible_values) if visible_values else None,
+            'values': visible_values,
+        })
+
+    bucket_totals = {
+        period: round(float(bucket_by_period.get(period, {}).get('amount') or 0), 2)
+        for period in periods
+    }
+    exact_totals = {
+        period: (
+            round(float(stock_by_period[period].get('outstanding_amount') or 0), 2)
+            if period in stock_by_period and stock_by_period[period].get('outstanding_amount') is not None
+            else None
+        )
+        for period in periods
+    }
+    difference = {
+        period: (
+            round(bucket_totals[period] - exact_totals[period], 2)
+            if exact_totals[period] is not None else None
+        )
+        for period in periods
+    }
+    source_urls = list(dict.fromkeys(
+        operation.get('source_url') for operation in operations
+        if operation.get('source_url')
+    ))
+    return {
+        'periods': periods,
+        'operations': matrix_operations,
+        'bucket_totals': bucket_totals,
+        'exact_totals': exact_totals,
+        'difference': difference,
+        'current_period': current_period,
+        'as_of_date': datetime.now().date().isoformat(),
+        'operation_count': len(matrix_operations),
+        'data_status': 'derived' if matrix_operations or stock_by_period else 'missing',
+        'unit': '亿元',
+        'source_name': PBOC_SOURCE_NAME,
+        'source_type': SOURCE_TYPE,
+        'source_urls': source_urls,
+        'formula': (
+            '矩阵行按业务公告从 operation_month+1、招标公告从 operation_month 起，'
+            '按 term_months 覆盖自然月；合计行同时保留 exact-date 月末未到期本金。'
+        ),
+        'notes': [
+            '逐笔行金额和期限来自中国人民银行官方公告，状态保留 official。',
+            '月度归集、exact-date 与差额均为 derived；当前月份只展示截至 as_of_date 的已知操作归集。',
+        ],
+    }
+
+
 def build_monthly_stock(operations):
     if not operations:
         return []
+    monthly_buckets = build_monthly_bucket_stock(operations)
     start = month_end(min(datetime.strptime(o['operation_date'], '%Y-%m-%d') for o in operations).strftime('%Y-%m-%d'))
     end = month_end(max(datetime.strptime(o['maturity_date'], '%Y-%m-%d') for o in operations).strftime('%Y-%m-%d'))
+    if monthly_buckets:
+        bucket_end_period = max(monthly_buckets)
+        bucket_end = month_end(f'{bucket_end_period}-01')
+        end = max(end, bucket_end)
     rows = []
     current = start
     while current <= end:
@@ -341,6 +506,10 @@ def build_monthly_stock(operations):
             elif mat_date <= current:
                 matured += 1
         active_ops.sort(key=lambda x: (x['buy_date'], x['maturity_date'], x['amount']))
+        bucket = monthly_buckets.get(f'{current.year:04d}-{current.month:02d}', {
+            'amount': 0.0, 'operations': [],
+        })
+        bucket_ops = bucket['operations']
         rows.append({
             'period': f'{current.year}-{current.month:02d}',
             'month_end_date': current.strftime('%Y-%m-%d'),
@@ -350,6 +519,14 @@ def build_monthly_stock(operations):
             'derived_maturity_count': sum(1 for op in active_ops if op['maturity_date_status'] == 'derived'),
             'active_operation_dates': ', '.join(sorted({op['buy_date'] for op in active_ops})),
             'active_operations_json': json.dumps(active_ops, ensure_ascii=False),
+            'monthly_bucket_outstanding_amount': bucket['amount'],
+            'monthly_bucket_operation_count': len(bucket_ops),
+            'monthly_bucket_active_operation_dates': ', '.join(sorted({op['buy_date'] for op in bucket_ops})),
+            'monthly_bucket_active_operations_json': json.dumps(bucket_ops, ensure_ascii=False),
+            'monthly_bucket_formula': (
+                'business: operation_month+1 through operation_month+term_months; '
+                'tender: operation_month through operation_month+term_months-1'
+            ),
             'unit': '亿元',
             'data_status': 'derived',
             'formula': 'sum(amount for operation_date <= month_end_date < maturity_date)',
@@ -473,23 +650,34 @@ def update_pboc_buyout_reverse_repo(db_path):
         for row in stock_rows:
             conn.execute('''INSERT INTO pboc_buyout_reverse_repo_monthly_stock (
                 period,month_end_date,outstanding_amount,operation_count,matured_operation_count,
-                derived_maturity_count,active_operation_dates,active_operations_json,unit,data_status,formula,
+                derived_maturity_count,active_operation_dates,active_operations_json,
+                monthly_bucket_outstanding_amount,monthly_bucket_operation_count,
+                monthly_bucket_active_operation_dates,monthly_bucket_active_operations_json,
+                monthly_bucket_formula,unit,data_status,formula,
                 source_name,source_type,source_url,parser_notes,updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(period) DO UPDATE SET
                 month_end_date=excluded.month_end_date,outstanding_amount=excluded.outstanding_amount,
                 operation_count=excluded.operation_count,matured_operation_count=excluded.matured_operation_count,
                 derived_maturity_count=excluded.derived_maturity_count,
                 active_operation_dates=excluded.active_operation_dates,
-                active_operations_json=excluded.active_operations_json,data_status=excluded.data_status,
+                active_operations_json=excluded.active_operations_json,
+                monthly_bucket_outstanding_amount=excluded.monthly_bucket_outstanding_amount,
+                monthly_bucket_operation_count=excluded.monthly_bucket_operation_count,
+                monthly_bucket_active_operation_dates=excluded.monthly_bucket_active_operation_dates,
+                monthly_bucket_active_operations_json=excluded.monthly_bucket_active_operations_json,
+                monthly_bucket_formula=excluded.monthly_bucket_formula,data_status=excluded.data_status,
                 formula=excluded.formula,source_url=excluded.source_url,parser_notes=excluded.parser_notes,
                 updated_at=excluded.updated_at
             ''', (
                 row['period'], row['month_end_date'], row['outstanding_amount'], row['operation_count'],
                 row['matured_operation_count'], row['derived_maturity_count'], row['active_operation_dates'],
-                row['active_operations_json'], row['unit'], row['data_status'], row['formula'],
+                row['active_operations_json'], row['monthly_bucket_outstanding_amount'],
+                row['monthly_bucket_operation_count'], row['monthly_bucket_active_operation_dates'],
+                row['monthly_bucket_active_operations_json'], row['monthly_bucket_formula'],
+                row['unit'], row['data_status'], row['formula'],
                 PBOC_SOURCE_NAME, SOURCE_TYPE, source_urls,
-                '月末存量由逐笔买断式逆回购招标公告按未到期本金合计测算；不是单篇公告原始值。',
+                'exact-date月末存量按逐笔未到期本金测算；另提供截图对照用月度归集序列。',
                 now,
             ))
         conn.commit()
@@ -577,6 +765,7 @@ def build_pboc_buyout_reverse_repo_payload(db_path):
     ]
     latest_current = completed_stocks[-1] if completed_stocks else (stocks[-1] if stocks else None)
     current_month_projection = next((row for row in stocks if row.get('period') == current_period), None)
+    matrix = build_buyout_reverse_repo_matrix(ops, stocks, current_period=current_period)
     return {
         'data_status': 'derived' if stocks else 'missing',
         'operation_data_status': 'official' if ops else 'missing',
@@ -595,13 +784,15 @@ def build_pboc_buyout_reverse_repo_payload(db_path):
             row for row in stocks
             if datetime.strptime(row['month_end_date'], '%Y-%m-%d').date() > today
         ],
+        'matrix': matrix,
         'coverage': cov,
         'source_records': sources,
         'warnings': [] if ops else ['买断式逆回购公告尚未成功接入；未生成 mock 数据。'],
         'notes': [
-            '公告全集保存 33 条，包括业务公告和招标公告；只有招标公告进入逐笔操作测算。',
-            '逐笔买入/操作金额来自官方招标公告，为 official。',
+            f'公告全集保存当前发现的 {len(announcements)} 条，包括业务公告和招标公告；两类公告中明示的逐笔操作均进入测算。',
+            '逐笔买入/操作金额和期限来自中国人民银行官方业务/招标公告，为 official。',
             '月末存量按 operation_date <= 月末 < maturity_date 的未到期本金合计，为 derived。',
+            '另提供截图对照用月度归集序列：业务公告从操作月次月开始，招标公告从操作月开始，按公告期限覆盖自然月；该序列为 derived 对照，不替代 exact-date。',
             '公告未明示到期日时，使用操作日期 + 期限推算到期日，并在 maturity_date_status 标记为 derived。',
         ],
     }

@@ -2,8 +2,8 @@
 """Seed the checked-in official annual housing-sales history into SQLite.
 
 This is a local, no-network operation.  It also copies December monthly
-cumulative observations into the annual series for years not already covered
-by the explicit annual source table.
+cumulative area and sales-value observations into the annual series for years
+not already covered by the explicit annual source table.
 """
 import argparse
 import json
@@ -21,7 +21,7 @@ from services.housing_price_service import (  # noqa: E402
 
 
 def main():
-    parser = argparse.ArgumentParser(description='载入统计局官方年度一手房销售面积历史')
+    parser = argparse.ArgumentParser(description='载入统计局官方年度一手房销售面积与销售额历史')
     parser.add_argument('--db-path', default=os.path.join(ROOT, 'pboc_data.db'))
     args = parser.parse_args()
     with closing(connect(args.db_path)) as conn:

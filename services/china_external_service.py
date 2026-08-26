@@ -12,7 +12,10 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import math
+import os
+from pathlib import Path
 import re
 import sqlite3
 import threading
@@ -45,6 +48,8 @@ MOFCOM_FEC_LIST_PAGE = urljoin(
     MOFCOM_FEC_BASE, 'list/ggfw/tjsj/ydjmtjsj/1/cateinfo.html')
 SAFE_SETTLEMENT_PAGE = 'https://www.safe.gov.cn/safe/2023/0215/22329.html'
 SAFE_PAYMENT_PAGE = 'https://www.safe.gov.cn/safe/2018/0419/8806.html'
+SAFE_RESERVE_INDEX = 'https://www.safe.gov.cn/safe/whcb/'
+SAFE_RAW_ROOT = Path(__file__).resolve().parents[1] / 'data' / 'china_macro_raw'
 
 
 def _new_session():
@@ -111,7 +116,26 @@ EXTERNAL_INDICATORS.update({
     'CN_MOFCOM_FDI_NEW_FIRMS_YTD': _meta('新设外商投资企业累计', '家'),
     'CN_MOFCOM_FDI_NEW_FIRMS_YTD_YOY': _meta('新设外商投资企业累计同比', '%'),
     'CN_MOFCOM_ODI_ENTERPRISES_YTD': _meta('境外非金融类投资企业累计', '家'),
+    # 国家外汇管理局《官方储备资产表》：与 PBoC 资产负债表中的
+    # foreign_exchange、银行结售汇和涉外收付款分开保存，不能互相替代。
+    'CN_SAFE_FX_RESERVES_USD': _meta('官方储备资产：外汇储备', '亿美元'),
+    'CN_SAFE_IMF_RESERVE_POSITION_USD': _meta('官方储备资产：在基金组织的储备头寸', '亿美元'),
+    'CN_SAFE_SDR_HOLDINGS_USD': _meta('官方储备资产：特别提款权', '亿美元'),
+    'CN_SAFE_MONETARY_GOLD_USD': _meta('官方储备资产：黄金（美元计价）', '亿美元'),
+    'CN_SAFE_MONETARY_GOLD_QUANTITY': _meta('官方储备资产：黄金数量', '万盎司'),
+    'CN_SAFE_OTHER_RESERVE_ASSETS_USD': _meta('官方储备资产：其他储备资产', '亿美元'),
+    'CN_SAFE_OFFICIAL_RESERVE_ASSETS_TOTAL_USD': _meta('官方储备资产合计', '亿美元'),
 })
+
+SAFE_RESERVE_INDICATOR_CODES = (
+    'CN_SAFE_FX_RESERVES_USD',
+    'CN_SAFE_IMF_RESERVE_POSITION_USD',
+    'CN_SAFE_SDR_HOLDINGS_USD',
+    'CN_SAFE_MONETARY_GOLD_USD',
+    'CN_SAFE_MONETARY_GOLD_QUANTITY',
+    'CN_SAFE_OTHER_RESERVE_ASSETS_USD',
+    'CN_SAFE_OFFICIAL_RESERVE_ASSETS_TOTAL_USD',
+)
 
 
 def _number(value):
@@ -141,7 +165,12 @@ def _signed(direction, value):
 
 
 def _observation(code, period, value, source_name, source_type, source_url,
-                 source_title, parser_notes, data_status='official', formula=None):
+                 source_title, parser_notes, data_status='official', formula=None,
+                 release_date=None, retrieved_at=None, raw_sha256=None,
+                 parser_version=None, missing_reason=None,
+                 source_page_created_date=None,
+                 source_page_last_updated_date=None,
+                 release_date_not_provided=False, release_date_reason=None):
     if code not in EXTERNAL_INDICATORS or value is None or not period:
         return None
     name, unit, frequency = EXTERNAL_INDICATORS[code]
@@ -152,6 +181,15 @@ def _observation(code, period, value, source_name, source_type, source_url,
         'source_type': source_type, 'source_url': source_url,
         'source_title': source_title, 'parser_notes': parser_notes,
         'formula': formula,
+        'release_date': release_date,
+        'retrieved_at': retrieved_at or datetime.now().isoformat(),
+        'raw_sha256': raw_sha256,
+        'parser_version': parser_version or 'china_external_v1',
+        'missing_reason': missing_reason,
+        'source_page_created_date': source_page_created_date,
+        'source_page_last_updated_date': source_page_last_updated_date,
+        'release_date_not_provided': int(bool(release_date_not_provided)),
+        'release_date_reason': release_date_reason,
     }
 
 
@@ -162,19 +200,35 @@ def upsert_external_observations(conn, rows):
             continue
         cur = conn.execute('''INSERT INTO china_macro_observations (
             indicator_code,indicator_name,period,value,unit,frequency,data_status,
-            source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            source_name,source_type,source_url,source_title,parser_notes,formula,
+            release_date,retrieved_at,raw_sha256,parser_version,missing_reason,
+            source_page_created_date,source_page_last_updated_date,
+            release_date_not_provided,release_date_reason,updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(indicator_code,period) DO UPDATE SET
             indicator_name=excluded.indicator_name,value=excluded.value,
             unit=excluded.unit,frequency=excluded.frequency,
             data_status=excluded.data_status,source_name=excluded.source_name,
             source_type=excluded.source_type,source_url=excluded.source_url,
             source_title=excluded.source_title,parser_notes=excluded.parser_notes,
-            formula=excluded.formula,updated_at=excluded.updated_at''', (
+            formula=excluded.formula,release_date=excluded.release_date,
+            retrieved_at=excluded.retrieved_at,raw_sha256=excluded.raw_sha256,
+            parser_version=excluded.parser_version,missing_reason=excluded.missing_reason,
+            source_page_created_date=excluded.source_page_created_date,
+            source_page_last_updated_date=excluded.source_page_last_updated_date,
+            release_date_not_provided=excluded.release_date_not_provided,
+            release_date_reason=excluded.release_date_reason,
+            updated_at=excluded.updated_at''', (
             row['indicator_code'], row['indicator_name'], row['period'], row['value'],
             row['unit'], row['frequency'], row['data_status'], row['source_name'],
             row['source_type'], row['source_url'], row['source_title'],
-            row['parser_notes'], row.get('formula'), now))
+            row['parser_notes'], row.get('formula'), row.get('release_date'),
+            row.get('retrieved_at') or now, row.get('raw_sha256'),
+            row.get('parser_version') or 'china_external_v1',
+            row.get('missing_reason'), row.get('source_page_created_date'),
+            row.get('source_page_last_updated_date'),
+            int(bool(row.get('release_date_not_provided'))),
+            row.get('release_date_reason'), now))
         count += cur.rowcount
     conn.commit()
     return count
@@ -469,6 +523,450 @@ def update_safe_flows(conn, session=None):
             'observations_parsed': len(rows), 'attachments': attachments, 'errors': errors}
 
 
+# ── 国家外汇管理局：官方储备资产 ────────────────────────────────────────────
+
+def _safe_reserve_cell(cell):
+    """Read SAFE's HTML table cell without treating a dash as zero.
+
+    The current official table exposes the numeric value in the ``x:num``
+    attribute.  Text is retained as a fallback for older/translated pages.
+    """
+    if cell is None:
+        return None
+    raw = cell.get('x:num') or cell.get('data-value')
+    if raw is None:
+        raw = cell.get_text(' ', strip=True)
+    return _number(raw)
+
+
+def _save_safe_raw(content, source_url):
+    SAFE_RAW_ROOT.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(content).hexdigest()
+    suffix = '.xlsx' if source_url.lower().endswith('.xlsx') else ('.xls' if source_url.lower().endswith('.xls') else '.html')
+    stamp = datetime.now().strftime('%Y%m%dT%H%M%S%f')
+    path = SAFE_RAW_ROOT / f'safe_reserve_{stamp}{suffix}'
+    part = path.with_suffix(path.suffix + '.part')
+    part.write_bytes(content)
+    os.replace(part, path)
+    return str(path.relative_to(SAFE_RAW_ROOT.parent.parent)).replace(os.sep, '/'), digest
+
+
+def _safe_reserve_label(row):
+    return re.sub(r'\s+', ' ', row[0].get_text(' ', strip=True)).strip() if row else ''
+
+
+def _safe_page_path_date(source_url):
+    """Return a URL path date as page metadata, never as a release date.
+
+    SAFE keeps one annual reserve-assets page and updates its monthly columns
+    in place.  The path date therefore describes the page location/creation,
+    not the release date of every observation later added to that table.
+    """
+    match = re.search(r'/safe/(20\d{2})/(\d{2})(\d{2})/', str(source_url or ''))
+    return (f'{match.group(1)}-{match.group(2)}-{match.group(3)}'
+            if match else None)
+
+
+def _safe_release_date(_source_url, _source_title=''):
+    """Return no per-observation date unless SAFE exposes direct evidence.
+
+    This compatibility helper intentionally does not parse URL path dates.
+    The annual page/listing dates are stored in dedicated source-page fields.
+    """
+    return None
+
+
+def parse_safe_reserve_html(html, source_url, source_title='',
+                            source_page_last_updated_date=None):
+    """Parse one SAFE annual official-reserve-assets HTML table.
+
+    Each month occupies two adjacent columns (USD and SDR).  This parser only
+    records the first USD column and the separate gold-quantity row; it never
+    converts SDR to USD and never invents future-month observations.
+    """
+    soup = BeautifulSoup(html or '', 'html.parser')
+    table = next((table for table in soup.find_all('table')
+                  if 'Foreign currency reserves' in table.get_text(' ', strip=True)
+                  or '官方储备资产' in table.get_text(' ', strip=True)), None)
+    if table is None:
+        raise ValueError('SAFE official reserve-assets table not found')
+    table_rows = [row.find_all(['td', 'th']) for row in table.find_all('tr')]
+    month_names = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    }
+    month_row = next((row for row in table_rows
+                      if sum(1 for cell in row
+                             if re.match(r'^20\d{2}[./-]\d{1,2}$',
+                                         cell.get_text(' ', strip=True))
+                             or re.sub(r'\s+', ' ', cell.get_text(' ', strip=True)).lower()[:3] in month_names) >= 2), None)
+    if month_row is None:
+        raise ValueError('SAFE reserve-assets month header not found')
+    month_columns = []
+    for index, cell in enumerate(month_row):
+        label = re.sub(r'\s+', ' ', cell.get_text(' ', strip=True))
+        numeric_month = re.match(r'^(20\d{2})[./-](\d{1,2})$', label)
+        if numeric_month:
+            month_columns.append((index, int(numeric_month.group(1)), int(numeric_month.group(2))))
+            continue
+        key = label.lower()[:3]
+        if key in month_names:
+            month_columns.append((index, None, month_names[key]))
+    # Current SAFE HTML uses one month label per cell but two value cells per
+    # month (USD followed by SDR). Older fixtures/pages may put the month
+    # labels directly above each pair; preserve that direct mapping there.
+    header_has_sdr_labels = any('sdr' in cell.get_text(' ', strip=True).lower()
+                                for cell in month_row)
+    if len(month_columns) >= 6 and not header_has_sdr_labels:
+        month_columns = [(1 + 2 * ordinal, header_year, month)
+                         for ordinal, (_header_col, header_year, month)
+                         in enumerate(month_columns)]
+    year_match = re.search(r'(20\d{2})', f'{source_title} {source_url}')
+    year = int(year_match.group(1)) if year_match else None
+    labels = {}
+    quantity_row = None
+    gold_row_index = None
+    for row_index, row in enumerate(table_rows):
+        label = _safe_reserve_label(row)
+        compact = re.sub(r'\s+', ' ', label).lower()
+        if 'foreign currency reserves' in compact and 'official' not in compact:
+            labels['fx'] = row
+        elif 'imf reserve position' in compact:
+            labels['imf'] = row
+        # Use plural SDRs so the footnote's singular "SDR" does not overwrite
+        # the actual row with an empty note row.
+        elif re.search(r'\bsdrs\b|特别提款权', compact) and '折算汇率' not in compact:
+            labels['sdr'] = row
+        elif ('quantity' in compact and 'gold' in compact) or '黄金数量' in compact:
+            quantity_row = row
+        elif re.search(r'\bgold\b|黄金', compact):
+            labels['gold'] = row
+            gold_row_index = row_index
+        elif 'other reserve assets' in compact or '其他储备资产' in compact:
+            labels['other'] = row
+        elif 'total' in compact or '合计' in compact:
+            labels['total'] = row
+    # Historical HTML pages sometimes leave the quantity label blank. Accept
+    # only an immediately adjacent row with an explicit ounce unit; a blank
+    # numeric row without that unit is not evidence for inventing a quantity.
+    if quantity_row is None and gold_row_index is not None:
+        for candidate in table_rows[gold_row_index + 1:gold_row_index + 3]:
+            text = ' '.join(cell.get_text(' ', strip=True) for cell in candidate)
+            if re.search(r'万\s*盎司|fine\s+troy\s+ounce|ounce', text, re.I):
+                quantity_row = candidate
+                break
+    code_map = {
+        'fx': 'CN_SAFE_FX_RESERVES_USD',
+        'imf': 'CN_SAFE_IMF_RESERVE_POSITION_USD',
+        'sdr': 'CN_SAFE_SDR_HOLDINGS_USD',
+        'gold': 'CN_SAFE_MONETARY_GOLD_USD',
+        'other': 'CN_SAFE_OTHER_RESERVE_ASSETS_USD',
+        'total': 'CN_SAFE_OFFICIAL_RESERVE_ASSETS_TOTAL_USD',
+    }
+    if 'total' not in labels:
+        raise ValueError('SAFE reserve-assets total row not found')
+    rows = []
+    raw_digest = hashlib.sha256((html or '').encode('utf-8')).hexdigest()
+    retrieved_at = datetime.now().isoformat()
+    release_date = _safe_release_date(source_url, source_title)
+    page_created_date = _safe_page_path_date(source_url)
+    release_reason = (
+        'SAFE annual reserve-assets page does not expose a distinct '
+        'per-observation release date; URL path date is page metadata only.')
+    for column, header_year, month in month_columns:
+        period_year = header_year or year
+        if period_year is None or not 1 <= month <= 12:
+            continue
+        period = f'{period_year:04d}-{month:02d}'
+        for key, code in code_map.items():
+            row = labels.get(key)
+            # The first column is the label; the first monthly USD value is
+            # therefore at the next cell after the header label.
+            value_column = column if column < len(row or []) else column + 1
+            value = _safe_reserve_cell(row[value_column] if row and value_column < len(row) else None)
+            item = _observation(code, period, value, '国家外汇管理局',
+                                'safe_official_reserve_assets', source_url,
+                                source_title or f'官方储备资产 {year}',
+                                'SAFE 官方储备资产年度 HTML 表；单位为亿美元；未将 SDR 换算为美元',
+                                release_date=release_date, retrieved_at=retrieved_at,
+                                raw_sha256=raw_digest, parser_version='safe_reserve_v3',
+                                source_page_created_date=page_created_date,
+                                source_page_last_updated_date=source_page_last_updated_date,
+                                release_date_not_provided=True,
+                                release_date_reason=release_reason)
+            if item:
+                rows.append(item)
+        if quantity_row:
+            value_column = column if column < len(quantity_row) else column + 1
+            value = _safe_reserve_cell(quantity_row[value_column]
+                                       if value_column < len(quantity_row) else None)
+            item = _observation('CN_SAFE_MONETARY_GOLD_QUANTITY', period, value,
+                                '国家外汇管理局', 'safe_official_reserve_assets', source_url,
+                                source_title or f'官方储备资产 {year}',
+                                'SAFE 官方储备资产表中的黄金数量；单位为万盎司；不与美元金额相加',
+                                release_date=release_date, retrieved_at=retrieved_at,
+                                raw_sha256=raw_digest, parser_version='safe_reserve_v3',
+                                source_page_created_date=page_created_date,
+                                source_page_last_updated_date=source_page_last_updated_date,
+                                release_date_not_provided=True,
+                                release_date_reason=release_reason)
+            if item:
+                rows.append(item)
+    return rows
+
+
+def parse_safe_reserve_workbook(content, source_url, source_title='',
+                                source_page_last_updated_date=None):
+    """Parse SAFE's pre-2018 XLS/XLSX reserve-assets attachments.
+
+    Older official releases use one month per column (2015) or paired USD/SDR
+    columns (2016-2017). The parser keeps the first USD column and does not
+    convert the SDR companion column.
+    """
+    matrixes = []
+    if content[:2] == b'PK':
+        import openpyxl
+        workbook = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+        matrixes = [[list(row) for row in sheet.iter_rows(values_only=True)]
+                    for sheet in workbook.worksheets]
+    else:
+        import xlrd
+        workbook = xlrd.open_workbook(file_contents=content)
+        matrixes = [[sheet.row_values(index) for index in range(sheet.nrows)]
+                    for sheet in (workbook.sheet_by_index(i) for i in range(workbook.nsheets))]
+    rows = []
+    raw_digest = hashlib.sha256(content).hexdigest()
+    retrieved_at = datetime.now().isoformat()
+    release_date = _safe_release_date(source_url, source_title)
+    page_created_date = _safe_page_path_date(source_url)
+    release_reason = (
+        'SAFE historical reserve-assets attachment does not expose a distinct '
+        'per-observation release date in the parsed table; URL date was not inferred.')
+    for matrix in matrixes:
+        header_index = next((i for i, row in enumerate(matrix)
+                             if sum(1 for cell in row if re.match(
+                                 r'^20\d{2}[./-]\d{1,2}$', str(cell).strip())
+                                 or (isinstance(cell, (int, float)) and 2000 <= float(cell) <= 2100)) >= 2), None)
+        if header_index is None:
+            continue
+        month_columns = []
+        for index, cell in enumerate(matrix[header_index]):
+            # Excel may expose 2017.10 as the float 2017.1. Formatting numeric
+            # cells to two decimals preserves October instead of misreading it
+            # as January.
+            text = f'{float(cell):.2f}' if isinstance(cell, (int, float)) else str(cell).strip()
+            match = re.match(r'^(20\d{2})[./-](\d{1,2})$', text)
+            if match:
+                month_columns.append((index, int(match.group(1)), int(match.group(2))))
+        if not month_columns:
+            continue
+        label_rows = {}
+        quantity_rows = []
+        for row_index, row in enumerate(matrix[header_index + 1:], header_index + 1):
+            label_parts = [str(row[0] if row else '')]
+            if row_index + 1 < len(matrix):
+                # One historical XLSX places the English label on the next
+                # row while keeping the numeric values on the preceding row.
+                label_parts.append(str(matrix[row_index + 1][0] or ''))
+            label = re.sub(r'\s+', ' ', ' '.join(label_parts)).lower()
+            if not label:
+                # Some XLSX sheets place the English label on the next row;
+                # quantity rows are identified from their cell values below.
+                label = ' '.join(str(cell) for cell in row if cell is not None).lower()
+            has_month_value = any(_number(row[column] if column < len(row) else None) is not None
+                                  for column, _year, _month in month_columns)
+            if 'foreign currency reserves' in label and has_month_value:
+                label_rows['fx'] = row
+            elif 'imf reserve position' in label and has_month_value:
+                label_rows['imf'] = row
+            elif re.search(r'\bsdrs\b', label) and has_month_value:
+                label_rows['sdr'] = row
+            elif re.search(r'\bgold\b', label) and has_month_value:
+                label_rows['gold'] = row
+            elif 'other reserve assets' in label and has_month_value:
+                label_rows['other'] = row
+            elif 'total' in label and has_month_value:
+                label_rows['total'] = row
+            if any('万盎司' in str(cell) or 'fine troy' in str(cell).lower()
+                   for cell in row):
+                quantity_rows.append(row)
+        if 'total' not in label_rows:
+            continue
+        code_map = {
+            'fx': 'CN_SAFE_FX_RESERVES_USD',
+            'imf': 'CN_SAFE_IMF_RESERVE_POSITION_USD',
+            'sdr': 'CN_SAFE_SDR_HOLDINGS_USD',
+            'gold': 'CN_SAFE_MONETARY_GOLD_USD',
+            'other': 'CN_SAFE_OTHER_RESERVE_ASSETS_USD',
+            'total': 'CN_SAFE_OFFICIAL_RESERVE_ASSETS_TOTAL_USD',
+        }
+        for column, year, month in month_columns:
+            period = f'{year:04d}-{month:02d}'
+            for key, code in code_map.items():
+                row = label_rows.get(key)
+                value = _number(row[column] if row and column < len(row) else None)
+                item = _observation(code, period, value, '国家外汇管理局',
+                                    'safe_official_reserve_assets', source_url,
+                                    source_title or f'官方储备资产 {year}',
+                                    'SAFE 官方 XLS/XLSX 历史附件；单位为亿美元；只读取第一美元列',
+                                    release_date=release_date, retrieved_at=retrieved_at,
+                                    raw_sha256=raw_digest, parser_version='safe_reserve_v3',
+                                    source_page_created_date=page_created_date,
+                                    source_page_last_updated_date=source_page_last_updated_date,
+                                    release_date_not_provided=True,
+                                    release_date_reason=release_reason)
+                if item:
+                    rows.append(item)
+            if quantity_rows:
+                quantity = _number(quantity_rows[0][column]
+                                   if column < len(quantity_rows[0]) else None)
+                item = _observation('CN_SAFE_MONETARY_GOLD_QUANTITY', period, quantity,
+                                    '国家外汇管理局', 'safe_official_reserve_assets', source_url,
+                                    source_title or f'官方储备资产 {year}',
+                                    'SAFE 官方 XLS/XLSX 历史附件中的黄金数量；单位为万盎司',
+                                    release_date=release_date, retrieved_at=retrieved_at,
+                                    raw_sha256=raw_digest, parser_version='safe_reserve_v3',
+                                    source_page_created_date=page_created_date,
+                                    source_page_last_updated_date=source_page_last_updated_date,
+                                    release_date_not_provided=True,
+                                    release_date_reason=release_reason)
+                if item:
+                    rows.append(item)
+        if rows:
+            break
+    return rows
+
+
+def _safe_reserve_articles(session, full_history=False):
+    response = session.get(SAFE_RESERVE_INDEX, headers=UA, timeout=TIMEOUT)
+    response.raise_for_status()
+    # SAFE pages are UTF-8 even when the apparent-encoding detector reports a
+    # legacy Chinese codec; using the wrong codec hides the official article
+    # title and the HTML attachment link.
+    response.encoding = 'utf-8'
+    found = {}
+    for anchor in BeautifulSoup(response.text, 'html.parser').find_all('a', href=True):
+        url = urljoin(SAFE_RESERVE_INDEX, anchor['href'])
+        year_match = re.search(r'/safe/(20\d{2})/', url)
+        if not year_match or not url.endswith('.html'):
+            continue
+        title = re.sub(r'\s+', ' ', anchor.get_text(' ', strip=True))
+        if '官方储备资产' not in title and 'official reserve assets' not in title.lower():
+            continue
+        listing_context = (anchor.parent.parent.get_text(' ', strip=True)
+                           if anchor.parent and anchor.parent.parent else
+                           anchor.parent.get_text(' ', strip=True)
+                           if anchor.parent else title)
+        listing_dates = re.findall(r'20\d{2}-\d{2}-\d{2}', listing_context)
+        page_last_updated_date = listing_dates[-1] if listing_dates else None
+        # The index item often opens a metadata page; follow its explicit
+        # ``html`` attachment link to the table page, still within SAFE.
+        detail = session.get(url, headers=UA, timeout=TIMEOUT)
+        detail.raise_for_status()
+        detail.encoding = 'utf-8'
+        detail_soup = BeautifulSoup(detail.text, 'html.parser')
+        html_link = next((item for item in detail_soup.find_all('a', href=True)
+                          if item.get_text(' ', strip=True).lower() == 'html'), None)
+        if html_link:
+            actual_url = urljoin(url, html_link['href'])
+            title_years = re.findall(r'20\d{2}', title)
+            key_year = int(title_years[0]) if title_years else int(year_match.group(1))
+            found[key_year] = {
+                'url': actual_url, 'title': title,
+                'listing_url': url,
+                'page_created_date': _safe_page_path_date(actual_url),
+                'page_last_updated_date': page_last_updated_date,
+            }
+        else:
+            # The 2015-2017 release exposes three official spreadsheet
+            # attachments rather than an HTML table. Keep each attachment as
+            # its own source item so its year/month columns remain auditable.
+            for attachment in detail_soup.find_all('a', href=True):
+                attachment_url = urljoin(url, attachment['href'])
+                attachment_title = re.sub(r'\s+', ' ', attachment.get_text(' ', strip=True))
+                if not attachment_url.lower().endswith(('.xls', '.xlsx')):
+                    continue
+                years = re.findall(r'20\d{2}', attachment_title)
+                if years:
+                    found[int(years[0])] = {
+                        'url': attachment_url, 'title': attachment_title,
+                        'listing_url': url,
+                        'page_created_date': _safe_page_path_date(url),
+                        'page_last_updated_date': page_last_updated_date,
+                    }
+    if not found:
+        raise ValueError('SAFE official reserve-assets article list not found')
+    if not full_history:
+        floor = datetime.now().year - 1
+        found = {year: item for year, item in found.items() if year >= floor}
+    return sorted(found.items())
+
+
+def update_safe_reserves(conn, full_history=False, session=None):
+    """Fetch SAFE official reserve-assets articles and upsert only parsed rows."""
+    session = session or _new_session()
+    rows, errors, articles = [], [], []
+    latest_raw_digest = None
+    latest_period = None
+    try:
+        articles = _safe_reserve_articles(session, full_history)
+    except Exception as exc:
+        return {'records_upserted': 0, 'observations_parsed': 0,
+                'articles': [], 'errors': [str(exc)]}
+    for year, article in articles:
+        url = article['url']
+        title = article['title']
+        page_last_updated_date = article.get('page_last_updated_date')
+        try:
+            response = session.get(url, headers=UA, timeout=TIMEOUT)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
+            raw_path, raw_digest = _save_safe_raw(response.content, url)
+            latest_raw_digest = raw_digest
+            if url.lower().endswith(('.xls', '.xlsx')):
+                parsed = parse_safe_reserve_workbook(
+                    response.content, url, title or str(year),
+                    source_page_last_updated_date=page_last_updated_date)
+            else:
+                parsed = parse_safe_reserve_html(
+                    response.text, url, title or str(year),
+                    source_page_last_updated_date=page_last_updated_date)
+            for row in parsed:
+                row['parser_notes'] = (row.get('parser_notes') or '') + \
+                    f'; raw_snapshot={raw_path}; raw_sha256={raw_digest}'
+                row['raw_sha256'] = raw_digest
+                row['retrieved_at'] = datetime.now().isoformat()
+                row['parser_version'] = 'safe_reserve_v3'
+                if row.get('value') is not None:
+                    latest_period = max(latest_period or row['period'], row['period'])
+            rows.extend(parsed)
+        except Exception as exc:
+            errors.append(f'{year}: {exc}')
+        time.sleep(0.08)
+    records_upserted = upsert_external_observations(conn, rows)
+    # Preserve existing blank future rows as explicit non-release records. The
+    # parser deliberately skips blank cells; this audit update prevents an old
+    # placeholder from remaining indistinguishable from an untracked failure.
+    if latest_period:
+        conn.execute('''UPDATE china_macro_observations
+            SET data_status='not_released',
+                missing_reason='official_source_future_month_blank',
+                parser_version=COALESCE(parser_version, 'safe_reserve_v2'),
+                retrieved_at=COALESCE(retrieved_at, ?),
+                raw_sha256=COALESCE(raw_sha256, ?),
+                updated_at=?
+            WHERE indicator_code IN ({}) AND value IS NULL
+              AND period > ?'''.format(','.join('?' for _ in SAFE_RESERVE_INDICATOR_CODES)),
+                     (datetime.now().isoformat(), latest_raw_digest,
+                      datetime.now().isoformat(), *SAFE_RESERVE_INDICATOR_CODES,
+                      latest_period))
+        conn.commit()
+    return {'records_upserted': records_upserted,
+            'observations_parsed': len(rows),
+            'articles': [article['url'] for _, article in articles],
+            'errors': errors}
+
+
 # ── 商务部：吸收外资与对外直接投资 ────────────────────────────────────────────
 
 def _mofcom_period(text):
@@ -731,13 +1229,17 @@ def update_china_external(db_path, full_history=False, start_year=None, sleep_se
     with closing(connect(db_path)) as conn:
         ensure_china_macro_tables(conn)
         safe = update_safe_flows(conn, session)
+        safe_reserves = update_safe_reserves(conn, full_history=full_history, session=session)
         mofcom = update_mofcom_investment(conn, full_history, session)
         gacc = update_gacc_trade(conn, start, max_gacc_pages, sleep_seconds, session)
-    total = sum(item.get('records_upserted', 0) for item in (safe, mofcom, gacc))
-    errors = safe.get('errors', []) + mofcom.get('errors', []) + gacc.get('errors', [])
+    total = sum(item.get('records_upserted', 0) for item in
+                (safe, safe_reserves, mofcom, gacc))
+    errors = (safe.get('errors', []) + safe_reserves.get('errors', []) +
+              mofcom.get('errors', []) + gacc.get('errors', []))
     return {
         'success': total > 0 or not errors, 'started_at': started,
         'finished_at': datetime.now().isoformat(), 'records_upserted': total,
         'start_year': start, 'full_history': bool(full_history),
-        'safe': safe, 'mofcom': mofcom, 'gacc': gacc, 'errors': errors,
+        'safe': safe, 'safe_reserves': safe_reserves,
+        'mofcom': mofcom, 'gacc': gacc, 'errors': errors,
     }

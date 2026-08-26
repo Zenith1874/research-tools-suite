@@ -158,6 +158,164 @@ LAND_TRANSFER_ANNUAL_OFFICIAL_BACKFILL = (
     },
 )
 
+# The Treasury index published the 2026 Jan-Jul release on 2026-08-21.  Keep
+# this source-linked supplement because the article body can be intermittently
+# unavailable from the runtime network even when the official index is
+# available.  It is not a replacement for the parser: the normal updater still
+# discovers and parses the report when the source responds, while this
+# idempotent supplement prevents a transient 502 from leaving the current-year
+# forecast anchored to June.
+LATEST_OFFICIAL_FISCAL_BUDGET_BACKFILL = (
+    {
+        'period': '2026-07',
+        'source_url': 'https://gks.mof.gov.cn/tongjishuju/202608/t20260814_3995497.htm',
+        'source_title': '2026年1-7月财政收支情况',
+        'parser_notes': (
+            '财政部国库司2026年1-7月财政收支情况；数值为年初至今累计，'
+            '同比为财政部公布的可比口径；单位：亿元。'
+        ),
+        'values': {
+            'general_budget_revenue_ytd': 143696.0,
+            'general_budget_revenue_ytd_yoy_official': 5.8,
+            'general_budget_expenditure_ytd': 162889.0,
+            'general_budget_expenditure_ytd_yoy_official': 1.3,
+            'gov_fund_revenue_ytd': 18219.0,
+            'gov_fund_revenue_ytd_yoy_official': -21.2,
+            'gov_fund_expenditure_ytd': 45410.0,
+            'gov_fund_expenditure_ytd_yoy_official': -16.4,
+            'govfund_land_transfer_revenue_ytd': 11731.0,
+            'govfund_land_transfer_revenue_ytd_yoy_official': -30.8,
+            'budget_interest_expenditure_ytd': 7966.0,
+            'budget_interest_expenditure_ytd_yoy_official': 5.2,
+        },
+    },
+)
+
+# Annual statutory fiscal deficit figures published in the Ministry of
+# Finance's annual budget execution reports.  These are deliberately kept
+# separate from the monthly Treasury YTD balance (revenue - expenditure): the
+# latter is a cash-flow/accounting gap, while the statutory deficit incorporates
+# budget transfers, carry-over funds, and other budget-balance adjustments.
+OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR = 'official_national_fiscal_deficit'
+OFFICIAL_NATIONAL_FISCAL_DEFICIT_LABEL = '全国法定财政赤字（财政部年度报告）'
+OFFICIAL_NATIONAL_FISCAL_DEFICIT_SOURCE_NAME = '财政部年度预算报告'
+OFFICIAL_NATIONAL_FISCAL_DEFICIT_SOURCE_TYPE = 'mof_annual_budget_report'
+OFFICIAL_NATIONAL_FISCAL_DEFICIT_ANNUAL = (
+    {
+        'year': 2009, 'value': 9500.0,
+        'source_url': 'https://www.mof.gov.cn/gkml/caizhengshuju/201006/t20100628_324488.htm',
+        'source_title': '关于2009年中央决算的报告',
+        'parser_notes': '全国财政收支相抵差额9500亿元；单位：亿元。',
+    },
+    {
+        'year': 2010, 'value': 10000.0,
+        'source_url': 'https://m.mof.gov.cn/czsj/201103/t20110317_505087.htm',
+        'source_title': '关于2010年中央和地方预算执行情况与2011年中央和地方预算草案的报告',
+        'parser_notes': '全国财政收支总量相抵差额10000亿元；单位：亿元。',
+    },
+    {
+        'year': 2011, 'value': 8500.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/201203/t20120306_632884.htm',
+        'source_title': '“国家账本”凸显“为国理财、为民服务”',
+        'parser_notes': '财政部公开预算报告解读披露2011年全国财政收支相抵差额8500亿元；单位：亿元。',
+    },
+    {
+        'year': 2012, 'value': 8000.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/201303/t20130319_782332.htm',
+        'source_title': '关于2012年中央和地方预算执行情况与2013年中央和地方预算草案的报告',
+        'parser_notes': '全国财政收支总量相抵差额8000亿元；单位：亿元。',
+    },
+    {
+        'year': 2013, 'value': 12000.0,
+        'source_url': 'https://www.mof.gov.cn/gkml/caizhengshuju/201406/t20140624_1103948.htm',
+        'source_title': '关于2013年中央决算的报告',
+        'parser_notes': '汇总中央和地方决算，全国公共财政收支差额12000亿元；单位：亿元。',
+    },
+    {
+        'year': 2014, 'value': 13500.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/201506/t20150629_1262257.htm',
+        'source_title': '国务院关于2014年中央决算的报告',
+        'parser_notes': '汇总中央和地方决算，全国一般公共预算收支差额13500亿元；单位：亿元。',
+    },
+    {
+        'year': 2015, 'value': 16200.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/201603/t20160306_1895173.htm',
+        'source_title': '关于2015年中央和地方预算执行情况与2016年中央和地方预算草案的报告（摘要）',
+        'parser_notes': '全国一般公共预算收支总量相抵赤字16200亿元；单位：亿元。',
+    },
+    {
+        'year': 2016, 'value': 21800.0,
+        'source_url': 'https://www.mof.gov.cn/gkml/caizhengshuju/201703/t20170317_2559812.htm',
+        'source_title': '关于2016年中央和地方预算执行情况与2017年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算收支总量相抵赤字21800亿元；单位：亿元。',
+    },
+    {
+        'year': 2017, 'value': 23800.0,
+        'source_url': 'https://www.mof.gov.cn/gkml/caizhengshuju/201803/t20180323_2847996.htm',
+        'source_title': '关于2017年中央和地方预算执行情况与2018年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算收支总量相抵赤字23800亿元；单位：亿元。',
+    },
+    {
+        'year': 2018, 'value': 23800.0,
+        'source_url': 'https://www.mof.gov.cn/gp/xxgkml/bgt/201904/t20190402_3210848.htm',
+        'source_title': '关于2018年中央和地方预算执行情况与2019年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算收支总量相抵赤字23800亿元；单位：亿元。',
+    },
+    {
+        'year': 2019, 'value': 27600.0,
+        'source_url': 'https://m.mof.gov.cn/czsj/202005/t20200530_3523307.htm',
+        'source_title': '关于2019年中央和地方预算执行情况与2020年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算收支总量相抵赤字27600亿元；单位：亿元。',
+    },
+    {
+        'year': 2020, 'value': 37600.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202103/t20210314_3670203.htm',
+        'source_title': '关于2020年中央和地方预算执行情况与2021年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算赤字37600亿元；单位：亿元。',
+    },
+    {
+        'year': 2021, 'value': 35700.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202203/t20220314_3794760.htm',
+        'source_title': '关于2021年中央和地方预算执行情况与2022年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算赤字35700亿元；单位：亿元。',
+    },
+    {
+        'year': 2022, 'value': 33700.0,
+        'source_url': 'https://www.mof.gov.cn/gkml/caizhengshuju/202303/t20230316_3872867.htm',
+        'source_title': '关于2022年中央和地方预算执行情况与2023年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算赤字33700亿元；单位：亿元。',
+    },
+    {
+        'year': 2023, 'value': 48800.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202403/t20240314_3930581.htm',
+        'source_title': '关于2023年中央和地方预算执行情况与2024年中央和地方预算草案的报告',
+        'parser_notes': '考虑四季度增发1万亿元国债并纳入中央财政赤字管理后的全国财政赤字48800亿元；单位：亿元。',
+    },
+    {
+        'year': 2024, 'value': 40600.0,
+        'source_url': 'https://m.mof.gov.cn/czxw/202503/t20250314_3959885.htm',
+        'source_title': '关于2024年中央和地方预算执行情况与2025年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算赤字40600亿元；单位：亿元。',
+    },
+    {
+        'year': 2025, 'value': 56600.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202603/t20260316_3985331.htm',
+        'source_title': '关于2025年中央和地方预算执行情况与2026年中央和地方预算草案的报告',
+        'parser_notes': '全国一般公共预算赤字56600亿元；单位：亿元。',
+    },
+)
+
+# Current-year budget plan is not an actual deficit observation. It is exposed
+# only in the current-year summary with an explicit ``official_plan`` status.
+OFFICIAL_NATIONAL_FISCAL_DEFICIT_PLAN = (
+    {
+        'year': 2026, 'value': 58900.0,
+        'source_url': 'https://www.mof.gov.cn/zhengwuxinxi/caizhengxinwen/202603/t20260316_3985331.htm',
+        'source_title': '关于2025年中央和地方预算执行情况与2026年中央和地方预算草案的报告',
+        'parser_notes': '2026年全国一般公共预算赤字预算安排58900亿元；这是预算计划，不是2026年全年实际赤字。',
+    },
+)
+
 # 官方报告披露的是 YTD 累计值。以下字段只在相邻 YTD 截止月都存在时由差分
 # 得到，属于 derived，不回写 official observation 表。
 MONTHLY_FLOW_FROM_YTD = {
@@ -177,6 +335,7 @@ MONTHLY_FLOW_INDICATORS = {
     'combined_budget_revenue_monthly': '两本账总收入(当期流量，简单相加)',
     'combined_budget_expenditure_monthly': '两本账总支出(当期流量，简单相加)',
     'combined_budget_balance_monthly': '两本账收支差额(当期流量，简单相加)',
+    'combined_budget_expenditure_monthly_yoy': '财政全口径支出同比(同月，derived)',
 }
 
 
@@ -519,6 +678,16 @@ def update_fiscal_budget(db_path, max_reports=30, full_history=False, sleep_seco
         upserted += annual_supplement['records_upserted']
     except Exception as exc:
         errors.append(f'土地出让年度官方补充: {exc}')
+    try:
+        deficit_supplement = upsert_official_national_fiscal_deficit_backfill(db_path)
+        upserted += deficit_supplement['records_upserted']
+    except Exception as exc:
+        errors.append(f'财政赤字年度官方补充: {exc}')
+    try:
+        latest_supplement = upsert_latest_official_fiscal_budget_backfill(db_path)
+        upserted += latest_supplement['records_upserted']
+    except Exception as exc:
+        errors.append(f'最新财政YTD官方补充: {exc}')
     return {'success': not errors or upserted > 0, 'started_at': started,
             'finished_at': datetime.now().isoformat(), 'records_upserted': upserted,
             'reports_found': len(reports), 'reports_selected': len(selected_reports),
@@ -559,6 +728,107 @@ def upsert_land_transfer_annual_backfill(db_path):
     }
 
 
+def upsert_latest_official_fiscal_budget_backfill(db_path):
+    """Upsert the newest source-linked official YTD release.
+
+    This is deliberately idempotent and updates metadata as well as values.  A
+    manually maintained supplement is acceptable here only because every value
+    is tied to the official Ministry of Finance article and the regular parser
+    remains the primary path.
+    """
+    now = datetime.now().isoformat()
+    upserted = 0
+    conn = connect(db_path)
+    try:
+        ensure_fiscal_budget_tables(conn)
+        for record in LATEST_OFFICIAL_FISCAL_BUDGET_BACKFILL:
+            values = derive_budget_values(record['values'])
+            for code, value in values.items():
+                if code not in INDICATORS:
+                    continue
+                is_official = code in OFFICIAL_INDICATORS
+                unit = '%' if code.endswith('_yoy_official') else '亿元'
+                if code in FORMULAS:
+                    notes = '由同一财政部报告中的官方YTD收入与支出字段按公式计算。'
+                    formula = FORMULAS[code]
+                    status = 'derived'
+                else:
+                    notes = record['parser_notes']
+                    if code.startswith('govfund_land_transfer_'):
+                        notes = record['parser_notes'] + ' 土地出让字段来自政府性基金预算收入段。'
+                    elif code.startswith('budget_interest_expenditure_'):
+                        notes = record['parser_notes'] + ' 付息支出为一般公共预算支出分项。'
+                    formula = None
+                    status = 'official' if is_official else 'derived'
+                cursor = conn.execute('''INSERT INTO fiscal_budget_observations (
+                    indicator_code,indicator_name,period,value,unit,data_status,
+                    source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(indicator_code,period) DO UPDATE SET
+                    value=excluded.value, unit=excluded.unit, data_status=excluded.data_status,
+                    source_name=excluded.source_name, source_type=excluded.source_type,
+                    source_url=excluded.source_url, source_title=excluded.source_title,
+                    parser_notes=excluded.parser_notes, formula=excluded.formula,
+                    updated_at=excluded.updated_at''', (
+                    code, INDICATORS[code], record['period'], value, unit, status,
+                    SOURCE_NAME, SOURCE_TYPE, record['source_url'], record['source_title'],
+                    notes, formula, now))
+                upserted += cursor.rowcount
+                cursor.close()
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        'success': True,
+        'records_upserted': upserted,
+        'periods': [record['period'] for record in LATEST_OFFICIAL_FISCAL_BUDGET_BACKFILL],
+    }
+
+
+def upsert_official_national_fiscal_deficit_backfill(db_path):
+    """Upsert source-linked annual statutory deficit observations.
+
+    The normal Treasury monthly parser cannot recover this budget-balance
+    concept from monthly YTD reports, so the annual report supplement is
+    stored in the same observation table with a distinct indicator code and
+    source type.  The operation is idempotent and does not overwrite any
+    monthly revenue/expenditure observations.
+    """
+    now = datetime.now().isoformat()
+    upserted = 0
+    conn = connect(db_path)
+    try:
+        ensure_fiscal_budget_tables(conn)
+        for record in OFFICIAL_NATIONAL_FISCAL_DEFICIT_ANNUAL:
+            cursor = conn.execute('''INSERT INTO fiscal_budget_observations (
+                indicator_code,indicator_name,period,value,unit,data_status,
+                source_name,source_type,source_url,source_title,parser_notes,formula,updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(indicator_code,period) DO UPDATE SET
+                value=excluded.value, unit=excluded.unit, data_status=excluded.data_status,
+                source_name=excluded.source_name, source_type=excluded.source_type,
+                source_url=excluded.source_url, source_title=excluded.source_title,
+                parser_notes=excluded.parser_notes, formula=excluded.formula,
+                updated_at=excluded.updated_at''', (
+                OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR,
+                OFFICIAL_NATIONAL_FISCAL_DEFICIT_LABEL,
+                f"{record['year']}-12", record['value'], '亿元', 'official',
+                OFFICIAL_NATIONAL_FISCAL_DEFICIT_SOURCE_NAME,
+                OFFICIAL_NATIONAL_FISCAL_DEFICIT_SOURCE_TYPE,
+                record['source_url'], record['source_title'], record['parser_notes'],
+                None, now))
+            upserted += cursor.rowcount
+            cursor.close()
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        'success': True,
+        'records_upserted': upserted,
+        'years': [record['year'] for record in OFFICIAL_NATIONAL_FISCAL_DEFICIT_ANNUAL],
+    }
+
+
 def _annual_series(series):
     annual = []
     for row in series:
@@ -572,6 +842,280 @@ def _annual_series(series):
         item['data_status'] = 'official' if official_count == len(CORE_OFFICIAL_INDICATORS) else 'partial'
         annual.append(item)
     return annual
+
+
+def _official_deficit_index(deficit_rows=None):
+    """Return annual deficit records, using the curated official fallback.
+
+    The fallback makes the API/page deterministic immediately after a code
+    deployment; the database rows written by the updater add the same values
+    to the auditable observation store and preserve any source metadata.
+    """
+    index = {record['year']: dict(record)
+             for record in OFFICIAL_NATIONAL_FISCAL_DEFICIT_ANNUAL}
+    for row in deficit_rows or []:
+        period = str(row.get('period') or '')
+        match = re.match(r'^(20\d{2})(?:-12)?$', period)
+        if not match or not _is_number(row.get('value')):
+            continue
+        record = dict(row)
+        record['year'] = int(match.group(1))
+        record['value'] = float(row['value'])
+        index[record['year']] = record
+    return index
+
+
+def attach_official_national_fiscal_deficit(annual, deficit_rows=None):
+    """Attach the official annual deficit column without changing YTD fields."""
+    deficit_by_year = _official_deficit_index(deficit_rows)
+    out = []
+    for raw in annual or []:
+        item = dict(raw)
+        year = item.get('year')
+        if year is None:
+            try:
+                year = int(str(item.get('period') or '')[:4])
+            except (TypeError, ValueError):
+                year = None
+        record = deficit_by_year.get(year)
+        item[OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR] = (
+            record.get('value') if record else None)
+        item['official_national_fiscal_deficit_data_status'] = (
+            'official' if record else 'missing')
+        item['official_national_fiscal_deficit_source_url'] = (
+            record.get('source_url') if record else None)
+        item['official_national_fiscal_deficit_source_title'] = (
+            record.get('source_title') if record else None)
+        item['official_national_fiscal_deficit_parser_notes'] = (
+            record.get('parser_notes') if record else None)
+        out.append(item)
+    return out
+
+
+def _deficit_gap(expenditure, revenue):
+    """Positive expenditure-minus-revenue gap; None when either side is absent."""
+    if not (_is_number(expenditure) and _is_number(revenue)):
+        return None
+    return round(float(expenditure) - float(revenue), 4)
+
+
+def build_historical_fiscal_summary(annual, deficit_rows=None):
+    """Build the standalone historical fiscal summary used by the dashboard.
+
+    ``official_national_fiscal_deficit`` is the statutory annual figure from
+    the Ministry's budget report.  The ``*_deficit_gap`` fields are transparent
+    expenditure-minus-revenue calculations from the monthly Treasury YTD
+    series and are intentionally shown side by side rather than conflated.
+    """
+    enriched = attach_official_national_fiscal_deficit(annual, deficit_rows)
+    records = []
+    for source in enriched:
+        general_revenue = source.get('general_budget_revenue_ytd')
+        general_expenditure = source.get('general_budget_expenditure_ytd')
+        fund_revenue = source.get('gov_fund_revenue_ytd')
+        fund_expenditure = source.get('gov_fund_expenditure_ytd')
+        combined_revenue = source.get('combined_budget_revenue_ytd')
+        combined_expenditure = source.get('combined_budget_expenditure_ytd')
+        official_deficit = source.get(OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR)
+        general_gap = _deficit_gap(general_expenditure, general_revenue)
+        fund_gap = _deficit_gap(fund_expenditure, fund_revenue)
+        combined_gap = _deficit_gap(combined_expenditure, combined_revenue)
+        records.append({
+            'period': str(source.get('year') or source.get('period')),
+            'year': source.get('year'),
+            'source_period': source.get('source_period'),
+            'general_budget_revenue': general_revenue,
+            'general_budget_expenditure': general_expenditure,
+            'general_budget_deficit_gap': general_gap,
+            'gov_fund_revenue': fund_revenue,
+            'gov_fund_expenditure': fund_expenditure,
+            'gov_fund_deficit_gap': fund_gap,
+            'combined_budget_revenue': combined_revenue,
+            'combined_budget_expenditure': combined_expenditure,
+            'combined_budget_deficit_gap': combined_gap,
+            OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR: official_deficit,
+            'official_national_fiscal_deficit_data_status': source.get(
+                'official_national_fiscal_deficit_data_status', 'missing'),
+            'official_national_fiscal_deficit_source_url': source.get(
+                'official_national_fiscal_deficit_source_url'),
+            'official_national_fiscal_deficit_source_title': source.get(
+                'official_national_fiscal_deficit_source_title'),
+            'official_national_fiscal_deficit_parser_notes': source.get(
+                'official_national_fiscal_deficit_parser_notes'),
+            'official_deficit_minus_general_gap': (
+                round(float(official_deficit) - general_gap, 4)
+                if _is_number(official_deficit) and _is_number(general_gap) else None),
+            'data_status': source.get('data_status', 'missing'),
+            'source_url': source.get('source_url'),
+            'source_urls': source.get('source_urls', []),
+            'source_title': source.get('source_title'),
+            'definition': '法定赤字来自财政部年度预算报告；账面缺口=支出−收入，derived。',
+        })
+    observed = [row for row in records if _is_number(row.get(
+        OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR))]
+    latest = records[-1] if records else None
+    cards = []
+    if latest:
+        cards = [
+            {
+                'indicator_code': OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR,
+                'label': f"{latest['period']}年法定财政赤字",
+                'value': latest.get(OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR),
+                'unit': '亿元', 'period': latest['period'], 'data_status': 'official',
+                'source_name': OFFICIAL_NATIONAL_FISCAL_DEFICIT_SOURCE_NAME,
+                'source_url': latest.get('official_national_fiscal_deficit_source_url'),
+                'warning': '财政部年度报告口径；不等于月度收入减支出。',
+            },
+            {
+                'indicator_code': 'general_budget_deficit_gap',
+                'label': f"{latest['period']}年一般预算账面缺口",
+                'value': latest.get('general_budget_deficit_gap'),
+                'unit': '亿元', 'period': latest['period'], 'data_status': 'derived',
+                'source_name': SOURCE_NAME, 'source_url': latest.get('source_url'),
+                'formula': 'general_budget_deficit_gap = general_budget_expenditure - general_budget_revenue',
+                'warning': '由财政部12月YTD收入、支出计算，不是法定赤字。',
+            },
+            {
+                'indicator_code': 'combined_budget_deficit_gap',
+                'label': f"{latest['period']}年两本账账面缺口",
+                'value': latest.get('combined_budget_deficit_gap'),
+                'unit': '亿元', 'period': latest['period'], 'data_status': 'derived',
+                'source_name': SOURCE_NAME, 'source_url': latest.get('source_url'),
+                'formula': 'combined_budget_deficit_gap = combined_budget_expenditure - combined_budget_revenue',
+                'warning': '一般公共预算与政府性基金简单相加，未抵销跨账本转移。',
+            },
+        ]
+    coverage = {
+        'periods': len(records),
+        'earliest': records[0]['period'] if records else None,
+        'latest': records[-1]['period'] if records else None,
+        'official_deficit_periods': len(observed),
+        'official_deficit_earliest': observed[0]['period'] if observed else None,
+        'official_deficit_latest': observed[-1]['period'] if observed else None,
+        'official_deficit_missing_years': [
+            row['period'] for row in records
+            if not _is_number(row.get(OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR))
+        ],
+    }
+    return {
+        'data_status': 'official' if observed else ('partial' if records else 'missing'),
+        'coverage': coverage,
+        'cards': cards,
+        'records': records,
+        'warnings': ([
+            '法定财政赤字与账面缺口是不同口径；历史表并列展示，不互相替代。'
+        ] + ([
+            '部分年度缺少可直接核验的法定赤字，已保留为空，未用账面缺口填补。'
+        ] if coverage['official_deficit_missing_years'] else [])),
+        'notes': [
+            '法定财政赤字来自财政部年度预算执行报告，单位为亿元。',
+            '一般预算/两本账账面缺口均为支出减收入的derived分析值。',
+            '两本账账面缺口只是简单相加，不等同于官方法定赤字，也未抵销调入调出。',
+        ],
+    }
+
+
+def build_current_year_fiscal_summary(series, annual, plans=None):
+    """Build a separate current-year YTD summary and explicit budget plan."""
+    annual_years = [int(row.get('year')) for row in annual or []
+                    if row.get('year') is not None]
+    latest_full_year = max(annual_years) if annual_years else None
+    candidates = []
+    for row in series or []:
+        parsed = _period_year_month(row.get('period'))
+        if not parsed:
+            continue
+        year, month = parsed
+        if latest_full_year is not None and year <= latest_full_year:
+            continue
+        if _is_number(row.get('general_budget_revenue_ytd')) and _is_number(
+                row.get('general_budget_expenditure_ytd')):
+            candidates.append(row)
+    latest = candidates[-1] if candidates else None
+    plan_by_year = {record['year']: record for record in (
+        plans if plans is not None else OFFICIAL_NATIONAL_FISCAL_DEFICIT_PLAN)}
+    if not latest:
+        return {
+            'data_status': 'missing', 'period': None, 'year': None, 'records': [],
+            'cards': [], 'plan': None,
+            'warnings': ['尚无高于最新完整年度的财政部YTD观测。'],
+            'notes': ['当前年度实际值只接收官方YTD累计，不把全年计划或情景值当作实际。'],
+        }
+    year, month = _period_year_month(latest['period'])
+    general_revenue = latest.get('general_budget_revenue_ytd')
+    general_expenditure = latest.get('general_budget_expenditure_ytd')
+    fund_revenue = latest.get('gov_fund_revenue_ytd')
+    fund_expenditure = latest.get('gov_fund_expenditure_ytd')
+    record = {
+        'period': latest['period'], 'reporting_period': latest['period'], 'year': year,
+        'month': month, 'period_label': f'{year}年截至{month}月',
+        'general_budget_revenue_ytd': general_revenue,
+        'general_budget_expenditure_ytd': general_expenditure,
+        'general_budget_deficit_gap_ytd': _deficit_gap(general_expenditure, general_revenue),
+        'gov_fund_revenue_ytd': fund_revenue,
+        'gov_fund_expenditure_ytd': fund_expenditure,
+        'gov_fund_deficit_gap_ytd': _deficit_gap(fund_expenditure, fund_revenue),
+        'combined_budget_revenue_ytd': latest.get('combined_budget_revenue_ytd'),
+        'combined_budget_expenditure_ytd': latest.get('combined_budget_expenditure_ytd'),
+        'combined_budget_deficit_gap_ytd': _deficit_gap(
+            latest.get('combined_budget_expenditure_ytd'),
+            latest.get('combined_budget_revenue_ytd')),
+        'official_national_fiscal_deficit': None,
+        'official_national_fiscal_deficit_data_status': 'not_available',
+        'data_status': latest.get('data_status', 'official'),
+        'source_url': latest.get('source_url'),
+        'source_urls': latest.get('source_urls', []),
+        'source_title': latest.get('source_title'),
+        'definition': '当前年度为财政部YTD累计；账面缺口=支出−收入，法定全年赤字待年度报告。',
+    }
+    plan = plan_by_year.get(year)
+    if plan:
+        record.update({
+            'official_national_fiscal_deficit_plan': plan['value'],
+            'official_national_fiscal_deficit_plan_data_status': 'official_plan',
+            'official_national_fiscal_deficit_plan_source_url': plan['source_url'],
+            'official_national_fiscal_deficit_plan_source_title': plan['source_title'],
+            'official_national_fiscal_deficit_plan_parser_notes': plan['parser_notes'],
+        })
+    cards = [
+        {
+            'indicator_code': 'general_budget_deficit_gap_ytd',
+            'label': f'{record["period_label"]}一般预算账面缺口',
+            'value': record['general_budget_deficit_gap_ytd'], 'unit': '亿元',
+            'period': record['period'], 'data_status': 'derived',
+            'source_name': SOURCE_NAME, 'source_url': record['source_url'],
+            'formula': 'general_budget_deficit_gap_ytd = general_budget_expenditure_ytd - general_budget_revenue_ytd',
+            'warning': 'YTD累计账面缺口，不是全年法定赤字。',
+        },
+        {
+            'indicator_code': 'combined_budget_deficit_gap_ytd',
+            'label': f'{record["period_label"]}两本账账面缺口',
+            'value': record['combined_budget_deficit_gap_ytd'], 'unit': '亿元',
+            'period': record['period'], 'data_status': 'derived',
+            'source_name': SOURCE_NAME, 'source_url': record['source_url'],
+            'formula': 'combined_budget_deficit_gap_ytd = combined_budget_expenditure_ytd - combined_budget_revenue_ytd',
+            'warning': '两本账简单相加，不是法定赤字。',
+        },
+    ]
+    if plan:
+        cards.append({
+            'indicator_code': 'official_national_fiscal_deficit_plan',
+            'label': f'{year}年预算安排财政赤字', 'value': plan['value'], 'unit': '亿元',
+            'period': str(year), 'data_status': 'official_plan',
+            'source_name': OFFICIAL_NATIONAL_FISCAL_DEFICIT_SOURCE_NAME,
+            'source_url': plan['source_url'], 'warning': '官方预算计划，不是全年实际赤字。',
+        })
+    return {
+        'data_status': 'official', 'period': record['period'], 'year': year,
+        'latest_full_year': latest_full_year, 'records': [record], 'cards': cards,
+        'plan': plan, 'warnings': [
+            f'当前年度显示财政部{record["period"]}YTD累计；2026年法定全年赤字尚未形成年度执行值。',
+            '账面缺口是支出减收入；预算安排赤字单独标记为official_plan，不与实际YTD相加。',
+        ], 'notes': [
+            '当前年度不把YTD累计外推成官方全年赤字。',
+            '当前年度预算计划与年度实际执行属于两条不同时间序列。',
+        ],
+    }
 
 
 LAND_TRANSFER_ANNUAL_START_YEAR = 2007
@@ -941,8 +1485,538 @@ def build_land_transfer_half_year_analysis(series, start_year=LAND_TRANSFER_ANNU
     }
 
 
+def _cutoff_label(month):
+    month = int(month)
+    return '上半年' if month == 6 else f'1—{month}月'
+
+
+def build_land_transfer_latest_ytd_analysis(series, start_year=LAND_TRANSFER_ANNUAL_START_YEAR,
+                                            min_history=3):
+    """Re-estimate the current land-transfer total using the newest YTD cutoff.
+
+    The older H1 analysis remains available for a stable backtest.  This layer
+    uses the latest available cutoff (for example 1—7月) and only compares it
+    with the same calendar cutoff in prior years.  It never treats a missing
+    month as zero or bridges a missing report.
+    """
+    source_by_period = {
+        str(row.get('period')): dict(row) for row in series or []
+        if _period_year_month(row.get('period'))
+    }
+    partials = [
+        row for row in source_by_period.values()
+        if _period_year_month(row.get('period'))[1] != 12
+        and _is_number(row.get('govfund_land_transfer_revenue_ytd'))
+        and _period_year_month(row.get('period'))[0] >= int(start_year)
+    ]
+    if not partials:
+        return {
+            'rows': [], 'cards': [], 'current': None,
+            'predictive_power': {'data_status': 'missing', 'n_obs': 0},
+            'method': '仅匹配同一自然年的最新累计截止月与12月完整年度值；无可用观测。',
+            'sample_start': None, 'sample_end': None, 'n_obs': 0,
+            'data_status': 'missing',
+            'caveats': ['尚无财政部土地出让收入的非12月官方累计观测。'],
+        }
+
+    latest_partial = max(
+        partials, key=lambda row: str(row.get('period')))
+    current_year, cutoff_month = _period_year_month(latest_partial['period'])
+    cutoff_label = _cutoff_label(cutoff_month)
+    full_by_year = {
+        year: row for period, row in source_by_period.items()
+        if (year := _period_year_month(period)[0]) >= int(start_year)
+        and _period_year_month(period)[1] == 12
+    }
+    years = sorted({year for period in source_by_period
+                    if (year := _period_year_month(period)[0]) >= int(start_year)}
+                   | {current_year})
+    rows = []
+    for year in range(min(years), current_year + 1):
+        ytd = source_by_period.get(f'{year}-{cutoff_month:02d}', {})
+        full = full_by_year.get(year, {})
+        previous_ytd = source_by_period.get(f'{year - 1}-{cutoff_month:02d}', {})
+        previous_full = full_by_year.get(year - 1, {})
+        ytd_value = ytd.get('govfund_land_transfer_revenue_ytd')
+        full_value = full.get('govfund_land_transfer_revenue_ytd')
+        ytd_available = _is_number(ytd_value)
+        full_available = _is_number(full_value)
+        share = round(ytd_value / full_value * 100, 6) if (
+            ytd_available and full_available and full_value) else None
+        ytd_yoy_derived = (
+            round((ytd_value / previous_ytd.get('govfund_land_transfer_revenue_ytd') - 1) * 100, 2)
+            if ytd_available and _is_number(previous_ytd.get('govfund_land_transfer_revenue_ytd'))
+            and previous_ytd.get('govfund_land_transfer_revenue_ytd') else None)
+        full_yoy_derived = (
+            round((full_value / previous_full.get('govfund_land_transfer_revenue_ytd') - 1) * 100, 2)
+            if full_available and _is_number(previous_full.get('govfund_land_transfer_revenue_ytd'))
+            and previous_full.get('govfund_land_transfer_revenue_ytd') else None)
+        reasons = []
+        if not ytd_available:
+            reasons.append(f'缺少该年度{cutoff_label}官方累计观测')
+        if not full_available:
+            reasons.append('缺少该年度12月累计官方观测')
+        rows.append({
+            'period': str(year), 'year': year,
+            'cutoff_period': f'{year}-{cutoff_month:02d}',
+            'full_year_period': f'{year}-12',
+            'cutoff_month': cutoff_month, 'cutoff_label': cutoff_label,
+            'ytd_revenue': ytd_value if ytd_available else None,
+            'full_year_revenue': full_value if full_available else None,
+            'ytd_share_of_full_year_pct': share,
+            'ytd_yoy_official': ytd.get('govfund_land_transfer_revenue_ytd_yoy_official'),
+            'full_year_yoy_official': full.get('govfund_land_transfer_revenue_ytd_yoy_official'),
+            'ytd_yoy_derived': ytd_yoy_derived,
+            'full_year_yoy_derived': full_yoy_derived,
+            'full_year_estimate_by_prior_median': None,
+            'estimate_error_pct': None,
+            'analysis_status': 'matched' if ytd_available and full_available
+            else 'ytd_only' if ytd_available else 'full_year_only' if full_available else 'missing',
+            'data_status': 'official' if ytd_available or full_available else 'missing',
+            'source_url': ytd.get('source_url') or full.get('source_url'),
+            'source_urls': _dedupe([ytd.get('source_url'), full.get('source_url')]),
+            'source_title': ytd.get('source_title') or full.get('source_title'),
+            'formula': (
+                'ytd_share_of_full_year_pct = same-year YTD cumulative revenue / '
+                'same-year December cumulative revenue × 100; '
+                'full-year estimate = current YTD revenue / historical same-cutoff share'
+            ),
+            'missing_reason': '；'.join(reasons) or None,
+        })
+
+    matched = [row for row in rows
+               if row['analysis_status'] == 'matched' and row['year'] < current_year]
+    shares = [row['ytd_share_of_full_year_pct'] for row in matched]
+    prior_shares = []
+    errors = []
+    for row in matched:
+        if len(prior_shares) >= int(min_history) and prior_shares:
+            reference = median(prior_shares)
+            estimate = row['ytd_revenue'] / (reference / 100)
+            row['full_year_estimate_by_prior_median'] = round(estimate, 2)
+            row['estimate_error_pct'] = round(
+                (estimate / row['full_year_revenue'] - 1) * 100, 2)
+            errors.append(row['estimate_error_pct'])
+        prior_shares.append(row['ytd_share_of_full_year_pct'])
+    backtest = {
+        'n_obs': len(errors),
+        'error_unit': 'relative_pct_of_actual_full_year',
+        'mae_relative_pct': round(sum(abs(value) for value in errors) / len(errors), 2)
+        if errors else None,
+        'median_abs_relative_pct': round(median(abs(value) for value in errors), 2)
+        if errors else None,
+        'within_10pct_relative_error_pct': round(
+            sum(abs(value) <= 10 for value in errors) / len(errors) * 100, 2)
+        if errors else None,
+        'data_status': 'derived' if errors else 'insufficient_sample',
+    }
+    predictive_power = {
+        'data_status': 'derived' if len(matched) >= 2 else 'insufficient_sample',
+        'n_obs': len(matched),
+        'sample_start': str(matched[0]['year']) if matched else None,
+        'sample_end': str(matched[-1]['year']) if matched else None,
+        'level_correlation_ytd_vs_full_year': _pearson_correlation(
+            [row['ytd_revenue'] for row in matched],
+            [row['full_year_revenue'] for row in matched]),
+        'backtest': backtest,
+        'interpretation': (
+            f'{cutoff_label}累计值对全年有季节性参考价值，但比例随结算节奏和政策变化；'
+            '不能把累计同比直接当作全年同比，也不能把机械推演解释为官方预测。'
+        ),
+    }
+    current_row = next((row for row in rows if row['period'] == str(current_year)), None)
+    if current_row is None or not _is_number(current_row.get('ytd_revenue')):
+        return {
+            'rows': rows, 'cards': [], 'current': None,
+            'predictive_power': predictive_power, 'sample_start': predictive_power['sample_start'],
+            'sample_end': predictive_power['sample_end'], 'n_obs': len(matched),
+            'data_status': 'insufficient_sample' if matched else 'missing',
+            'method': f'仅匹配同一自然年的{cutoff_label}累计值与12月完整年度值。',
+            'caveats': ['最新累计月没有可用官方土地出让收入值。'],
+        }
+    q25 = _land_transfer_quantile(shares, 0.25) if len(shares) >= int(min_history) else None
+    q75 = _land_transfer_quantile(shares, 0.75) if len(shares) >= int(min_history) else None
+    share_median = median(shares) if len(shares) >= int(min_history) else None
+    share_mean = sum(shares) / len(shares) if shares else None
+    previous_full = next((row for row in reversed(rows)
+                          if row['year'] < current_year and _is_number(row.get('full_year_revenue'))), None)
+    estimate_low = current_row['ytd_revenue'] / (q75 / 100) if q75 else None
+    estimate_median = current_row['ytd_revenue'] / (share_median / 100) if share_median else None
+    estimate_high = current_row['ytd_revenue'] / (q25 / 100) if q25 else None
+    def _estimate_yoy(value):
+        return ((value / previous_full['full_year_revenue']) - 1) * 100 \
+            if value is not None and previous_full else None
+    current = {
+        'year': current_year, 'period': current_row['cutoff_period'],
+        'cutoff_period': current_row['cutoff_period'], 'cutoff_month': cutoff_month,
+        'cutoff_label': cutoff_label, 'ytd_revenue': current_row['ytd_revenue'],
+        'ytd_yoy_official': current_row.get('ytd_yoy_official'),
+        'data_status': 'official', 'source_url': current_row.get('source_url'),
+        'source_urls': current_row.get('source_urls', []),
+        'historical_sample_n': len(matched),
+        'historical_sample_start': str(matched[0]['year']) if matched else None,
+        'historical_sample_end': str(matched[-1]['year']) if matched else None,
+        'historical_share_mean_pct': round(share_mean, 4) if share_mean is not None else None,
+        'historical_share_median_pct': round(share_median, 4) if share_median is not None else None,
+        'historical_share_q25_pct': round(q25, 4) if q25 is not None else None,
+        'historical_share_q75_pct': round(q75, 4) if q75 is not None else None,
+        'implied_full_year_low': round(estimate_low, 2) if estimate_low is not None else None,
+        'implied_full_year_median': round(estimate_median, 2) if estimate_median is not None else None,
+        'implied_full_year_high': round(estimate_high, 2) if estimate_high is not None else None,
+        'implied_full_year_yoy_low_pct': round(_estimate_yoy(estimate_low), 2)
+        if _estimate_yoy(estimate_low) is not None else None,
+        'implied_full_year_yoy_median_pct': round(_estimate_yoy(estimate_median), 2)
+        if _estimate_yoy(estimate_median) is not None else None,
+        'implied_full_year_yoy_high_pct': round(_estimate_yoy(estimate_high), 2)
+        if _estimate_yoy(estimate_high) is not None else None,
+        'comparison_full_year': previous_full['year'] if previous_full else None,
+        'formula': (
+            f'全年机械推演 = 当前{cutoff_label}累计值 / 历史同截止月YTD/全年比例；'
+            '区间使用历史比例第25—75百分位。'
+        ),
+        'caveats': [
+            '这是基于历史季节性的derived机械推演，不是官方预测；未纳入土地市场政策、供地节奏和一次性结算变化。',
+            f'当前年只有{cutoff_label}累计值，12月官方值尚未公布；不能与完整年度官方值混列。',
+        ],
+    }
+    if current['implied_full_year_median'] is not None:
+        current_row['full_year_estimate_by_prior_median'] = current['implied_full_year_median']
+    cards = [
+        {'label': f'{current_year}年{cutoff_label}土地出让收入', 'value': current['ytd_revenue'],
+         'unit': '亿元', 'period': current['period'], 'data_status': 'official',
+         'source_name': SOURCE_NAME, 'source_url': current['source_url'],
+         'warning': f'{cutoff_label}累计值，不是全年值。'},
+        {'label': f'{cutoff_label}官方同比', 'value': current.get('ytd_yoy_official'),
+         'unit': '%', 'period': current['period'], 'data_status': 'official',
+         'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+        {'label': '历史同截止月/全年中位比例', 'value': current.get('historical_share_median_pct'),
+         'unit': '%', 'period': f"{current.get('historical_sample_start')}—{current.get('historical_sample_end')}",
+         'data_status': 'derived' if current.get('historical_share_median_pct') is not None else 'insufficient_sample',
+         'formula': current['formula'], 'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+        {'label': f'{current_year}全年机械推演（中位比例）',
+         'value': current.get('implied_full_year_median'), 'unit': '亿元',
+         'period': current['period'],
+         'data_status': 'derived' if current.get('implied_full_year_median') is not None else 'insufficient_sample',
+         'formula': current['formula'], 'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+        {'label': '历史中间50%机械区间',
+         'value': (f"{current['implied_full_year_low']:,.0f}—{current['implied_full_year_high']:,.0f}"
+                   if current.get('implied_full_year_low') is not None and
+                   current.get('implied_full_year_high') is not None else None),
+         'unit': '亿元', 'period': current['period'],
+         'data_status': 'derived' if current.get('implied_full_year_low') is not None else 'insufficient_sample',
+         'formula': current['formula'], 'source_name': SOURCE_NAME, 'source_url': current['source_url'],
+         'warning': '不是置信区间；只是历史同截止月比例的中间50%区间。'},
+    ]
+    return {
+        'rows': rows, 'cards': cards, 'current': current,
+        'predictive_power': predictive_power,
+        'method': f'匹配同一自然年的{cutoff_label}累计值与12月累计值；比例、相关和回测均只用官方YTD观测，机械推演不写回官方表。',
+        'sample_start': str(matched[0]['year']) if matched else None,
+        'sample_end': str(matched[-1]['year']) if matched else None,
+        'n_obs': len(matched),
+        'data_status': 'derived' if len(matched) >= int(min_history) else 'insufficient_sample',
+        'caveats': [
+            '缺少同一截止月或12月观测的年份不进入比例回测；不把缺月当作0，也不跨缺月填补。',
+            'YTD同比与全年同比的方向比较采用官方同比优先、直除同比为补充；不能解释为因果或精确预测。',
+        ],
+    }
+
+
 def _budget_short_code(code):
     return code[:-4] if code.endswith('_ytd') else code
+
+
+def build_budget_latest_ytd_analysis(annual, series, min_history=3):
+    """Build the same-account latest-YTD-to-full-year conversion.
+
+    Unlike the legacy H1 layer, the cutoff is inferred from the newest
+    available non-December report.  The comparison sample uses that exact
+    calendar cutoff in earlier years, so a July cumulative value is never
+    compared with a June value or an annual point.
+    """
+    annual_by_year = {}
+    for row in annual or []:
+        period = str(row.get('period') or '')
+        year = row.get('year')
+        if year is None and period.isdigit():
+            year = int(period)
+        if year is not None:
+            annual_by_year[int(year)] = dict(row)
+    source_by_period = {
+        str(row.get('period')): dict(row) for row in series or []
+        if _period_year_month(row.get('period'))
+    }
+    partials = []
+    for row in source_by_period.values():
+        year_month = _period_year_month(row.get('period'))
+        if year_month and year_month[1] != 12 and any(
+                _is_number(row.get(code)) for code in CORE_OFFICIAL_INDICATORS):
+            partials.append(row)
+    if not partials:
+        return {
+            'rows': [], 'current': None, 'cards': [], 'simulation': {
+                'data_status': 'missing', 'records': [], 'simulations': 0,
+            }, 'share_stats': {}, 'predictive_power': {}, 'n_obs': 0,
+            'data_status': 'missing',
+            'method': '仅匹配同一自然年的最新累计截止月与12月完整年度官方值；无可用观测。',
+            'caveats': ['尚无财政部非12月财政收支累计观测。'],
+        }
+
+    latest_partial = max(partials, key=lambda row: str(row.get('period')))
+    current_year, cutoff_month = _period_year_month(latest_partial['period'])
+    cutoff_label = _cutoff_label(cutoff_month)
+    years = sorted({int(period[:4]) for period in source_by_period}
+                   | set(annual_by_year) | {current_year})
+    rows = []
+    for year in range(min(years), current_year + 1):
+        ytd = source_by_period.get(f'{year}-{cutoff_month:02d}', {})
+        full = annual_by_year.get(year, source_by_period.get(f'{year}-12', {}))
+        previous_ytd = source_by_period.get(f'{year - 1}-{cutoff_month:02d}', {})
+        previous_full = annual_by_year.get(year - 1,
+                                           source_by_period.get(f'{year - 1}-12', {}))
+        matched_indicators = []
+        ytd_indicators = []
+        full_indicators = []
+        reasons = []
+        row = {
+            'period': str(year), 'year': year,
+            'cutoff_period': f'{year}-{cutoff_month:02d}',
+            'full_year_period': f'{year}-12', 'cutoff_month': cutoff_month,
+            'cutoff_label': cutoff_label,
+            'source_url': ytd.get('source_url') or full.get('source_url'),
+            'source_urls': _dedupe([ytd.get('source_url'), full.get('source_url')]),
+            'source_title': ytd.get('source_title') or full.get('source_title'),
+            'missing_reason': None,
+        }
+        for code in CORE_OFFICIAL_INDICATORS:
+            short = _budget_short_code(code)
+            ytd_key = f'{short}_ytd'
+            full_key = f'{short}_full_year'
+            share_key = f'{short}_ytd_full_year_share_pct'
+            ytd_value = ytd.get(code)
+            full_value = full.get(code)
+            row[ytd_key] = ytd_value if _is_number(ytd_value) else None
+            row[full_key] = full_value if _is_number(full_value) else None
+            ytd_official_key = f'{short}_ytd_yoy_official'
+            full_official_key = f'{short}_full_year_yoy_official'
+            row[ytd_official_key] = ytd.get(f'{code}_yoy_official')
+            row[full_official_key] = full.get(f'{code}_yoy_official')
+            previous_ytd_value = previous_ytd.get(code)
+            previous_full_value = previous_full.get(code)
+            row[f'{short}_ytd_yoy_derived'] = (
+                round((ytd_value / previous_ytd_value - 1) * 100, 2)
+                if _is_number(ytd_value) and _is_number(previous_ytd_value)
+                and previous_ytd_value else None)
+            row[f'{short}_full_year_yoy_derived'] = (
+                round((full_value / previous_full_value - 1) * 100, 2)
+                if _is_number(full_value) and _is_number(previous_full_value)
+                and previous_full_value else None)
+            if _is_number(ytd_value):
+                ytd_indicators.append(code)
+            else:
+                reasons.append(f'{year}缺少{short}{cutoff_label}累计值')
+            if _is_number(full_value):
+                full_indicators.append(code)
+            else:
+                reasons.append(f'{year}缺少{short}全年累计值')
+            if _is_number(ytd_value) and _is_number(full_value) and full_value:
+                row[share_key] = round(ytd_value / full_value * 100, 6)
+                matched_indicators.append(code)
+            else:
+                row[share_key] = None
+            row[f'{short}_full_year_estimate_by_prior_median'] = None
+            row[f'{short}_estimate_error_pct'] = None
+        row['matched_indicator_count'] = len(matched_indicators)
+        row['matched_indicators'] = matched_indicators
+        row['ytd_indicator_count'] = len(ytd_indicators)
+        row['full_year_indicator_count'] = len(full_indicators)
+        row['analysis_status'] = (
+            'matched_all' if len(matched_indicators) == len(CORE_OFFICIAL_INDICATORS)
+            else 'partial' if matched_indicators
+            else 'ytd_only' if ytd_indicators and not full_indicators
+            else 'full_year_only' if full_indicators and not ytd_indicators
+            else 'missing')
+        row['data_status'] = 'official' if ytd_indicators or full_indicators else 'missing'
+        row['missing_reason'] = '；'.join(_dedupe(reasons)) or None
+        row['formula'] = (
+            f'{cutoff_label}/全年比例 = 同年{cutoff_label}累计值 / 同年12月累计值；'
+            f'全年机械推演 = 当前年{cutoff_label}累计值 / 历史同截止月比例'
+        )
+        rows.append(row)
+
+    share_stats = {}
+    backtest = {}
+    for code in CORE_OFFICIAL_INDICATORS:
+        short = _budget_short_code(code)
+        share_key = f'{short}_ytd_full_year_share_pct'
+        matched = [row for row in rows if row['year'] < current_year
+                   and _is_number(row.get(share_key))]
+        shares = [row[share_key] for row in matched]
+        share_stats[short] = {
+            'indicator_code': code, 'label': INDICATORS[code], 'n_obs': len(shares),
+            'sample_start': str(matched[0]['year']) if matched else None,
+            'sample_end': str(matched[-1]['year']) if matched else None,
+            'mean_pct': round(sum(shares) / len(shares), 4) if shares else None,
+            'median_pct': round(median(shares), 4) if shares else None,
+            'q25_pct': round(_land_transfer_quantile(shares, 0.25), 4) if shares else None,
+            'q75_pct': round(_land_transfer_quantile(shares, 0.75), 4) if shares else None,
+            'min_pct': round(min(shares), 4) if shares else None,
+            'max_pct': round(max(shares), 4) if shares else None,
+        }
+        prior_shares = []
+        errors = []
+        for row in matched:
+            share = row.get(share_key)
+            ytd_value = row.get(f'{short}_ytd')
+            full_value = row.get(f'{short}_full_year')
+            if len(prior_shares) >= int(min_history) and _is_number(ytd_value) \
+                    and _is_number(full_value):
+                reference = median(prior_shares)
+                estimate = ytd_value / (reference / 100)
+                row[f'{short}_full_year_estimate_by_prior_median'] = round(estimate, 2)
+                row[f'{short}_estimate_error_pct'] = round(
+                    (estimate / full_value - 1) * 100, 2)
+                errors.append(row[f'{short}_estimate_error_pct'])
+            prior_shares.append(share)
+        backtest[short] = {
+            'n_obs': len(errors),
+            'mae_relative_pct': round(sum(abs(value) for value in errors) / len(errors), 2)
+            if errors else None,
+            'median_abs_relative_pct': round(median(abs(value) for value in errors), 2)
+            if errors else None,
+            'within_10pct_relative_error_pct': round(
+                sum(abs(value) <= 10 for value in errors) / len(errors) * 100, 2)
+            if errors else None,
+            'error_unit': 'relative_pct_of_actual_full_year',
+            'data_status': 'derived' if errors else 'insufficient_sample',
+        }
+
+    matched_all = [row for row in rows if row['year'] < current_year
+                   and row.get('matched_indicator_count') == len(CORE_OFFICIAL_INDICATORS)]
+    current_row = next((row for row in rows if row['year'] == current_year), None)
+    current = None
+    if current_row and current_row.get('ytd_indicator_count', 0):
+        ytd_values = {
+            code: current_row.get(f'{_budget_short_code(code)}_ytd')
+            for code in CORE_OFFICIAL_INDICATORS
+        }
+        current = {
+            'year': current_year, 'period': current_row['cutoff_period'],
+            'cutoff_period': current_row['cutoff_period'], 'cutoff_month': cutoff_month,
+            'cutoff_label': cutoff_label, 'ytd_values': ytd_values,
+            'ytd_yoy_official': {
+                _budget_short_code(code): current_row.get(
+                    f'{_budget_short_code(code)}_ytd_yoy_official')
+                for code in CORE_OFFICIAL_INDICATORS
+            },
+            'ytd_yoy_derived': {
+                _budget_short_code(code): current_row.get(
+                    f'{_budget_short_code(code)}_ytd_yoy_derived')
+                for code in CORE_OFFICIAL_INDICATORS
+            },
+            'share_stats': share_stats, 'data_status': 'official',
+            'source_url': current_row.get('source_url'),
+            'source_urls': current_row.get('source_urls', []),
+            'formula': (
+                f'当前全年值 = 当前{cutoff_label}官方累计值 / 历史同科目{cutoff_label}/全年比例；'
+                '基准使用中位数，较好/较坏使用方向一致的第25/75百分位。'
+            ),
+            'scenarios': {},
+        }
+        scenario_share_rules = {
+            'baseline': {'label': '最可能（季节性中位）', 'revenue': 'median', 'expenditure': 'median'},
+            'improvement': {'label': '较好（累计月后修复）', 'revenue': 'q25', 'expenditure': 'q75'},
+            'pressure': {'label': '较坏（累计月后走弱）', 'revenue': 'q75', 'expenditure': 'q25'},
+        }
+        revenue_codes = {'general_budget_revenue', 'gov_fund_revenue'}
+        enough_history = all(share_stats[_budget_short_code(code)].get('n_obs', 0)
+                             >= int(min_history) for code in CORE_OFFICIAL_INDICATORS)
+        for scenario_code, rule in scenario_share_rules.items():
+            raw_values = {}
+            assumptions = {}
+            for code in CORE_OFFICIAL_INDICATORS:
+                short = _budget_short_code(code)
+                stat = share_stats[short]
+                statistic = rule['revenue'] if short in revenue_codes else rule['expenditure']
+                share = stat.get(f'{statistic}_pct') if enough_history else None
+                assumptions[short] = share
+                if _is_number(ytd_values.get(code)) and _is_number(share) and share > 0:
+                    raw_values[code] = round(ytd_values[code] / (share / 100), 1)
+            current['scenarios'][scenario_code] = {
+                'label': rule['label'], 'values': derive_budget_values(raw_values),
+                'share_assumptions_pct': assumptions,
+                'data_status': 'derived' if len(raw_values) == len(CORE_OFFICIAL_INDICATORS)
+                else 'insufficient_sample', 'formula': current['formula'],
+            }
+        current['simulation'] = simulate_budget_latest_ytd_uncertainty(
+            rows, current, cutoff_month=cutoff_month, simulations=5000, seed=20260823)
+        baseline = current['scenarios'].get('baseline', {}).get('values', {})
+        simulation_record = (current['simulation'].get('records') or [{}])[0]
+        current['cards'] = [
+            {'label': f'{current_year}年{cutoff_label}一般公共预算收入',
+             'value': ytd_values.get('general_budget_revenue_ytd'), 'unit': '亿元',
+             'period': current['period'], 'data_status': 'official',
+             'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+            {'label': f'{current_year}年{cutoff_label}一般公共预算支出',
+             'value': ytd_values.get('general_budget_expenditure_ytd'), 'unit': '亿元',
+             'period': current['period'], 'data_status': 'official',
+             'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+            {'label': f'{current_year}年{cutoff_label}政府性基金收入',
+             'value': ytd_values.get('gov_fund_revenue_ytd'), 'unit': '亿元',
+             'period': current['period'], 'data_status': 'official',
+             'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+            {'label': f'{current_year}年{cutoff_label}政府性基金支出',
+             'value': ytd_values.get('gov_fund_expenditure_ytd'), 'unit': '亿元',
+             'period': current['period'], 'data_status': 'official',
+             'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+            {'label': f'{cutoff_label}一般预算收入官方同比',
+             'value': current['ytd_yoy_official'].get('general_budget_revenue'), 'unit': '%',
+             'period': current['period'], 'data_status': 'official',
+             'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+            {'label': f'{cutoff_label}政府性基金收入官方同比',
+             'value': current['ytd_yoy_official'].get('gov_fund_revenue'), 'unit': '%',
+             'period': current['period'], 'data_status': 'official',
+             'source_name': SOURCE_NAME, 'source_url': current['source_url']},
+            {'label': f'{current_year}全年两本账差额（季节性中位）',
+             'value': baseline.get('combined_budget_balance_ytd'), 'unit': '亿元',
+             'period': current['period'], 'data_status': 'derived' if baseline else 'insufficient_sample',
+             'formula': current['formula'], 'source_name': SOURCE_NAME,
+             'source_url': current['source_url']},
+            {'label': f'{current_year}全年两本账差额（模拟P50）',
+             'value': simulation_record.get('combined_budget_balance_ytd_p50'), 'unit': '亿元',
+             'period': current['period'], 'data_status': 'scenario' if simulation_record else 'insufficient_sample',
+             'formula': current['simulation'].get('formula'), 'source_name': SOURCE_NAME,
+             'source_url': current['source_url']},
+        ]
+    predictive_power = {
+        'data_status': 'derived' if matched_all else 'insufficient_sample',
+        'n_obs': len(matched_all),
+        'sample_start': str(matched_all[0]['year']) if matched_all else None,
+        'sample_end': str(matched_all[-1]['year']) if matched_all else None,
+        'backtest': backtest,
+        'interpretation': (
+            f'最新{cutoff_label}累计值与全年之间仅做同截止月季节性转换；不能把累计同比直接当成全年同比。'
+        ),
+    }
+    return {
+        'rows': rows, 'current': current, 'share_stats': share_stats,
+        'backtest': backtest,
+        'simulation': current.get('simulation', {}) if current else {},
+        'n_obs': len(matched_all),
+        'sample_start': str(matched_all[0]['year']) if matched_all else None,
+        'sample_end': str(matched_all[-1]['year']) if matched_all else None,
+        'data_status': 'derived' if len(matched_all) >= int(min_history) else 'insufficient_sample',
+        'method': (
+            f'分别匹配同一自然年的{cutoff_label}累计值与12月完整年度值；当前年度使用同科目历史'
+            f'{cutoff_label}/全年比例转换，模拟使用同一年四科目比例联合抽样。'
+        ),
+        'predictive_power': predictive_power,
+        'caveats': [
+            '官方同比优先用于增长判断，YTD/全年比例只用于透明的derived机械转换。',
+            'P10/P50/P90是历史同截止月比例的敏感性区间，不是概率预测或官方置信区间。',
+            '财政收支口径、土地结算节奏和政策调整会改变同截止月/全年比例；历史样本不代表结构稳定。',
+        ],
+    }
 
 
 def build_budget_half_year_analysis(annual, series, min_history=3):
@@ -1283,6 +2357,66 @@ def simulate_budget_half_year_uncertainty(rows, current, simulations=5000, seed=
     }
 
 
+def simulate_budget_latest_ytd_uncertainty(rows, current, cutoff_month,
+                                           simulations=5000, seed=20260823):
+    """Bootstrap full-year values from same-cutoff YTD/full-year share vectors."""
+    joint_rows = [row for row in rows if all(
+        _is_number(row.get(f'{_budget_short_code(code)}_ytd_full_year_share_pct'))
+        for code in CORE_OFFICIAL_INDICATORS)]
+    ytd_values = current.get('ytd_values') if current else {}
+    cutoff_label = _cutoff_label(cutoff_month)
+    if not current or not all(_is_number(ytd_values.get(code))
+                              for code in CORE_OFFICIAL_INDICATORS):
+        return {
+            'data_status': 'missing', 'records': [], 'simulations': 0,
+            'n_share_vectors': len(joint_rows),
+            'warnings': [f'当前{cutoff_label}四项财政累计值不完整，未生成全年模拟。'],
+        }
+    if len(joint_rows) < 5:
+        return {
+            'data_status': 'insufficient_sample', 'records': [], 'simulations': 0,
+            'n_share_vectors': len(joint_rows),
+            'warnings': [f'四项财政同{cutoff_label}/全年联合比例少于5个年度，不生成全年模拟区间。'],
+        }
+    simulations = max(100, min(int(simulations), 50000))
+    rng = random.Random(int(seed))
+    distribution_codes = CORE_OFFICIAL_INDICATORS + (
+        'general_budget_balance_ytd', 'gov_fund_balance_ytd',
+        'combined_budget_revenue_ytd', 'combined_budget_expenditure_ytd',
+        'combined_budget_balance_ytd')
+    distributions = {code: [] for code in distribution_codes}
+    for _ in range(simulations):
+        sampled = rng.choice(joint_rows)
+        raw_values = {}
+        for code in CORE_OFFICIAL_INDICATORS:
+            short = _budget_short_code(code)
+            share = sampled[f'{short}_ytd_full_year_share_pct']
+            raw_values[code] = ytd_values[code] / (share / 100)
+        values = derive_budget_values(raw_values)
+        for code in distribution_codes:
+            if _is_number(values.get(code)):
+                distributions[code].append(values[code])
+    record = {'period': str(current['year']), 'year': current['year'],
+              'cutoff_period': current.get('cutoff_period'),
+              'cutoff_label': cutoff_label, 'data_status': 'scenario'}
+    for code, values in distributions.items():
+        record[f'{code}_p10'] = round(_land_transfer_quantile(values, 0.10), 1)
+        record[f'{code}_p50'] = round(_land_transfer_quantile(values, 0.50), 1)
+        record[f'{code}_p90'] = round(_land_transfer_quantile(values, 0.90), 1)
+    return {
+        'data_status': 'scenario', 'records': [record], 'simulations': simulations,
+        'seed': int(seed), 'n_share_vectors': len(joint_rows),
+        'sample_start': str(joint_rows[0]['year']), 'sample_end': str(joint_rows[-1]['year']),
+        'percentiles': [10, 50, 90],
+        'method': f'固定当前年{cutoff_label}官方累计值，按历史同一年四科目{cutoff_label}/全年比例联合bootstrap；不使用当前年全年信息。',
+        'formula': 'full_year_value[code] = current_ytd_value[code] / sampled_same_cutoff_ytd_full_year_share[code]',
+        'warnings': [
+            'P10/P50/P90是历史季节性比例的敏感性区间，不是财政结果发生概率或官方置信区间。',
+            '模拟次数增加不会增加历史比例样本的信息；当前联合比例样本仍然有限。',
+        ],
+    }
+
+
 def derive_monthly_budget_series(series):
     """Convert official YTD observations into transparent period flows.
 
@@ -1396,6 +2530,34 @@ def derive_monthly_budget_series(series):
                 else 'missing')
             row['missing_reason'] = '；'.join(_dedupe(reasons)) or None
             monthly.append(row)
+
+    # The screenshot's second series is a same-month comparison of the
+    # already-derived full-caliber expenditure flow.  Build it only after all
+    # monthly flows exist so a missing month cannot be bridged implicitly.
+    monthly_by_period = {row['period']: row for row in monthly}
+    for row in monthly:
+        row['combined_budget_expenditure_monthly_yoy'] = None
+        row['combined_budget_expenditure_monthly_yoy_formula'] = None
+        row['combined_budget_expenditure_monthly_yoy_missing_reason'] = None
+        year, month = _period_year_month(row['period'])
+        previous_period = f'{year - 1}-{month:02d}'
+        previous = monthly_by_period.get(previous_period)
+        current_value = row.get('combined_budget_expenditure_monthly')
+        previous_value = previous.get('combined_budget_expenditure_monthly') if previous else None
+        if _is_number(current_value) and _is_number(previous_value) and previous_value:
+            row['combined_budget_expenditure_monthly_yoy'] = round(
+                (float(current_value) / float(previous_value) - 1) * 100, 2)
+            row['combined_budget_expenditure_monthly_yoy_formula'] = (
+                f'combined_budget_expenditure_monthly[{row["period"]}] / '
+                f'combined_budget_expenditure_monthly[{previous_period}] - 1')
+            row['source_urls'] = _dedupe(
+                row.get('source_urls', []) + (previous.get('source_urls', []) if previous else [])
+                + ([previous.get('source_url')] if previous and previous.get('source_url') else []))
+            row['formula'] = '; '.join(filter(None, [
+                row.get('formula'), row['combined_budget_expenditure_monthly_yoy_formula']]))
+        elif _is_number(current_value):
+            row['combined_budget_expenditure_monthly_yoy_missing_reason'] = (
+                f'缺少上一年同月({previous_period})的全口径支出流量，未计算同比')
     return monthly
 
 
@@ -1421,6 +2583,22 @@ def build_budget_monthly_coverage(series, monthly):
     joint_total = [row['period'] for row in monthly if
                    _is_number(row.get('combined_budget_revenue_monthly')) and
                    _is_number(row.get('combined_budget_expenditure_monthly'))]
+    full_caliber_expenditure = [row['period'] for row in monthly
+                                if _is_number(row.get('combined_budget_expenditure_monthly'))]
+    full_caliber_expenditure_yoy = [row['period'] for row in monthly
+                                    if _is_number(row.get('combined_budget_expenditure_monthly_yoy'))]
+    coverage_by_indicator['combined_budget_expenditure_monthly_yoy'] = {
+        'base_flow_indicator': 'combined_budget_expenditure_monthly',
+        'observed_span_periods': len(monthly_periods),
+        'base_flow_records': len(full_caliber_expenditure),
+        'derived_yoy_records': len(full_caliber_expenditure_yoy),
+        'coverage_pct': (round(100 * len(full_caliber_expenditure_yoy) /
+                               len(full_caliber_expenditure), 2)
+                         if full_caliber_expenditure else 0.0),
+        'missing_yoy_periods': [row['period'] for row in monthly
+                                if _is_number(row.get('combined_budget_expenditure_monthly'))
+                                and not _is_number(row.get('combined_budget_expenditure_monthly_yoy'))],
+    }
     return {
         'basis': '按现有官方YTD报告的观测跨度审计；不把未披露的1月拆出，也不跨缺月差分。',
         'ytd_report_periods': len(ytd_periods),
@@ -1430,12 +2608,121 @@ def build_budget_monthly_coverage(series, monthly):
         'joint_total_flow_periods': len(joint_total),
         'joint_total_first': joint_total[0] if joint_total else None,
         'joint_total_latest': joint_total[-1] if joint_total else None,
+        'full_caliber_expenditure_flow_periods': len(full_caliber_expenditure),
+        'full_caliber_expenditure_first': full_caliber_expenditure[0] if full_caliber_expenditure else None,
+        'full_caliber_expenditure_latest': full_caliber_expenditure[-1] if full_caliber_expenditure else None,
+        'full_caliber_expenditure_yoy_periods': len(full_caliber_expenditure_yoy),
+        'full_caliber_expenditure_yoy_first': full_caliber_expenditure_yoy[0] if full_caliber_expenditure_yoy else None,
+        'full_caliber_expenditure_yoy_latest': full_caliber_expenditure_yoy[-1] if full_caliber_expenditure_yoy else None,
         'coverage_by_indicator': coverage_by_indicator,
         'warnings': [
             '官方报告是年初至今累计值；月度流量是相邻YTD差分，不是财政部直接公布的单月字段。',
             '1-2月作为一个合并窗口保留；1月没有单独官方观测。',
             '缺少相邻YTD截止期时保持 missing，不用前值、插值或跨缺月差分。',
             '两本账总收入/总支出是一般公共预算与政府性基金的简单相加，不等于财政部另行公布的法定综合财力。',
+        ],
+    }
+
+
+def build_full_caliber_expenditure_series(monthly):
+    """Expose the screenshot-compatible monthly full-caliber expenditure view.
+
+    The value is the derived sum of the two official YTD-derived monthly flows.
+    The year-on-year field compares the same reporting window in the prior year;
+    it is intentionally separate from the official YTD同比 fields.
+    """
+    records = []
+    for row in monthly:
+        value = row.get('combined_budget_expenditure_monthly')
+        yoy = row.get('combined_budget_expenditure_monthly_yoy')
+        records.append({
+            'period': row.get('period'),
+            'flow_window': row.get('flow_window'),
+            'months_covered': row.get('months_covered'),
+            'full_caliber_expenditure_monthly': value,
+            'full_caliber_expenditure_yoy_pct': yoy,
+            'data_status': 'derived' if _is_number(value) else 'missing',
+            'source_url': row.get('source_url'),
+            'source_urls': row.get('source_urls', []),
+            'source_title': row.get('source_title'),
+            'value_formula': (
+                'full_caliber_expenditure_monthly = '
+                'general_budget_expenditure_monthly + gov_fund_expenditure_monthly'
+                if _is_number(value) else None),
+            'yoy_formula': row.get('combined_budget_expenditure_monthly_yoy_formula'),
+            'formula': row.get('formula'),
+            'missing_reason': row.get('missing_reason'),
+            'yoy_missing_reason': row.get(
+                'combined_budget_expenditure_monthly_yoy_missing_reason'),
+        })
+    latest = next((row for row in reversed(records)
+                   if _is_number(row.get('full_caliber_expenditure_monthly'))), None)
+    latest_yoy = next((row for row in reversed(records)
+                       if _is_number(row.get('full_caliber_expenditure_yoy_pct'))), None)
+    base_records = [row for row in records
+                    if _is_number(row.get('full_caliber_expenditure_monthly'))]
+    yoy_records = [row for row in records
+                   if _is_number(row.get('full_caliber_expenditure_yoy_pct'))]
+
+    def card(label, row, value_key, unit, formula, warning):
+        value = row.get(value_key) if row else None
+        return {
+            'indicator_code': value_key,
+            'label': label,
+            'value': value,
+            'unit': unit,
+            'period': row.get('period') if row else None,
+            'flow_window': row.get('flow_window') if row else None,
+            'data_status': 'derived' if _is_number(value) else 'missing',
+            'source_name': SOURCE_NAME if row and _is_number(value) else None,
+            'source_url': row.get('source_url') if row and _is_number(value) else None,
+            'source_urls': row.get('source_urls', []) if row and _is_number(value) else [],
+            'source_title': row.get('source_title') if row and _is_number(value) else None,
+            'parser_notes': (
+                '由财政部一般公共预算与政府性基金官方YTD相邻差分后相加；'
+                '同比比较同一报告窗口，不把1—2月拆成单月。'
+                if row and _is_number(value) else None),
+            'formula': formula if row and _is_number(value) else None,
+            'warning': None if row and _is_number(value) else warning,
+        }
+
+    return {
+        'data_status': 'derived' if latest else 'missing',
+        'unit': '亿元',
+        'records': records,
+        'latest': latest,
+        'coverage': {
+            'flow_records': len(base_records),
+            'flow_first': base_records[0]['period'] if base_records else None,
+            'flow_latest': base_records[-1]['period'] if base_records else None,
+            'yoy_records': len(yoy_records),
+            'yoy_first': yoy_records[0]['period'] if yoy_records else None,
+            'yoy_latest': yoy_records[-1]['period'] if yoy_records else None,
+            'yoy_coverage_pct': (round(100 * len(yoy_records) / len(base_records), 2)
+                                 if base_records else 0.0),
+            'missing_yoy_periods': [row['period'] for row in base_records
+                                    if not _is_number(row.get('full_caliber_expenditure_yoy_pct'))],
+        },
+        'cards': [
+            card(
+                '财政全口径支出（当期流量，derived）', latest,
+                'full_caliber_expenditure_monthly', '亿元',
+                'full_caliber_expenditure_monthly = '
+                'general_budget_expenditure_monthly + gov_fund_expenditure_monthly',
+                '尚无一般公共预算与政府性基金均可差分的共同月份。'),
+            card(
+                '财政全口径支出同比（同月，derived）', latest_yoy,
+                'full_caliber_expenditure_yoy_pct', '%',
+                'full_caliber_expenditure_monthly[当期] / '
+                'full_caliber_expenditure_monthly[上一年同月] - 1',
+                '尚无可与当前流量严格匹配的上一年同月。'),
+        ],
+        'formula': 'general_budget_expenditure_monthly + gov_fund_expenditure_monthly',
+        'yoy_formula': 'same reporting window current year / prior year - 1',
+        'notes': [
+            '截图中的“全口径支出”按一般公共预算支出与政府性基金支出当期流量简单相加实现。',
+            '底层官方报告是YTD累计值；当期流量由相邻YTD差分得到，1—2月保留合并窗口。',
+            '同比是同一报告窗口的derived比较，不等同于财政部单列的官方YTD同比字段。',
         ],
     }
 
@@ -1564,10 +2851,13 @@ def simulate_budget_uncertainty(annual, anchor, first_year_rates, historical_rat
     }
 
 
-def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
+def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None,
+                          latest_ytd_analysis=None):
     """Build three transparent scenarios without writing them as official data."""
     if half_year_analysis is None:
         half_year_analysis = build_budget_half_year_analysis(annual, series)
+    if latest_ytd_analysis is None:
+        latest_ytd_analysis = build_budget_latest_ytd_analysis(annual, series)
     complete = [row for row in annual if all(
         isinstance(row.get(code), (int, float)) for code in CORE_OFFICIAL_INDICATORS)]
     if not complete:
@@ -1591,10 +2881,8 @@ def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
         for code in CORE_OFFICIAL_INDICATORS:
             current = latest_ytd.get(code)
             previous = prior_ytd.get(code)
-            official_yoy_code = (
-                'gov_fund_revenue_ytd_yoy_official'
-                if code == 'gov_fund_revenue_ytd' else None)
-            official_yoy = latest_ytd.get(official_yoy_code) if official_yoy_code else None
+            official_yoy_code = f'{code}_yoy_official'
+            official_yoy = latest_ytd.get(official_yoy_code)
             if isinstance(official_yoy, (int, float)):
                 raw_rate = float(official_yoy) / 100.0
                 first_year_raw_rates[code] = raw_rate
@@ -1621,19 +2909,22 @@ def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
     }
     half_current = (half_year_analysis or {}).get('current') or {}
     half_scenarios = half_current.get('scenarios') or {}
+    latest_current = (latest_ytd_analysis or {}).get('current') or {}
+    latest_scenarios = latest_current.get('scenarios') or {}
+    latest_cutoff_month = latest_current.get('cutoff_month')
     seasonal_ready = bool(
-        half_current.get('year') and
-        all((half_year_analysis.get('share_stats', {}).get(_budget_short_code(code), {}).get('n_obs', 0)
+        latest_current.get('year') and
+        all((latest_ytd_analysis.get('share_stats', {}).get(_budget_short_code(code), {}).get('n_obs', 0)
              >= 3) for code in CORE_OFFICIAL_INDICATORS) and
-        all((half_scenarios.get('baseline', {}).get('values', {}).get(code) is not None)
+        all((latest_scenarios.get('baseline', {}).get('values', {}).get(code) is not None)
             for code in CORE_OFFICIAL_INDICATORS))
     if seasonal_ready:
         scenario_specs['baseline']['interpretation'] = (
-            '当前年按同科目历史H1/全年比例中位数转换；后续按近期年度增速中位数')
+            f"当前年按同科目历史{latest_current.get('cutoff_label', '最新累计月')}/全年比例中位数转换；后续按近期年度增速中位数")
         scenario_specs['improvement']['interpretation'] = (
-            '当前年收入使用H1/全年比例第25百分位、支出使用第75百分位；后续收入+2pp、支出-2pp')
+            f"当前年收入使用{latest_current.get('cutoff_label', '最新累计月')}/全年比例第25百分位、支出使用第75百分位；后续收入+2pp、支出-2pp")
         scenario_specs['pressure']['interpretation'] = (
-            '当前年收入使用H1/全年比例第75百分位、支出使用第25百分位；后续收入-2pp、支出+2pp')
+            f"当前年收入使用{latest_current.get('cutoff_label', '最新累计月')}/全年比例第75百分位、支出使用第25百分位；后续收入-2pp、支出+2pp")
     scenarios = {}
     revenue_codes = {'general_budget_revenue_ytd', 'gov_fund_revenue_ytd'}
     for scenario_code, spec in scenario_specs.items():
@@ -1642,13 +2933,13 @@ def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
         for offset in range(1, horizon + 1):
             year = anchor['year'] + offset
             values = {}
-            if offset == 1 and seasonal_ready and scenario_code in half_scenarios:
-                values = {code: half_scenarios[scenario_code]['values'][code]
+            if offset == 1 and seasonal_ready and scenario_code in latest_scenarios:
+                values = {code: latest_scenarios[scenario_code]['values'][code]
                           for code in CORE_OFFICIAL_INDICATORS}
                 method = (
-                    'current-year June YTD official values converted by same-account '
-                    'historical H1/full-year seasonal share; scenario uses empirical '
-                    'share quantile; no direct H1-yoy-to-full-year extrapolation')
+                    f"current-year {latest_current.get('cutoff_label', 'latest YTD')} official values "
+                    'converted by same-account historical same-cutoff/full-year seasonal share; '
+                    'scenario uses empirical share quantile; no direct YTD-yoy-to-full-year extrapolation')
             else:
                 for code in CORE_OFFICIAL_INDICATORS:
                     base_rate = historical_rates[code]
@@ -1662,11 +2953,11 @@ def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
         scenarios[scenario_code] = {'label': spec['label'], 'records': rows}
 
     if seasonal_ready:
-        baseline_values = half_scenarios['baseline']['values']
-        current_simulation = half_current.get('simulation') or {
+        baseline_values = latest_scenarios['baseline']['values']
+        current_simulation = latest_current.get('simulation') or {
             'data_status': 'insufficient_sample', 'records': [], 'simulations': 0,
         }
-        seasonal_anchor = {'year': half_current['year'], **baseline_values}
+        seasonal_anchor = {'year': latest_current['year'], **baseline_values}
         future_uncertainty = simulate_budget_uncertainty(
             complete, seasonal_anchor, historical_rates, historical_rates,
             horizon=max(int(horizon) - 1, 0))
@@ -1675,7 +2966,7 @@ def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
             (future_uncertainty.get('records') or [])
         uncertainty['current_year'] = current_simulation
         uncertainty['method'] = (
-            '当前年固定官方上半年累计值并对历史H1/全年比例做联合bootstrap；'
+            f"当前年固定官方{latest_current.get('cutoff_label', '最新累计月')}累计值并对历史同截止月/全年比例做联合bootstrap；"
             '后续年度再从历史年度联合增速向量抽样。')
         uncertainty['warnings'] = _dedupe(
             (current_simulation.get('warnings') or []) +
@@ -1688,24 +2979,32 @@ def build_budget_forecast(annual, series, horizon=3, half_year_analysis=None):
         'data_status': 'scenario', 'anchor_year': anchor['year'], 'horizon_years': horizon,
         'latest_ytd_period': latest_ytd['period'] if latest_ytd else None,
         'comparison_ytd_period': prior_ytd['period'] if prior_ytd else None,
+        'latest_ytd_cutoff_month': latest_cutoff_month,
+        'latest_ytd_cutoff_label': latest_current.get('cutoff_label') if latest_current else None,
         'historical_growth_rates': historical_rates,
         'first_year_growth_rates_raw': first_year_raw_rates,
         'first_year_growth_rates': first_year_rates,
         'first_year_growth_rate_sources': first_year_rate_sources,
-        'current_year_forecast_mode': 'h1_seasonality' if seasonal_ready else 'h1_yoy_fallback',
+        'current_year_forecast_mode': (
+            ('h1_seasonality' if latest_cutoff_month == 6 else 'latest_ytd_seasonality')
+            if seasonal_ready else
+            ('h1_yoy_fallback' if latest_cutoff_month == 6 else 'latest_ytd_yoy_fallback')),
         'current_year_h1_growth_rates_raw': first_year_raw_rates,
         'current_year_h1_growth_rate_sources': first_year_rate_sources,
+        'current_year_ytd_growth_rates_raw': first_year_raw_rates,
+        'current_year_ytd_growth_rate_sources': first_year_rate_sources,
         'half_year_analysis': half_year_analysis,
+        'latest_ytd_analysis': latest_ytd_analysis,
         'scenario_definitions': scenario_specs,
         'scenarios': scenarios,
         'uncertainty': uncertainty,
         'warnings': [
             '情景估计不是财政部预测，不写入 official observation。',
-            ('当前年度使用同科目历史H1/全年比例转换；上半年同比只作为背景信息，'
-             '不直接当作全年同比。' if seasonal_ready else
-             '历史H1/全年比例样本不足，当前年度回退为同月累计同比/近期年度中位数方法。'),
+            (f"当前年度使用同科目历史{latest_current.get('cutoff_label', '最新累计月')}/全年比例转换；"
+             '累计同比只作为背景信息，不直接当作全年同比。' if seasonal_ready else
+             '历史同截止月/全年比例样本不足，当前年度回退为同月累计同比/近期年度中位数方法。'),
             '较好/较坏情景分别在收入与支出增速上作 ±2 个百分点调整；它们是压力测试，不是理论最好/最坏值。',
-            ('当前年模拟使用历史四项H1/全年比例联合抽样；后续年度模拟使用同一年四项收支增速联合抽样，'
+            (f"当前年模拟使用历史四项{latest_current.get('cutoff_label', '最新累计月')}/全年比例联合抽样；后续年度模拟使用同一年四项收支增速联合抽样，"
              '固定种子运行5000次。' if seasonal_ready else
              '模拟区间使用同一年四项收支增速联合抽样，固定种子运行5000次；所有增速限制在 ±20%。'),
         ],
@@ -1727,13 +3026,23 @@ def build_fiscal_budget_payload(db_path):
         if r['source_url'] and r['source_url'] not in rec['source_urls']:
             rec['source_urls'].append(r['source_url'])
     series = sorted(by_period.values(), key=lambda x: x['period'])
-    annual = _annual_series(series)
+    deficit_rows = [r for r in rows if r['indicator_code'] ==
+                    OFFICIAL_NATIONAL_FISCAL_DEFICIT_INDICATOR]
+    annual = attach_official_national_fiscal_deficit(_annual_series(series), deficit_rows)
+    historical_summary = build_historical_fiscal_summary(annual, deficit_rows)
+    current_year_summary = build_current_year_fiscal_summary(
+        series, annual, OFFICIAL_NATIONAL_FISCAL_DEFICIT_PLAN)
     land_transfer_annual = build_land_transfer_annual_series(series)
     land_transfer_half_year = build_land_transfer_half_year_analysis(series)
+    land_transfer_latest_ytd = build_land_transfer_latest_ytd_analysis(series)
     budget_half_year = build_budget_half_year_analysis(annual, series)
+    budget_latest_ytd = build_budget_latest_ytd_analysis(annual, series)
     monthly = derive_monthly_budget_series(series)
     monthly_coverage = build_budget_monthly_coverage(series, monthly)
-    forecast = build_budget_forecast(annual, series, half_year_analysis=budget_half_year)
+    full_caliber_expenditure = build_full_caliber_expenditure_series(monthly)
+    forecast = build_budget_forecast(
+        annual, series, half_year_analysis=budget_half_year,
+        latest_ytd_analysis=budget_latest_ytd)
     latest = series[-1] if series else None
     latest_rows = {r['indicator_code']: r for r in rows if latest and r['period'] == latest['period']}
     cards = []
@@ -1799,6 +3108,7 @@ def build_fiscal_budget_payload(db_path):
                 'gov_fund_expenditure_monthly') if latest_monthly else None,
             'warning': None if latest_monthly else '尚无一般公共预算与政府性基金均可差分的共同月份。',
         })
+    monthly_cards.extend(full_caliber_expenditure.get('cards', [])[1:])
     coverage = {
         'periods': len(series),
         'earliest': series[0]['period'] if series else None,
@@ -1806,6 +3116,12 @@ def build_fiscal_budget_payload(db_path):
         'annual_periods': len(annual),
         'annual_earliest': annual[0]['period'] if annual else None,
         'annual_latest': annual[-1]['period'] if annual else None,
+        'historical_fiscal_summary': historical_summary.get('coverage', {}),
+        'current_year_fiscal_summary': {
+            'period': current_year_summary.get('period'),
+            'year': current_year_summary.get('year'),
+            'data_status': current_year_summary.get('data_status'),
+        },
         'land_transfer_annual_periods': len(land_transfer_annual),
         'land_transfer_annual_start': (
             land_transfer_annual[0]['period'] if land_transfer_annual else None),
@@ -1820,26 +3136,45 @@ def build_fiscal_budget_payload(db_path):
         'land_transfer_half_year_matched_years': land_transfer_half_year.get('n_obs', 0),
         'land_transfer_half_year_sample_start': land_transfer_half_year.get('sample_start'),
         'land_transfer_half_year_sample_end': land_transfer_half_year.get('sample_end'),
+        'land_transfer_latest_ytd_period': land_transfer_latest_ytd.get('current', {}).get('period')
+        if land_transfer_latest_ytd.get('current') else None,
+        'land_transfer_latest_ytd_cutoff_month': land_transfer_latest_ytd.get('current', {}).get('cutoff_month')
+        if land_transfer_latest_ytd.get('current') else None,
+        'land_transfer_latest_ytd_matched_years': land_transfer_latest_ytd.get('n_obs', 0),
+        'budget_latest_ytd_period': budget_latest_ytd.get('current', {}).get('period')
+        if budget_latest_ytd.get('current') else None,
+        'budget_latest_ytd_cutoff_month': budget_latest_ytd.get('current', {}).get('cutoff_month')
+        if budget_latest_ytd.get('current') else None,
+        'budget_latest_ytd_matched_years': budget_latest_ytd.get('n_obs', 0),
         'monthly_flow': monthly_coverage,
+        'full_caliber_expenditure': full_caliber_expenditure.get('coverage', {}),
     }
     return {
         'data_status': 'official' if rows else 'missing',
         'coverage': coverage,
         'cards': cards, 'annual_cards': annual_cards, 'monthly_cards': monthly_cards,
         'series': series, 'annual_series': annual,
+        'historical_fiscal_summary': historical_summary,
+        'current_year_fiscal_summary': current_year_summary,
         'land_transfer_annual_series': land_transfer_annual,
         'land_transfer_half_year_analysis': land_transfer_half_year,
+        'land_transfer_latest_ytd_analysis': land_transfer_latest_ytd,
         'budget_half_year_analysis': budget_half_year,
+        'budget_latest_ytd_analysis': budget_latest_ytd,
         'monthly_series': monthly,
+        'full_caliber_expenditure': full_caliber_expenditure,
         'monthly_coverage': monthly_coverage, 'forecast': forecast,
         'warnings': [] if rows else ['财政收支尚未抓取；未生成 mock。'],
         'notes': [
             '官方报告为年初至今累计(YTD)；收支差额为 derived，不等于官方预算口径赤字。',
+            '历年财政汇总单独保留财政部年度报告的法定赤字；账面缺口按支出减收入另列，禁止相互替代。',
+            '当前年度汇总只显示最新YTD实际、YTD账面缺口和官方预算计划；全年法定赤字待年度报告。',
             '一般公共预算与政府性基金的合计仅为简单相加分析视图，未抵销调入调出或跨账本转移。',
             '2010—2011 年国库司年度财政收支稿未同时披露全国政府性基金收支，基金年度序列从直接可核验的 2012 年开始。',
             '全国土地出让收入年度表从2007年制度化口径开始；表中缺年保留为空，不把2007年前预算外/扣除成本口径与2007年后全额入库口径直接拼接。',
             '土地出让收入年度值取财政部12月YTD官方观测；年度表不是将月度观测相加，也不对缺失年份插值。',
             '土地出让收入半年度分析只匹配同一年6月YTD与12月YTD；历史比例和回测为derived，当前年机械推演不等于官方预测。',
+            '全年推演锚点自动使用最新非12月官方累计月；与同截止月历史/12月配对，保留上半年分析作为回测对照。',
             '财政收支全年推演优先使用同科目历史H1/全年比例；上半年同比不直接当作全年同比，模拟区间仅为历史季节性敏感性。',
             '月度流量由相邻YTD差分得到；1-2月为合并窗口，缺少相邻YTD时不跨缺月计算。',
         ],

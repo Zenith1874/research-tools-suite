@@ -66,11 +66,13 @@ class FiscalCashflowPrimitiveTests(unittest.TestCase):
 
     def test_buyout_timeline_marks_completed_and_projected_separately(self):
         rows = build_liquidity_timeline([], [
-            {'period': '2026-06', 'outstanding_amount': 54000.0},
+            {'period': '2026-06', 'outstanding_amount': 54000.0,
+             'monthly_bucket_outstanding_amount': 56000.0},
         ], [
             {'period': '2026-07', 'outstanding_amount': 61000.0},
         ], [])
         self.assertEqual(rows[0]['buyout_repo_status'], 'derived')
+        self.assertEqual(rows[0]['buyout_repo_month_bucket_stock'], 56000.0)
         self.assertEqual(rows[1]['buyout_repo_status'], 'projected')
         self.assertNotIn('buyout_repo_projected_stock', rows[0])
         self.assertNotIn('buyout_repo_completed_stock', rows[1])
@@ -86,7 +88,9 @@ class FiscalCashflowPrimitiveTests(unittest.TestCase):
         page = (Path(__file__).resolve().parents[1] / 'static' / 'fiscal_debt.html').read_text(
             encoding='utf-8')
         for expected in ('还本付息压力路径', '每年借多少、还多少', '新型流动性工具时间线',
-                         '已知到期推算', '⬇ CSV'):
+                         '已知到期推算', '截图月度归集',
+                         'monthly_bucket_outstanding_amount', '逐笔操作 × 月份横向展开',
+                         'pboc_buyout_reverse_repo_matrix', '⬇ CSV', '⬇ PNG'):
             self.assertIn(expected, page)
         for prohibited in ('印' + '钞', '货币' + '化', '认购' + '国债'):
             self.assertNotIn(prohibited, page)

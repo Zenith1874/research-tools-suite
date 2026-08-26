@@ -37,12 +37,20 @@
       <label>历史来源<select id="dataSource"><option value="anjuke" selected>安居客月度·15城目录</option><option value="anjuke_yearly">安居客年度·15城目录</option><option value="official">统计局 70 城官方指数</option></select></label>
       <label>房价口径<select id="kind"><option value="second">二手住宅</option><option value="new">新建商品住宅</option></select></label>
       <label>推演期间<select id="horizon"><option value="12">12个月</option><option value="24">24个月</option><option value="36">36个月</option><option value="2030" selected>到2030年末（按各城最新期）</option><option value="60">60个月</option></select></label>
-      <label>推演模型<select id="forecastMode"><option value="structural" selected>结构驱动修正</option><option value="momentum">纯价格动能</option></select></label>
+      <label>推演模型<select id="forecastMode"><option value="structural" selected>结构驱动修正</option><option value="momentum">纯价格动能</option><option value="macro_linked">宏观联动</option></select></label>
       <label>结构修正强度 %<input id="structuralWeight" type="number" min="0" max="100" step="10" value="40"></label>
       <label>多城纵轴<select id="compareValueMode"><option value="price" selected>期末挂牌价（元/㎡）</option><option value="change">较当前变化（%）</option></select></label>
       <button id="compareRun" class="primary">更新多城比较</button>
       <button id="downloadCsv">导出比较 CSV</button>
       <span id="freshness" class="muted"></span>
+    </div>
+    <div id="macroLinkControls" class="controls hidden">
+      <span class="hint">宏观联动组件选择：auto 会随房价三情景反向映射；可固定为单条宏观轨道检查敏感性。缺失指标不代填。</span>
+      <label>增长<select id="macroGrowth"><option value="auto">auto·随情景</option><option value="upper">上行</option><option value="base">基准</option><option value="lower">下行</option></select></label>
+      <label>信用<select id="macroCredit"><option value="auto">auto·随情景</option><option value="upper">上行</option><option value="base">基准</option><option value="lower">下行</option></select></label>
+      <label>销售面积<select id="macroSales"><option value="auto">auto·随情景</option><option value="upper">上行</option><option value="base">基准</option><option value="lower">下行</option></select></label>
+      <label>人口<select id="macroPopulation"><option value="auto">auto·随情景</option><option value="upper">上行</option><option value="base">基准</option><option value="lower">下行</option></select></label>
+      <label>LPR<select id="macroLpr"><option value="auto">auto·随情景</option><option value="upper">上行</option><option value="base">基准</option><option value="lower">下行</option></select></label>
     </div>
   </section>
 
@@ -102,6 +110,7 @@
     <div class="grid">
       <div class="card wide"><div class="row"><div class="actions"><h3 id="detailChartTitle">历史与未来路径</h3><span id="detailHorizonBadge" class="badge scenario">情景终点 2030-12</span></div><span id="momentumText" class="muted"></span></div><div class="chart tall"><canvas id="detailChart"></canvas></div></div>
       <div class="card wide"><div class="row"><div><h3>结构驱动贡献：人口、收入、婚姻、量供给与融资</h3><div id="driverCoverage" class="muted driver-summary"></div></div><span class="badge scenario">transparent stress test</span></div><div class="chart driver"><canvas id="driverContributionChart"></canvas></div><div class="scroll"><table class="driver-table"><thead><tr><th>驱动</th><th>使用口径 / 覆盖</th><th>乐观假设</th><th>基准假设</th><th>压力假设</th><th>系数与上限</th></tr></thead><tbody id="driverTable"></tbody></table></div><div id="driverMethod" class="muted"></div></div>
+      <div class="card wide hidden" id="macroLinkCard"><div class="row"><div><h3>宏观联动贡献：增长、信用、销售、人口与LPR</h3><div id="macroLinkCoverage" class="muted driver-summary"></div></div><span class="badge scenario">transparent overlay</span></div><div class="chart driver"><canvas id="macroLinkContributionChart"></canvas></div><div class="scroll"><table class="driver-table"><thead><tr><th>组件</th><th>状态 / 样本</th><th>当前值</th><th>系数</th><th>乐观轨道</th><th>基准轨道</th><th>压力轨道</th></tr></thead><tbody id="macroLinkTable"></tbody></table></div><div id="macroLinkMethod" class="muted"></div></div>
       <div class="card"><div class="row"><h3>全国共同结构背景</h3><span class="badge official">official / derived</span></div><div class="chart"><canvas id="nationalDriverChart"></canvas></div><div class="muted">人口、收入与结婚登记均来自国家统计局；粗结婚率由登记对数/人口派生。三条线显示年度增速，不把不同绝对单位混画。</div></div>
       <div class="card"><div class="row"><h3>观察项：人口、就业、储蓄、投资与人才</h3><span class="badge">context only</span></div><div id="contextDriverCards" class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))"></div><div class="muted">户籍人口、就业、住户存款、房地产投资和高校学生的方向或口径均有歧义，因此只展示，不进入价格公式。</div></div>
       <div class="card"><div class="row"><h3>历史机械回测</h3><span class="badge">derived</span></div><div id="backtestKpis" class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))"></div><div id="backtestNote" class="muted"></div></div>

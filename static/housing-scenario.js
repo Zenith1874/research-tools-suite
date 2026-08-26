@@ -28,14 +28,18 @@ function destroy(key){if(charts[key]){charts[key].destroy();delete charts[key]}}
 function showError(id,message){$(id).textContent=message||'';$(id).classList.toggle('hidden',!message)}
 function setLoading(on){document.body.classList.toggle('loading',on)}
 function useStructural(){return $('forecastMode')?.value==='structural'}
+function useLinked(){return $('forecastMode')?.value==='macro_linked'}
 function scenarioItems(container){
+  const linked=container?.macro_linked_scenarios||[];
   const structural=container?.structural_scenarios||[];
+  if(useLinked())return linked;
   return useStructural()&&structural.length?structural:(container?.scenarios||[]);
 }
 function scenarioMap(series){return Object.fromEntries(scenarioItems(series).filter(x=>!x.status).map(x=>[x.key,x]))}
 function momentumScenarioMap(series){return Object.fromEntries((series?.scenarios||[]).filter(x=>!x.status).map(x=>[x.key,x]))}
-function modelLabel(){return useStructural()?'结构驱动修正':'纯价格动能'}
+function modelLabel(){return useLinked()?'宏观联动':useStructural()?'结构驱动修正':'纯价格动能'}
 function structuralWeight(){return Math.max(0,Math.min(100,Number($('structuralWeight')?.value)||0))/100}
+function macroSelectors(){return {growth:$('macroGrowth')?.value||'auto',credit:$('macroCredit')?.value||'auto',sales:$('macroSales')?.value||'auto',population:$('macroPopulation')?.value||'auto',lpr:$('macroLpr')?.value||'auto'}}
 function horizonLabel(payload){return payload?.end_period?`到${payload.end_period}`:`${payload?.horizon_months}个月后`}
 function scenarioEndPrice(item,currentPrice){
   if(item?.end_price!=null)return item.end_price;
@@ -97,6 +101,9 @@ function updateUrlState(){
   params.set('kind',$('kind').value);
   params.set('model',$('forecastMode').value);
   params.set('structural_weight',String(Math.round(structuralWeight()*100)));
+  params.set('macro_link',useLinked()?'1':'0');
+  const macro=macroSelectors();
+  Object.entries(macro).forEach(([key,value])=>params.set(`macro_${key}`,value));
   const formation=formationAdjustments();
   params.set('formation_optimistic',String(formation.optimistic));
   params.set('formation_base',String(formation.base));
@@ -111,7 +118,8 @@ function scrollToPageAnchor(){
 
 function compareQuery(){
   const formation=formationAdjustments();
-  return new URLSearchParams({cities:[...selected].join(','),source:sourceMode(),kind:$('kind').value,horizon:$('horizon').value,structural_weight:structuralWeight(),formation_optimistic:formation.optimistic,formation_base:formation.base,formation_stress:formation.stress}).toString();
+  const macro=macroSelectors();
+  return new URLSearchParams({cities:[...selected].join(','),source:sourceMode(),kind:$('kind').value,horizon:$('horizon').value,structural_weight:structuralWeight(),formation_optimistic:formation.optimistic,formation_base:formation.base,formation_stress:formation.stress,macro_link:useLinked()?'1':'0',macro_growth:macro.growth,macro_credit:macro.credit,macro_sales:macro.sales,macro_population:macro.population,macro_lpr:macro.lpr}).toString();
 }
 async function loadComparison(){
   if(!selected.size){showError('compareError','请至少选择一个城市。');return}
@@ -151,7 +159,8 @@ function renderComparison(){
 }
 
 function detailQuery(){
-  const q=new URLSearchParams({city:$('focusCity').value,source:sourceMode(),kind:$('kind').value,horizon:$('horizon').value,down_payment:(Number($('downPayment').value)||35)/100,structural_weight:structuralWeight()});
+  const macro=macroSelectors();
+  const q=new URLSearchParams({city:$('focusCity').value,source:sourceMode(),kind:$('kind').value,horizon:$('horizon').value,down_payment:(Number($('downPayment').value)||35)/100,structural_weight:structuralWeight(),macro_link:useLinked()?'1':'0',macro_growth:macro.growth,macro_credit:macro.credit,macro_sales:macro.sales,macro_population:macro.population,macro_lpr:macro.lpr});
   for(const [key,id] of [['optimistic','rateOptimistic'],['base','rateBase'],['stress','rateStress']]){const value=$(id).value.trim();if(value!=='')q.set(key,value)}
   return q.toString();
 }
@@ -188,14 +197,15 @@ function renderDetail(){
   const simOk=series.simulation?.status==='ok',simEnd=series.simulation?.points?.at(-1)||{};
   const simulationKpi=simOk?`<div class="kpi">模拟 P50<b>${series.value_kind==='price_level'?`${fmt(simEnd.p50_price,0)} 元/㎡`:pct(series.simulation?.end_vs_now?.p50)}</b><small>${series.value_kind==='price_level'?`较当前 ${pct(series.simulation?.end_vs_now?.p50)} · `:''}${series.simulation?.simulations||0}条路径 · 敏感性中位</small></div>`:`<div class="kpi">月度模拟<b>不适用</b><small>${series.simulation?.reason||'历史不足'}</small></div>`;
   $('detailKpis').innerHTML=`<div class="kpi">${series.value_kind==='price_level'?'当前挂牌均价':'当前较峰值'}<b>${currentHeadline}</b><small>${currentSmall}</small></div>`+
-    ['optimistic','base','stress'].map(key=>{const item=by[key],headline=series.value_kind==='price_level'?`${fmt(scenarioEndPrice(item,series.current.price),0)} 元/㎡`:pct(item?.end_vs_now);const rawDelta=Number(item?.structural_delta_pp),delta=Math.abs(rawDelta)<0.005?0:rawDelta;const modelNote=useStructural()?`动能年化 ${pct(item?.momentum_annualised,2)} · 结构修正 ${delta>0?'+':''}${fmt(delta,2)}pp`:(item?.overridden?'自定义假设':scenarioAnchor(item));return `<div class="kpi"><span class="scenario-${key==='optimistic'?'opt':key}">${{optimistic:'乐观',base:'基准',stress:'压力'}[key]}</span> ${horizonText}<b>${headline}</b><small>${series.value_kind==='price_level'?`较当前 ${pct(item?.end_vs_now)} · `:''}较峰值 ${pct(item?.end_vs_peak)} · 年化 ${pct(item?.annualised,2)}<br>${modelNote}</small></div>`}).join('')+simulationKpi;
+    ['optimistic','base','stress'].map(key=>{const item=by[key],headline=series.value_kind==='price_level'?`${fmt(scenarioEndPrice(item,series.current.price),0)} 元/㎡`:pct(item?.end_vs_now);const rawDelta=Number(item?.structural_delta_pp),delta=Math.abs(rawDelta)<0.005?0:rawDelta;const macroDelta=Number(item?.macro_adjustment_end_pp),rawAnnualised=momentumBy[key]?.annualised,macroText=Number.isFinite(macroDelta)?`纯动能年化 ${pct(rawAnnualised,2)} · 宏观期末 ${macroDelta>0?'+':''}${fmt(macroDelta,2)}pp`:'';const modelNote=useLinked()?macroText:useStructural()?`动能年化 ${pct(item?.momentum_annualised,2)} · 结构修正 ${delta>0?'+':''}${fmt(delta,2)}pp`:(item?.overridden?'自定义假设':scenarioAnchor(item));return `<div class="kpi"><span class="scenario-${key==='optimistic'?'opt':key}">${{optimistic:'乐观',base:'基准',stress:'压力'}[key]}</span> ${horizonText}<b>${headline}</b><small>${series.value_kind==='price_level'?`较当前 ${pct(item?.end_vs_now)} · `:''}较峰值 ${pct(item?.end_vs_peak)} · 年化 ${pct(item?.annualised,2)}<br>${modelNote}</small></div>`}).join('')+simulationKpi;
   $('momentumText').textContent='复合月速：'+momentumSpecs().map(([key,label])=>{const meta=series.momentum_windows?.[key];return `${label} ${pct(series.momentum[key],3)}${meta?`（实际${meta.actual_months}月）`:''}`}).join(' · ');
   for(const [key,id] of [['optimistic','rateOptimistic'],['base','rateBase'],['stress','rateStress']])$(id).placeholder=momentumBy[key]?momentumBy[key].derived_monthly_rate.toFixed(3):'—';
   renderDetailChart(series,by,momentumBy);
   renderStructuralDrivers(detailPayload.structural_drivers,series.structural_scenarios||[]);
+  renderMacroLinkage(detailPayload.macro_linkage,series);
   renderBacktest(series.backtest);
   renderSimulation(series.simulation);
-  renderEquity(useStructural()&&series.structural_equity?series.structural_equity:series.equity);
+  renderEquity(useLinked()&&series.macro_linked_equity?series.macro_linked_equity:useStructural()&&series.structural_equity?series.structural_equity:series.equity);
   renderAnchor(detailPayload.valuation_anchor);
   const source=series.source||{};
   const available=detailPayload.available_sample_start&&detailPayload.available_sample_start!==series.sample_start?`<p>原始可用起点 ${detailPayload.available_sample_start}；因中间缺月，推演只取 ${series.sample_start} 起最新连续段。</p>`:'';
@@ -205,7 +215,7 @@ function renderDetail(){
   const grain=source.source_grains?.length?`<p>源粒度：${source.source_grains.join(' / ')}。</p>`:'';
   const coverage=detailPayload.structural_drivers?.coverage||{};
   $('sourceInfo').innerHTML=`<p>城市：${detailPayload.city}</p><p>样本：${series.sample_start} 至 ${series.sample_end}，${series.n_obs}${observationUnit}。</p>${available}${imputed}<p>历史状态：${source.data_status||'—'}；来源：${source.name||'—'}</p>${grain}<p>结构驱动：模型使用 ${coverage.model_drivers_used||0} 项，其中本市 ${coverage.city_specific_used||0} 项、全国回退 ${coverage.national_fallback_used||0} 项。</p><p>${source.url?`<a href="${source.url}" target="_blank" rel="noopener">打开最新来源页（${source.latest_period}）</a>`:'无来源链接'}</p>`;
-  $('methodNotes').innerHTML=`<p>• ${detailPayload.method.index}</p><p>• ${detailPayload.method.scenario}</p>${detailPayload.method.structural?`<p>• ${detailPayload.method.structural}</p>`:''}`+detailPayload.caveats.map(note=>`<p>• ${note}</p>`).join('');
+  $('methodNotes').innerHTML=`<p>• ${detailPayload.method.index}</p><p>• ${detailPayload.method.scenario}</p>${detailPayload.method.structural?`<p>• ${detailPayload.method.structural}</p>`:''}${detailPayload.method.macro_linkage?`<p>• ${detailPayload.method.macro_linkage}</p>`:''}`+detailPayload.caveats.map(note=>`<p>• ${note}</p>`).join('');
 }
 function renderDetailChart(series,by,momentumBy){
   const windowSize=Number($('historyWindow').value),latestOrdinal=periodOrdinal(series.current.period);
@@ -221,12 +231,40 @@ function renderDetailChart(series,by,momentumBy){
   if(history.some(x=>x.imputed))datasets.push({label:'前值插补（derived）',data:labels.map(period=>historyMap.get(period)?.imputed?transform(historyMap.get(period).index):null),borderColor:'#f5a623',backgroundColor:'#f5a623',showLine:false,pointRadius:5,pointHoverRadius:7});
   const sim=series.simulation?.status==='ok'?series.simulation.points:[];
   if(sim.length){const simMap=new Map(sim.map(point=>[point.period,point])),simData=key=>labels.map(period=>period===series.current.period?transform(series.current.index):transform(simMap.get(period)?.[key]));datasets.push({label:'模拟 P90',data:simData('p90'),borderColor:'rgba(167,139,250,.35)',pointRadius:0,borderWidth:1});datasets.push({label:'模拟 P10–P90',data:simData('p10'),borderColor:'rgba(167,139,250,.35)',backgroundColor:'rgba(167,139,250,.12)',fill:'-1',pointRadius:0,borderWidth:1});datasets.push({label:'模拟 P50',data:simData('p50'),borderColor:'#a78bfa',borderDash:[2,3],pointRadius:0,borderWidth:1.3})}
-  if(useStructural()&&momentumBy?.base){const rawMap=new Map(momentumBy.base.path.map(point=>[point.period,point.index]));datasets.push({label:'纯动能基准（对照）',data:labels.map(period=>period===series.current.period?transform(series.current.index):transform(rawMap.get(period))),borderColor:'#7890a8',borderDash:[2,5],pointRadius:0,borderWidth:1.2})}
+  if((useStructural()||useLinked())&&momentumBy?.base){const rawMap=new Map(momentumBy.base.path.map(point=>[point.period,point.index]));datasets.push({label:'纯动能基准（对照）',data:labels.map(period=>period===series.current.period?transform(series.current.index):transform(rawMap.get(period))),borderColor:'#7890a8',borderDash:[2,5],pointRadius:0,borderWidth:1.2})}
   for(const key of ['optimistic','base','stress'])if(by[key]){const pathMap=new Map(by[key].path.map(point=>[point.period,point.index]));datasets.push({label:`${{optimistic:'乐观',base:'基准',stress:'压力'}[key]} ${pct(by[key].monthly_rate,3)}/月`,data:labels.map(period=>period===series.current.period?transform(series.current.index):transform(pathMap.get(period))),borderColor:COLORS[key],borderDash:[6,3],pointRadius:0,borderWidth:1.8,spanGaps:false})}
   const rawLabel=series.value_kind==='price_level'?'挂牌均价（元/㎡）':'定基指数';
   const kindLabel=series.value_kind==='price_level'?'二手房挂牌价':$('kind').selectedOptions[0].text;
   $('detailChartTitle').textContent=`${detailPayload.city} · ${kindLabel} · ${$('indexMode').value==='peak'?'峰值=100':rawLabel}`;
   charts.detail=new Chart($('detailChart'),{type:'line',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{offset:true,ticks:{color:'#8fa4bd',autoSkip:false,maxRotation:0,minRotation:0,callback:(value,index)=>detailXAxisLabel(labels,index,series.current.period)},grid:{color:context=>context.tick?.label?'#14263a':'transparent'},title:{display:true,text:`历史实际 + 情景路径（终点 ${lastPeriod}）`,color:'#8fa4bd'}},y:{...yScale(),ticks:{color:'#8fa4bd'},grid:{color:'#14263a'},title:{display:true,text:$('indexMode').value==='peak'?'峰值=100':rawLabel,color:'#8fa4bd'}}},plugins:{legend:{position:'bottom',labels:{color:'#cbd8e6',boxWidth:15,usePointStyle:true}}}}});
+}
+function renderMacroLinkage(linkage,series){
+  const card=$('macroLinkCard');
+  if(!card)return;
+  const active=useLinked()&&!isYearlySource();
+  card.classList.toggle('hidden',!active);
+  destroy('macroLinkContribution');
+  if(!active)return;
+  if(!linkage||linkage.status==='not_applicable'){
+    $('macroLinkCoverage').textContent=linkage?.reason||'宏观联动不可用。';
+    $('macroLinkTable').innerHTML='';$('macroLinkMethod').textContent='';return;
+  }
+  const components=linkage.components||[],available=linkage.available_component_count||0;
+  const statusText={ok:'可用',partial:'部分可用',insufficient_data:'无可用组件',missing:'缺失',insufficient_sample:'历史不足'};
+  const map=linkage.track_map||{};
+  $('macroLinkCoverage').innerHTML=`覆盖 <b>${available}/${linkage.component_count||components.length}</b> 个组件 · 状态 <b>${statusText[linkage.status]||linkage.status}</b>。`+
+    `乐观/基准/压力期末调整：${(series?.macro_linked_scenarios||[]).map(item=>`${item.key} ${item.macro_adjustment_end_pp>0?'+':''}${fmt(item.macro_adjustment_end_pp,2)}pp`).join(' · ')||'尚无可用路径'}`;
+  $('macroLinkTable').innerHTML=components.map(component=>{
+    const drifts=component.annualised_drifts||{};
+    const drift=key=>component.status==='ok'?`${fmt(drifts[key],2)}%`:'—';
+    const sample=component.sample_start?`${component.sample_start}—${component.sample_end} · ${component.n_obs}点`:'—';
+    return `<tr><td>${component.label}<small>${component.code}</small></td><td>${statusText[component.status]||component.status}<small>${component.reason||sample}</small></td><td>${fmt(component.latest_value,2)} ${component.unit||''}</td><td>${fmt(component.coefficient,2)}×<small>年化pp / 指标pp</small></td><td>${map.optimistic?.[component.key]||'—'}<small>${drift('upper')}</small></td><td>${map.base?.[component.key]||'—'}<small>${drift('base')}</small></td><td>${map.stress?.[component.key]||'—'}<small>${drift('lower')}</small></td></tr>`;
+  }).join('');
+  $('macroLinkMethod').innerHTML=`<p>${linkage.method||''}</p>`+(linkage.caveats||[]).map(note=>`<p>• ${note}</p>`).join('');
+  const linked=series?.macro_linked_scenarios||[],labels=linked.map(item=>({optimistic:'乐观',base:'基准',stress:'压力'}[item.key]||item.key));
+  if(linked.length){
+    charts.macroLinkContribution=new Chart($('macroLinkContributionChart'),{type:'bar',data:{labels,datasets:[{label:'期末宏观联动调整（年化pp）',data:linked.map(item=>item.macro_adjustment_end_pp),backgroundColor:linked.map(item=>COLORS[item.key]||'#7890a8')}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#8fa4bd'},grid:{display:false}},y:{ticks:{color:'#8fa4bd',callback:value=>`${value}pp`},grid:{color:'#14263a'},title:{display:true,text:'相对纯动能路径的期末年化速度调整',color:'#8fa4bd'}}},plugins:{legend:{display:false},tooltip:{callbacks:{label:context=>`${context.dataset.label}: ${context.parsed.y>=0?'+':''}${fmt(context.parsed.y,2)}pp`}}}}});
+  }
 }
 function driverAssumption(driver,key){
   const value=driver?.scenario_values?.[key];
@@ -372,14 +410,17 @@ function renderAnchor(anchor){
 function downloadCsv(){
   if(!comparePayload)return;
   const specs=momentumSpecs(),historyHeaders=specs.map(([,label])=>`${label}折算月速(%)`);
-  const lines=[['城市','模型','结构修正强度(%)','本市结构驱动数','全国回退驱动数','最新期','当前挂牌价(元/㎡)','当前较峰值(%)',...historyHeaders,'乐观期末挂牌价(元/㎡)','乐观期末较当前(%)','基准期末挂牌价(元/㎡)','基准期末较当前(%)','压力期末挂牌价(元/㎡)','压力期末较当前(%)']];
-  for(const row of comparePayload.rows){const by=Object.fromEntries(scenarioItems(row).map(x=>[x.key,x])),coverage=row.driver_coverage||{};lines.push([row.city,modelLabel(),useStructural()?structuralWeight()*100:0,coverage.city_specific_used??'',coverage.national_fallback_used??'',row.sample_end||'',row.current_price??'',row.current_vs_peak??'',...specs.map(([key])=>row.momentum?.[key]??''),scenarioEndPrice(by.optimistic,row.current_price)??'',by.optimistic?.end_vs_now??'',scenarioEndPrice(by.base,row.current_price)??'',by.base?.end_vs_now??'',scenarioEndPrice(by.stress,row.current_price)??'',by.stress?.end_vs_now??''])}
+  const lines=[['城市','模型','结构修正强度(%)','本市结构驱动数','全国回退驱动数','宏观组件覆盖','最新期','当前挂牌价(元/㎡)','当前较峰值(%)',...historyHeaders,'乐观期末挂牌价(元/㎡)','乐观期末较当前(%)','基准期末挂牌价(元/㎡)','基准期末较当前(%)','压力期末挂牌价(元/㎡)','压力期末较当前(%)','宏观乐观期末调整(pp)','宏观基准期末调整(pp)','宏观压力期末调整(pp)']];
+  for(const row of comparePayload.rows){const by=Object.fromEntries(scenarioItems(row).map(x=>[x.key,x])),linkedBy=Object.fromEntries((row.macro_linked_scenarios||[]).map(x=>[x.key,x])),coverage=row.driver_coverage||{},macroCoverage=comparePayload.macro_linkage?`${comparePayload.macro_linkage.available_component_count||0}/${comparePayload.macro_linkage.component_count||0}`:'';lines.push([row.city,modelLabel(),useStructural()?structuralWeight()*100:0,coverage.city_specific_used??'',coverage.national_fallback_used??'',macroCoverage,row.sample_end||'',row.current_price??'',row.current_vs_peak??'',...specs.map(([key])=>row.momentum?.[key]??''),scenarioEndPrice(by.optimistic,row.current_price)??'',by.optimistic?.end_vs_now??'',scenarioEndPrice(by.base,row.current_price)??'',by.base?.end_vs_now??'',scenarioEndPrice(by.stress,row.current_price)??'',by.stress?.end_vs_now??'',linkedBy.optimistic?.macro_adjustment_end_pp??'',linkedBy.base?.macro_adjustment_end_pp??'',linkedBy.stress?.macro_adjustment_end_pp??''])}
   const horizonFile=$('horizon').value==='2030'?'to-2030':`${$('horizon').value}m`;
   const csvCell=value=>{const text=String(value??'');return /[",\n]/.test(text)?`"${text.replaceAll('"','""')}"`:text};
   const blob=new Blob(['\ufeff'+lines.map(row=>row.map(csvCell).join(',')).join('\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`housing-scenario-${sourceMode()}-${activeKind()}-${horizonFile}.csv`;a.click();URL.revokeObjectURL(url);
 }
 function syncSourceUi(){
   const listing=isListingSource(),yearly=isYearlySource();
+  const linkedOption=$('forecastMode').querySelector('[value="macro_linked"]');
+  linkedOption.disabled=yearly;
+  if(yearly&&useLinked())$('forecastMode').value='structural';
   document.querySelectorAll('[data-source-mode]').forEach(button=>
     button.classList.toggle('active',button.dataset.sourceMode===sourceMode()));
   ['rateOptimistic','rateBase','rateStress'].forEach(id=>$(id).value='');
@@ -392,7 +433,8 @@ function syncSourceUi(){
   $('indexMode').querySelector('[value="raw"]').textContent=listing?'挂牌价（元/㎡）':'定基指数';
   $('indexMode').value=listing?'raw':'peak';
   $('historyWindow').value=listing?'0':'120';
-  $('detailScopeNote').textContent=yearly?'真实年度回撤、结构驱动三档路径与首付杠杆；低频样本不运行月度模拟/回测':'历史回撤、结构驱动三档路径、5,000次纯动能敏感性模拟、首付杠杆与机械回测';
+  $('detailScopeNote').textContent=yearly?'真实年度回撤、结构驱动三档路径与首付杠杆；低频样本不运行月度模拟/回测':useLinked()?'历史回撤、纯动能基线与宏观联动三档路径；宏观组件为透明压力测试':'历史回撤、结构驱动三档路径、5,000次纯动能敏感性模拟、首付杠杆与机械回测';
+  $('macroLinkControls').classList.toggle('hidden',!useLinked()||yearly);
   momentumSpecs().forEach(([,label],index)=>$(`momentumHead${index+1}`).textContent=label);
   $('axisMode').value='auto';
   $('axisMin').disabled=true;$('axisMax').disabled=true;
@@ -423,13 +465,18 @@ async function init(){
   const kind=INITIAL_PARAMS.get('kind');
   if(kind==='new'||kind==='second')$('kind').value=kind;
   const model=INITIAL_PARAMS.get('model');
-  if(model==='structural'||model==='momentum')$('forecastMode').value=model;
+  if(model==='structural'||model==='momentum'||model==='macro_linked')$('forecastMode').value=model;
   const rawWeight=INITIAL_PARAMS.get('structural_weight'),weight=Number(rawWeight);
   if(rawWeight!==null&&rawWeight!==''&&Number.isFinite(weight)&&weight>=0&&weight<=100)$('structuralWeight').value=String(weight);
   for(const [param,id] of [['formation_optimistic','formationOptimistic'],['formation_base','formationBase'],['formation_stress','formationStress']]){
     const raw=INITIAL_PARAMS.get(param),value=Number(raw);
     if(raw!==null&&raw!==''&&Number.isFinite(value)&&value>=-50&&value<=50)$(id).value=String(value);
   }
+  for(const [param,id] of [['macro_growth','macroGrowth'],['macro_credit','macroCredit'],['macro_sales','macroSales'],['macro_population','macroPopulation'],['macro_lpr','macroLpr']]){
+    const value=INITIAL_PARAMS.get(param);
+    if(['auto','upper','base','lower'].includes(value))$(id).value=value;
+  }
+  syncSourceUi();
   await loadCatalog();
 }
 document.querySelectorAll('[data-group]').forEach(button=>button.onclick=()=>applyGroup(button.dataset.group));
@@ -437,8 +484,9 @@ document.querySelectorAll('[data-source-mode]').forEach(button=>button.onclick=(
 $('citySearch').oninput=renderCityChips;$('compareRun').onclick=loadComparison;$('downloadCsv').onclick=downloadCsv;
 $('focusCity').onchange=()=>{updateUrlState();loadDetail()};$('detailRun').onclick=loadDetail;$('kind').onchange=()=>{updateUrlState();loadComparison()};$('horizon').onchange=()=>{updateUrlState();loadComparison()};$('dataSource').onchange=()=>selectSource(sourceMode());
 $('compareValueMode').onchange=()=>comparePayload&&renderComparison();
-$('forecastMode').onchange=()=>{updateUrlState();if(comparePayload)renderComparison();if(detailPayload)renderDetail()};
+$('forecastMode').onchange=()=>{syncSourceUi();updateUrlState();loadComparison()};
 $('structuralWeight').onchange=()=>{const value=Math.max(0,Math.min(100,Number($('structuralWeight').value)||0));$('structuralWeight').value=String(value);updateUrlState();loadComparison()};
+[['macroGrowth','growth'],['macroCredit','credit'],['macroSales','sales'],['macroPopulation','population'],['macroLpr','lpr']].forEach(([id])=>$(id).onchange=()=>{updateUrlState();if(useLinked())loadComparison()});
 $('demographicRun').onclick=()=>{if(validateFormationInputs()){updateUrlState();loadComparison()}};
 ['capacityYear','capacityScenario','capacityCityMode','capacityAxisMode'].forEach(id=>$(id).onchange=renderCityCapacityChart);
 $('historyWindow').onchange=()=>detailPayload&&renderDetail();$('indexMode').onchange=()=>detailPayload&&renderDetail();

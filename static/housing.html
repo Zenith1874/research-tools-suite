@@ -61,7 +61,7 @@ const NATIONAL_SCENARIO_COLORS={optimistic:'var(--green)',base:'var(--yellow)',s
 function mergeSeries(map){const byP={};Object.entries(map).forEach(([k,rows])=>(rows||[]).forEach(r=>{(byP[r.period]=byP[r.period]||{period:r.period})[k]=r.value}));return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function historyMatrix(map,field,indexed=false){const byP={};Object.entries(map||{}).forEach(([city,rows])=>{const base=(rows||[]).find(r=>typeof r[field]==='number')?.[field];(rows||[]).forEach(r=>{if(typeof r[field]!=='number'||(indexed&&!base))return;(byP[r.period]=byP[r.period]||{period:r.period})[city]=indexed?Number((r[field]/base*100).toFixed(2)):r[field]})});return Object.values(byP).sort((a,b)=>a.period<b.period?-1:1)}
 function filterHistory(map,startYear){const floor=`${startYear}-01`;return Object.fromEntries(Object.entries(map||{}).map(([city,rows])=>[city,(rows||[]).filter(r=>r.period>=floor)]))}
-function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false,allowLog=false,visibleKeys=null,onToggleSeries=null,onOnlySeries=null,onShowAll=null}){
+function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false,allowLog=false,zeroBaseline=false,visibleKeys=null,onToggleSeries=null,onOnlySeries=null,onShowAll=null}){
   const [hover,setHover]=useState(null),[axisMode,setAxisMode]=useState('visible'),[customMin,setCustomMin]=useState(''),[customMax,setCustomMax]=useState(''),[clipId]=useState(()=>`chart-clip-${Math.random().toString(36).slice(2)}`);
   const activeSeries=visibleKeys===null?series:series.filter(s=>visibleKeys.includes(s.key));
   let chartData=data||[],displayUnit=unit,displayDigits=digits;
@@ -84,7 +84,13 @@ function Chart({title,data,series,unit='',digits=1,height=190,axisControls=false
   if(mn===mx){mn-=1;mx+=1}
   let scale=v=>v,scaleMin=mn,scaleMax=mx,ticks;
   if(axisMode==='log'&&mn>0){scale=Math.log;scaleMin=Math.log(mn);scaleMax=Math.log(mx);const pad=(scaleMax-scaleMin)*.05;scaleMin-=pad;scaleMax+=pad;ticks=[Math.exp(scaleMin),Math.exp((scaleMin+scaleMax)/2),Math.exp(scaleMax)]}
-  else {if(!customValid){const pad=(mx-mn)*.05;mn-=pad;mx+=pad}scaleMin=mn;scaleMax=mx;ticks=[mn,(mn+mx)/2,mx]}
+  else {
+    if(!customValid){
+      const useZero=zeroBaseline&&dataMin>=0&&axisMode!=='indexed';
+      if(useZero){mn=0;mx+=Math.max(mx,1)*.05}else{const pad=(mx-mn)*.05;mn-=pad;mx+=pad}
+    }
+    scaleMin=mn;scaleMax=mx;ticks=[mn,(mn+mx)/2,mx]
+  }
   const sx=i=>L+(W-L-R)*(i/(pts.length-1)), sy=v=>T+(H-T-B)*(1-(scale(v)-scaleMin)/(scaleMax-scaleMin));
   const pathOf=s=>{let dd='',pen=false;pts.forEach((d,i)=>{const v=d[s.key];if(typeof v==='number'){dd+=`${pen?'L':'M'}${sx(i).toFixed(1)},${sy(v).toFixed(1)} `;pen=true}else pen=false});return dd.trim()};
   const onMove=e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*W;const i=Math.round((x-L)/(W-L-R)*(pts.length-1));setHover(Math.max(0,Math.min(pts.length-1,i)))};
@@ -253,13 +259,17 @@ function App(){
         <td className="num">{fmt(r.second_home_yoy_idx)} <Delta v={r.second_home_yoy_idx}/></td>
       </tr>)}</tbody></table></div>
     <div className="muted" style={{marginTop:10}}>{(p.notes||[]).map((n,i)=><div key={i}>· {n}</div>)}</div>
-    <section className="section"><div className="section-head"><div><h2>全国商品房销售 <span className="badge">official</span></h2><div className="sub">统计局《全国房地产开发投资和销售情况》· 月度累计 + 年度长历史 · {p.sales?.annual_history?.[0]?.label_period||p.sales?.series?.[0]?.period||'—'} 至 {p.sales?.latest_period||'—'}（月度 {(p.sales?.series||[]).length} 期；年度 {(p.sales?.annual_history||[]).length} 点）</div></div></div>
+    <section className="section"><div className="section-head"><div><h2>全国商品房销售 <span className="badge">official</span></h2><div className="sub">统计局《全国房地产开发投资和销售情况》· 月度累计 + 年度长历史 · {p.sales?.annual_history?.[0]?.label_period||p.sales?.series?.[0]?.period||'—'} 至 {p.sales?.latest_period||'—'}（月度 {(p.sales?.series||[]).length} 期；面积年度 {(p.sales?.annual_history||[]).length} 点；销售额年度 {(p.sales?.annual_value_history||[]).length} 点）</div></div></div>
       {p.sales?.data_status==='official'?<>
         <div className="grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>{(p.sales.cards||[]).map(c=><div className="metric" key={c.label}><div className="metric-label">{c.label}</div><div className="metric-value">{c.value==null?'—':fmt(c.value,0)} <span style={{fontSize:12,fontWeight:400,color:'var(--muted)'}}>{c.unit}</span></div><div className="metric-meta">累计同比 <Pct v={c.yoy}/> · {c.period}</div></div>)}</div>
-        {(p.sales.annual_history||[]).length>=2&&<Chart title={`一手商品房销售面积长期历史（年度，${p.sales.annual_history[0]?.label_period||'—'} 起）`} data={p.sales.annual_history} series={[{key:'value',label:'年度销售面积',color:'var(--blue)'}]} unit="万平方米" digits={0} height={240}/>}
+        <div className="grid" style={{gridTemplateColumns:'repeat(2,minmax(0,1fr))'}}>{[['area','历史累计销售面积'],['value','历史累计销售金额']].map(([key,label])=>{const item=p.sales.historical_summary?.[key]; return <div className="metric" key={key}><div className="metric-label">{label} <span className="badge">derived</span></div><div className="metric-value">{item?.value==null?'—':fmt(item.value,0)} <span style={{fontSize:12,fontWeight:400,color:'var(--muted)'}}>{item?.unit||'—'}</span></div><div className="metric-meta">{item?.period_start?.slice(0,4)||'—'}—{item?.period_end?.slice(0,4)||'—'} · {item?.n_obs||0}个年度点</div></div>})}</div>
+        {(p.sales.annual_history||[]).length>=2&&<Chart title={`一手商品房销售面积长期历史（年度，${p.sales.annual_history[0]?.label_period||'—'} 起）`} data={p.sales.annual_history} series={[{key:'value',label:'年度销售面积',color:'var(--blue)'}]} unit="万平方米" digits={0} height={240} zeroBaseline/>}
+        {(p.sales.annual_value_history||[]).length>=2&&<Chart title={`一手商品房销售额长期历史（年度，${p.sales.annual_value_history[0]?.label_period||'—'} 起）`} data={p.sales.annual_value_history} series={[{key:'value',label:'年度销售额',color:'var(--yellow)'}]} unit="亿元" digits={0} height={240} zeroBaseline/>}
         <Chart title={`全国商品房销售累计同比（月度累计口径，${p.sales.series[0]?.period||'—'} 起）`} data={p.sales.series} series={[{key:'area_yoy',label:'销售面积累计同比',color:'var(--blue)'},{key:'value_yoy',label:'销售额累计同比',color:'var(--yellow)'}]} unit="%" digits={1} height={240}/>
-        <Chart title={`一手商品房销售面积累计（月度累计，${p.sales.area_series?.[0]?.period||'—'} 起）`} data={p.sales.area_series||[]} series={[{key:'value',label:'月度累计销售面积',color:'var(--blue)'}]} unit="万平方米" digits={0} height={240}/>
+        <Chart title={`当年销售面积累计（月度YTD，${p.sales.area_series?.[0]?.period||'—'} 起）`} data={p.sales.area_series||[]} series={[{key:'value',label:'当年累计销售面积',color:'var(--blue)'}]} unit="万平方米" digits={0} height={240} zeroBaseline/>
+        <Chart title={`当年销售额累计（月度YTD，${p.sales.value_series?.[0]?.period||'—'} 起）`} data={p.sales.value_series||[]} series={[{key:'value',label:'当年累计销售额',color:'var(--yellow)'}]} unit="亿元" digits={0} height={240} zeroBaseline/>
         {(p.sales.notes||[]).map((n,i)=><div className="notice" key={i}>{n}</div>)}
+        {(p.sales.historical_summary?.caveats||[]).map((n,i)=><div className="notice" key={`summary-${i}`}>{n}</div>)}
       </>:<div className="empty">暂无全国销售官方数据</div>}
     </section>
     {nationalScenario.data_status==='scenario'?<section className="section" id="national-scenario-2030"><div className="section-head"><div><h2>全国房地产量价情景至2030年 <span className="badge">scenario</span></h2><div className="sub">官方历史观测与条件路径分开显示 · 年度实际锚点 {nationalSalesScenario.latest_period||'—'} · 最新官方累计同比 {nationalSalesScenario.latest_official_yoy_period||'—'} · 目标年末 {nationalScenario.target_year}-12</div></div><a className="btn" href="#scenario-2030-quick">返回2030快览</a></div>

@@ -10,7 +10,10 @@ from services.housing_price_service import (
     parse_period_from_title, parse_sales_article, parse_sales_period_from_title,
     ensure_housing_tables, _upsert_sales_release, _norm_city, build_housing_payload,
     build_equal_weighted_price_index, load_nbs_annual_sales_history,
-    seed_housing_annual_sales_history, build_national_housing_scenarios,
+    load_nbs_sales_release_manifest, seed_housing_annual_sales_history,
+    derive_monthly_sales_flows,
+    build_historical_sales_summary,
+    build_national_housing_scenarios,
 )
 from services.anjuke_city_map import ANJUKE_CITY_SLUGS
 from bs4 import BeautifulSoup
@@ -26,13 +29,26 @@ _TABLE = """
 
 
 class HousingParserTests(unittest.TestCase):
+    def test_nbs_sales_release_manifest_is_complete_for_2012_to_2014(self):
+        releases = load_nbs_sales_release_manifest(start_year=2012, end_year=2014)
+        periods = [parse_sales_period_from_title(title) for _, title in releases]
+        self.assertEqual(len(periods), 33)
+        self.assertEqual(len(set(periods)), 33)
+        self.assertEqual(min(periods), '2012-02')
+        self.assertEqual(max(periods), '2014-12')
+        self.assertTrue(all(url.startswith('https://www.stats.gov.cn/')
+                            for url, _ in releases))
+
     def test_nbs_annual_sales_history_starts_at_1991(self):
         records = load_nbs_annual_sales_history()
         self.assertEqual(len(records), 24)
         self.assertEqual(records[0]['period'], '1991-12')
         self.assertEqual(records[0]['value'], 3025.46)
+        self.assertEqual(records[0]['sales_area'], 3025.46)
+        self.assertAlmostEqual(records[0]['sales_value'], 237.8597, places=4)
         self.assertEqual(records[-1]['period'], '2014-12')
         self.assertEqual(records[-1]['value'], 120649.0)
+        self.assertEqual(records[-1]['sales_value'], 76292.0)
         self.assertTrue(records[0]['source_url'].startswith('https://www.stats.gov.cn/'))
 
     def test_nbs_annual_sales_seed_is_idempotent_and_syncs_december(self):
@@ -40,29 +56,50 @@ class HousingParserTests(unittest.TestCase):
             path = str(Path(tmp) / 'annual.db')
             conn = sqlite3.connect(path)
             ensure_housing_tables(conn)
-            conn.execute('''INSERT INTO housing_national_observations
+            conn.executemany('''INSERT INTO housing_national_observations
                 (indicator_code,period,value,source_url,parser_notes)
-                VALUES (?,?,?,?,?)''',
+                VALUES (?,?,?,?,?)''', [
                 ('sales_area_ytd', '2015-12', 128495.0,
-                 'https://www.stats.gov.cn/2016-release', '月度累计官方值'))
+                 'https://www.stats.gov.cn/2016-release', '月度累计官方值'),
+                ('sales_value_ytd', '2015-12', 87281.0,
+                 'https://www.stats.gov.cn/2016-release', '月度累计官方值'),
+            ])
             first = seed_housing_annual_sales_history(conn)
             conn.commit()
             second = seed_housing_annual_sales_history(conn)
             conn.commit()
             count = conn.execute('''SELECT COUNT(*) FROM housing_national_observations
                 WHERE indicator_code='sales_area_annual_official' ''').fetchone()[0]
+            value_count = conn.execute('''SELECT COUNT(*) FROM housing_national_observations
+                WHERE indicator_code='sales_value_annual_official' ''').fetchone()[0]
             rows = conn.execute('''SELECT period, value, frequency, data_status, source_url
                 FROM housing_national_observations
                 WHERE indicator_code='sales_area_annual_official' AND period IN ('1991-12','2015-12')
                 ORDER BY period''').fetchall()
+            value_rows = conn.execute('''SELECT period, value, frequency, data_status, source_url
+                FROM housing_national_observations
+                WHERE indicator_code='sales_value_annual_official' AND period IN ('1991-12','2015-12')
+                ORDER BY period''').fetchall()
+            fake_monthly = conn.execute('''SELECT COUNT(*) FROM housing_national_observations
+                WHERE period LIKE '1991-%' AND indicator_code IN ('sales_area_ytd','sales_value_ytd')''').fetchone()[0]
             conn.close()
+            sales_payload = build_housing_payload(path)['sales']
         self.assertEqual(first['static_rows'], 24)
+        self.assertEqual(first['static_value_rows'], 24)
         self.assertEqual(first['year_end_rows'], 1)
+        self.assertEqual(first['year_end_value_rows'], 1)
         self.assertEqual(second['static_rows'], 24)
         self.assertEqual(count, 25)
+        self.assertEqual(value_count, 25)
         self.assertEqual(rows[0][0:4], ('1991-12', 3025.46, 'annual', 'official'))
         self.assertEqual(rows[1][0:4], ('2015-12', 128495.0, 'annual', 'official'))
         self.assertEqual(rows[1][4], 'https://www.stats.gov.cn/2016-release')
+        self.assertAlmostEqual(value_rows[0][1], 237.8597, places=4)
+        self.assertEqual(value_rows[1][0:4], ('2015-12', 87281.0, 'annual', 'official'))
+        self.assertEqual(fake_monthly, 0)
+        self.assertEqual(sales_payload['annual_history'][0]['period'], '1991-12')
+        self.assertEqual(sales_payload['annual_value_history'][0]['period'], '1991-12')
+        self.assertAlmostEqual(sales_payload['annual_value_history'][0]['value'], 237.8597, places=4)
 
     def test_national_housing_scenarios_reach_2030_without_mutating_history(self):
         annual = [
@@ -133,6 +170,36 @@ class HousingParserTests(unittest.TestCase):
             count = conn.execute('SELECT COUNT(*) FROM housing_national_observations').fetchone()[0]
             conn.close()
         self.assertEqual(count, 2)
+
+    def test_monthly_sales_flow_is_derived_only_from_adjacent_cumulative_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / 'flow.db')
+            conn = sqlite3.connect(path)
+            ensure_housing_tables(conn)
+            conn.executemany('''INSERT INTO housing_national_observations
+                (indicator_code,period,value,unit,frequency,data_status,source_name,source_url,parser_notes,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)''', [
+                ('sales_area_ytd', '2025-01', 100.0, '万平方米', 'monthly', 'official',
+                 '国家统计局', 'https://www.stats.gov.cn/jan', '累积', 'now'),
+                ('sales_area_ytd', '2025-02', 130.0, '万平方米', 'monthly', 'official',
+                 '国家统计局', 'https://www.stats.gov.cn/feb', '累积', 'now'),
+                ('sales_area_ytd', '2025-04', 190.0, '万平方米', 'monthly', 'official',
+                 '国家统计局', 'https://www.stats.gov.cn/apr', '累积', 'now'),
+                ('sales_value_ytd', '2025-01', 10.0, '亿元', 'monthly', 'official',
+                 '国家统计局', 'https://www.stats.gov.cn/jan', '累积', 'now'),
+                ('sales_value_ytd', '2025-02', 15.0, '亿元', 'monthly', 'official',
+                 '国家统计局', 'https://www.stats.gov.cn/feb', '累积', 'now'),
+                ('sales_value_ytd', '2025-04', 25.0, '亿元', 'monthly', 'official',
+                 '国家统计局', 'https://www.stats.gov.cn/apr', '累积', 'now'),
+            ])
+            result = derive_monthly_sales_flows(conn, updated_at='2026-08-12T00:00:00')
+            conn.commit()
+            area = conn.execute('''SELECT period,value,data_status FROM housing_national_observations
+                WHERE indicator_code='sales_area_monthly_derived' ORDER BY period''').fetchall()
+            conn.close()
+        self.assertEqual(result['series']['sales_area_monthly_derived']['skipped_gap_periods'], ['2025-04'])
+        self.assertEqual([(row[0], row[1], row[2]) for row in area], [
+            ('2025-01', 100.0, 'derived'), ('2025-02', 30.0, 'derived')])
 
     def test_period_from_title(self):
         self.assertEqual(parse_period_from_title('2026年6月份70个大中城市商品住宅销售价格变动情况'), '2026-06')
@@ -235,6 +302,17 @@ class HousingParserTests(unittest.TestCase):
 
 
 class HousingSalesPayloadTests(unittest.TestCase):
+    def test_historical_sales_summary_sums_one_annual_point_per_year(self):
+        result = build_historical_sales_summary(
+            [{'period': '1991-12', 'value': 10.5}, {'period': '1992-12', 'value': 20.0}],
+            [{'period': '1991-12', 'value': 1.25}, {'period': '1992-12', 'value': 2.75}],
+        )
+        self.assertEqual(result['data_status'], 'derived')
+        self.assertEqual(result['area']['value'], 30.5)
+        self.assertEqual(result['area']['n_obs'], 2)
+        self.assertEqual(result['value']['value'], 4.0)
+        self.assertIn('不把月度累计值重复相加', result['method'])
+
     def test_housing_sales_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / 'h.db')
@@ -248,11 +326,14 @@ class HousingSalesPayloadTests(unittest.TestCase):
             sales = build_housing_payload(path)['sales']
         self.assertEqual(sales['data_status'], 'official')
         self.assertEqual(sales['latest_period'], '2026-06')
-        area = next(c for c in sales['cards'] if c['label'] == '销售面积累计')
+        area = next(c for c in sales['cards'] if c['label'] == '当年销售面积累计')
         self.assertEqual((area['value'], area['yoy'], area['unit']), (40140.0, -11.6, '万平方米'))
         self.assertEqual(sales['series'][-1], {'period': '2026-06', 'area_yoy': -11.6, 'value_yoy': -13.6})
         self.assertEqual(sales['area_series'][-1], {'period': '2026-06', 'value': 40140.0})
+        self.assertEqual(sales['value_series'][-1], {'period': '2026-06', 'value': 37945.0})
         self.assertEqual(sales['annual_history'], [])
+        self.assertEqual(sales['annual_value_history'], [])
+        self.assertEqual(sales['historical_summary']['data_status'], 'missing')
         self.assertEqual(len(sales['series']), 2)
 
     def test_70city_composite_new_and_second_price_index(self):
@@ -301,7 +382,10 @@ class HousingSalesPayloadTests(unittest.TestCase):
         self.assertEqual(sales['data_status'], 'missing')
         self.assertEqual(sales['series'], [])
         self.assertEqual(sales['area_series'], [])
+        self.assertEqual(sales['value_series'], [])
         self.assertEqual(sales['annual_history'], [])
+        self.assertEqual(sales['annual_value_history'], [])
+        self.assertEqual(sales['historical_summary']['data_status'], 'missing')
         self.assertEqual(sales['cards'], [])
         self.assertEqual(payload['national_composite']['data_status'], 'missing')
 

@@ -111,6 +111,9 @@ INDICATORS = {
     'CN_WORKING_AGE_POP': ('16—59岁人口', '万人', 'annual'),
     'CN_WORKING_AGE_15_64': ('15—64岁人口', '万人', 'annual'),
     'CN_BIRTHS': ('出生人口', '万人', 'annual'),
+    'CN_MARRIAGES': ('结婚登记', '万对', 'annual'),
+    'CN_DIVORCES_AGREEMENT': ('协议离婚（民政部门登记）', '万对', 'annual'),
+    'CN_DIVORCES_COURT': ('法院离婚（判决/调解）', '万对', 'annual'),
     'CN_DEATHS': ('死亡人口', '万人', 'annual'),
     'CN_BIRTH_RATE': ('人口出生率', '‰', 'annual'),
     'CN_DEATH_RATE': ('人口死亡率', '‰', 'annual'),
@@ -239,6 +242,23 @@ def ensure_china_macro_tables(conn):
     )''')
     conn.execute('''CREATE INDEX IF NOT EXISTS idx_china_macro_code_period
                     ON china_macro_observations(indicator_code, period)''')
+    existing_columns = {row[1] for row in conn.execute(
+        'PRAGMA table_info(china_macro_observations)')}
+    for name, definition in (
+            ('release_date', 'TEXT'),
+            ('retrieved_at', 'TEXT'),
+            ('raw_sha256', 'TEXT'),
+            ('parser_version', 'TEXT'),
+            ('missing_reason', 'TEXT'),
+            # SAFE's annual reserve-assets page is updated in place.  These
+            # fields keep page/vintage time separate from an observation's
+            # (often unavailable) release date.
+            ('source_page_created_date', 'TEXT'),
+            ('source_page_last_updated_date', 'TEXT'),
+            ('release_date_not_provided', 'INTEGER NOT NULL DEFAULT 0'),
+            ('release_date_reason', 'TEXT')):
+        if name not in existing_columns:
+            conn.execute(f'ALTER TABLE china_macro_observations ADD COLUMN {name} {definition}')
     conn.commit()
 
 

@@ -9,6 +9,7 @@
 统计为 derived+formula;解析失败只记日志不清旧数据;不用商业挂牌价(非成交口径)。
 """
 import csv
+import math
 import os
 import re
 import sqlite3
@@ -29,6 +30,7 @@ NBS_SEARCH_SITE_CODE = 'bm36000002'
 NBS_HISTORY_QUERY = '70个大中城市住宅销售价格变动情况'
 NBS_SALES_QUERIES = ('全国房地产开发投资和销售情况', '全国房地产开发和销售情况',
                      '全国房地产市场基本情况')
+NBS_SALES_MONTHLY_START_YEAR = 2012
 FRED_SERIES = [
     ('QCNR628BIS', 'BIS 中国实际住宅价格指数(2010=100)', 'real'),
     ('QCNN628BIS', 'BIS 中国名义住宅价格指数(2010=100)', 'nominal'),
@@ -38,6 +40,8 @@ HTTP_TIMEOUT = 25
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANNUAL_SALES_HISTORY_PATH = os.path.join(
     ROOT, 'data', 'housing_nbs_annual_sales_history.csv')
+NBS_SALES_RELEASE_MANIFEST_PATH = os.path.join(
+    ROOT, 'data', 'housing_nbs_sales_release_manifest.csv')
 
 TIER1 = ['北京', '上海', '广州', '深圳']
 
@@ -55,7 +59,17 @@ SALES_INDICATORS = {
     'sales_value_ytd_yoy_official': ('新建商品房销售额累计同比', '%'),
 }
 
+DERIVED_MONTHLY_SALES = {
+    'sales_area_monthly_derived': ('sales_area_ytd', '新建商品房销售面积月度流量（由累计值差分）', '万平方米'),
+    'sales_value_monthly_derived': ('sales_value_ytd', '新建商品房销售额月度流量（由累计值差分）', '亿元'),
+}
+
 ANNUAL_SALES_INDICATOR = 'sales_area_annual_official'
+ANNUAL_SALES_VALUE_INDICATOR = 'sales_value_annual_official'
+ANNUAL_SALES_INDICATORS = {
+    'sales_area': (ANNUAL_SALES_INDICATOR, 'sales_area_ytd', '万平方米'),
+    'sales_value': (ANNUAL_SALES_VALUE_INDICATOR, 'sales_value_ytd', '亿元'),
+}
 
 
 def connect(db_path):
@@ -85,7 +99,7 @@ def ensure_housing_tables(conn):
 
 
 def load_nbs_annual_sales_history(path=ANNUAL_SALES_HISTORY_PATH):
-    """Load the checked-in official annual sales-area source table.
+    """Load the checked-in official annual sales-area and sales-value table.
 
     The annual observations are deliberately kept separate from the monthly
     cumulative series.  In particular, an annual point is not expanded into
@@ -96,12 +110,18 @@ def load_nbs_annual_sales_history(path=ANNUAL_SALES_HISTORY_PATH):
     with open(path, 'r', encoding='utf-8-sig', newline='') as handle:
         for row in csv.DictReader(handle):
             period = str(row.get('period') or '').strip()
-            value_text = str(row.get('value') or '').strip().replace(',', '')
-            if not re.fullmatch(r'(?:19|20)\d{2}-12', period) or not value_text:
+            area_text = str(row.get('sales_area') or row.get('value') or '').strip().replace(',', '')
+            sales_value_text = str(row.get('sales_value') or '').strip().replace(',', '')
+            if not re.fullmatch(r'(?:19|20)\d{2}-12', period) or not area_text:
                 continue
+            sales_area = float(area_text)
             records.append({
                 'period': period,
-                'value': float(value_text),
+                # ``value`` is retained as a backwards-compatible alias for
+                # the annual sales-area field used by the existing scenario.
+                'value': sales_area,
+                'sales_area': sales_area,
+                'sales_value': float(sales_value_text) if sales_value_text else None,
                 'source_url': str(row.get('source_url') or '').strip(),
                 'source_title': str(row.get('source_title') or '').strip(),
                 'parser_notes': str(row.get('parser_notes') or '').strip(),
@@ -109,8 +129,70 @@ def load_nbs_annual_sales_history(path=ANNUAL_SALES_HISTORY_PATH):
     return records
 
 
+def load_nbs_sales_release_manifest(path=NBS_SALES_RELEASE_MANIFEST_PATH,
+                                    start_year=NBS_SALES_MONTHLY_START_YEAR,
+                                    end_year=None):
+    """Load verified NBS monthly-release URLs without depending on site search."""
+    end_year = int(end_year or datetime.now().year)
+    found = {}
+    if not os.path.exists(path):
+        return []
+    with open(path, 'r', encoding='utf-8-sig', newline='') as handle:
+        for row in csv.DictReader(handle):
+            period = str(row.get('period') or '').strip()
+            url = str(row.get('source_url') or '').strip()
+            title = str(row.get('source_title') or '').strip()
+            if (not re.fullmatch(r'20\d{2}-(?:0[2-9]|1[0-2])', period)
+                    or not int(start_year) <= int(period[:4]) <= end_year
+                    or not url.startswith('https://www.stats.gov.cn/')
+                    or parse_sales_period_from_title(title) != period):
+                continue
+            found[period] = (url, title)
+    return [found[period] for period in sorted(found, reverse=True)]
+
+
+def build_historical_sales_summary(annual_history, annual_value_history):
+    """Summarize the covered annual official totals without double-counting.
+
+    Each annual observation is already a full-year total (or the December
+    official YTD value).  The summary therefore sums one point per year; it
+    never sums monthly cumulative observations and never expands annual data
+    into months.
+    """
+    def summarize(rows, unit):
+        valid = []
+        for row in rows or []:
+            value = row.get('value')
+            if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                valid.append((str(row.get('period') or ''), float(value)))
+        valid = [(period, value) for period, value in valid if period]
+        if not valid:
+            return None
+        return {
+            'value': round(sum(value for _, value in valid), 4),
+            'unit': unit,
+            'period_start': valid[0][0],
+            'period_end': valid[-1][0],
+            'n_obs': len(valid),
+        }
+
+    area = summarize(annual_history, '万平方米')
+    sales_value = summarize(annual_value_history, '亿元')
+    data_status = 'derived' if area or sales_value else 'missing'
+    return {
+        'data_status': data_status,
+        'area': area,
+        'value': sales_value,
+        'method': '历史累计=覆盖期内各年度官方年度总量求和；不把月度累计值重复相加。',
+        'caveats': [
+            '1991—2004与2005年以后存在统计范围阶段变化，跨期累计仅作规模汇总，不用于严格的同比可比判断。',
+            '2015年以后年度点由12月国家统计局官方累计值同步；年度数据不拆分为月度。',
+        ],
+    }
+
+
 def seed_housing_annual_sales_history(conn, records=None, updated_at=None):
-    """Upsert official annual sales-area history and monthly year-end points.
+    """Upsert official annual sales-area/value history and year-end points.
 
     ``records`` is injectable for tests.  Existing monthly December cumulative
     observations are copied to the annual indicator for 2015 onward, so the
@@ -119,49 +201,131 @@ def seed_housing_annual_sales_history(conn, records=None, updated_at=None):
     records = load_nbs_annual_sales_history() if records is None else list(records)
     updated_at = updated_at or datetime.now().isoformat()
     upserted = 0
-    static_periods = set()
+    static_periods = {field: set() for field in ANNUAL_SALES_INDICATORS}
+    static_observations = 0
+    year_end_counts = {field: 0 for field in ANNUAL_SALES_INDICATORS}
+
+    def upsert(indicator_code, period, value, unit, source_url, parser_notes):
+        return conn.execute('''INSERT INTO housing_national_observations
+            (indicator_code,period,value,unit,frequency,data_status,source_name,source_url,parser_notes,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(indicator_code,period) DO UPDATE SET
+              value=excluded.value, unit=excluded.unit, frequency=excluded.frequency,
+              data_status=excluded.data_status, source_name=excluded.source_name,
+              source_url=excluded.source_url, parser_notes=excluded.parser_notes,
+              updated_at=excluded.updated_at''',
+            (indicator_code, period, value, unit, 'annual', 'official',
+             NBS_SOURCE, source_url, parser_notes, updated_at)).rowcount
+
     for row in records:
         period = row['period']
-        static_periods.add(period)
-        cur = conn.execute('''INSERT INTO housing_national_observations
-            (indicator_code,period,value,unit,frequency,data_status,source_name,source_url,parser_notes,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(indicator_code,period) DO UPDATE SET
-              value=excluded.value, unit=excluded.unit, frequency=excluded.frequency,
-              data_status=excluded.data_status, source_name=excluded.source_name,
-              source_url=excluded.source_url, parser_notes=excluded.parser_notes,
-              updated_at=excluded.updated_at''',
-            (ANNUAL_SALES_INDICATOR, period, row['value'], '万平方米', 'annual',
-             'official', NBS_SOURCE, row['source_url'],
-             row['parser_notes'] or '国家统计局官方年度销售面积；年度点不拆分为月度。',
-             updated_at))
-        upserted += cur.rowcount
+        for field, (indicator_code, _monthly_code, unit) in ANNUAL_SALES_INDICATORS.items():
+            value = row.get(field)
+            if value is None and field == 'sales_area':
+                value = row.get('value')
+            if value is None:
+                continue
+            static_periods[field].add(period)
+            label = '销售面积' if field == 'sales_area' else '销售额'
+            note = row.get('parser_notes') or f'国家统计局官方年度{label}；年度点不拆分为月度。'
+            upserted += upsert(indicator_code, period, value, unit,
+                               row.get('source_url'), note)
+            static_observations += 1
 
     # December YTD is the official annual total for the modern monthly series.
-    # Do not overwrite a checked-in historical annual record if sources ever
-    # overlap; the explicit annual source remains authoritative for that year.
-    monthly_rows = conn.execute('''SELECT period, value, source_url, parser_notes
-        FROM housing_national_observations
-        WHERE indicator_code='sales_area_ytd' AND substr(period, 6, 2)='12'
-        ORDER BY period''').fetchall()
-    for row in monthly_rows:
-        period, value, source_url, parser_notes = row[0], row[1], row[2], row[3]
-        if period in static_periods:
-            continue
-        note = '年末点从月度累计官方新闻稿同步；' + (parser_notes or '')
-        cur = conn.execute('''INSERT INTO housing_national_observations
-            (indicator_code,period,value,unit,frequency,data_status,source_name,source_url,parser_notes,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(indicator_code,period) DO UPDATE SET
-              value=excluded.value, unit=excluded.unit, frequency=excluded.frequency,
-              data_status=excluded.data_status, source_name=excluded.source_name,
-              source_url=excluded.source_url, parser_notes=excluded.parser_notes,
-              updated_at=excluded.updated_at''',
-            (ANNUAL_SALES_INDICATOR, period, value, '万平方米', 'annual',
-             'official', NBS_SOURCE, source_url, note, updated_at))
-        upserted += cur.rowcount
-    return {'rows_upserted': upserted, 'static_rows': len(records),
-            'year_end_rows': len([row for row in monthly_rows if row[0] not in static_periods])}
+    # Do not overwrite an explicit annual source if sources overlap.
+    for field, (indicator_code, monthly_code, unit) in ANNUAL_SALES_INDICATORS.items():
+        monthly_rows = conn.execute('''SELECT period, value, source_url, parser_notes
+            FROM housing_national_observations
+            WHERE indicator_code=? AND substr(period, 6, 2)='12'
+            ORDER BY period''', (monthly_code,)).fetchall()
+        for row in monthly_rows:
+            period, value, source_url, parser_notes = row[0], row[1], row[2], row[3]
+            if period in static_periods[field]:
+                continue
+            note = '年末点从月度累计官方新闻稿同步；' + (parser_notes or '')
+            upserted += upsert(indicator_code, period, value, unit,
+                               source_url, note)
+            year_end_counts[field] += 1
+    return {
+        'rows_upserted': upserted,
+        # Existing callers interpret these two fields as annual area years.
+        'static_rows': len(static_periods['sales_area']),
+        'year_end_rows': year_end_counts['sales_area'],
+        'static_observations': static_observations,
+        'static_value_rows': len(static_periods['sales_value']),
+        'year_end_value_rows': year_end_counts['sales_value'],
+    }
+
+
+def derive_monthly_sales_flows(conn, updated_at=None):
+    """Derive monthly flows from adjacent official NBS cumulative observations.
+
+    NBS publishes the national sales-area and sales-value series as year-to-date
+    cumulative observations.  A monthly flow is therefore computed only when
+    the previous calendar month in the same year is present.  January uses its
+    own YTD value; a combined Jan-Feb release or any other gap is not split or
+    interpolated.  The derived rows retain the current official source URL and
+    are marked ``derived`` so they cannot be mistaken for a separately released
+    official monthly series.
+    """
+    updated_at = updated_at or datetime.now().isoformat()
+    total_upserted = 0
+    details = {}
+    for target_code, (source_code, label, unit) in DERIVED_MONTHLY_SALES.items():
+        source_rows = conn.execute('''SELECT period,value,source_url,parser_notes
+            FROM housing_national_observations
+            WHERE indicator_code=? AND value IS NOT NULL
+            ORDER BY period''', (source_code,)).fetchall()
+        values = {str(row[0]): float(row[1]) for row in source_rows
+                  if re.fullmatch(r'\d{4}-\d{2}', str(row[0] or ''))}
+        metadata = {str(row[0]): row for row in source_rows}
+        derived = 0
+        skipped_gaps = []
+        negative_periods = []
+        for period in sorted(values):
+            year, month = (int(part) for part in period.split('-'))
+            if month == 1:
+                flow = values[period]
+            else:
+                previous_period = f'{year:04d}-{month - 1:02d}'
+                if previous_period not in values:
+                    skipped_gaps.append(period)
+                    continue
+                flow = values[period] - values[previous_period]
+            if flow < 0:
+                negative_periods.append(period)
+            source_row = metadata[period]
+            original_note = str(source_row[3] or '').strip()
+            if month == 1:
+                formula = f'{source_code}[{period}]（1月使用当月累计值）'
+            else:
+                formula = (f'{source_code}[{period}] - '
+                           f'{source_code}[{year:04d}-{month - 1:02d}]')
+            note = (f'{label}；公式={formula}；仅使用同一年度连续官方累计观察，'
+                    '缺少上月时不推断。')
+            if original_note:
+                note += ' 原始口径：' + original_note
+            cursor = conn.execute('''INSERT INTO housing_national_observations
+                (indicator_code,period,value,unit,frequency,data_status,source_name,
+                 source_url,parser_notes,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(indicator_code,period) DO UPDATE SET
+                  value=excluded.value, unit=excluded.unit, frequency=excluded.frequency,
+                  data_status=excluded.data_status, source_name=excluded.source_name,
+                  source_url=excluded.source_url, parser_notes=excluded.parser_notes,
+                  updated_at=excluded.updated_at''',
+                (target_code, period, round(flow, 6), unit, 'monthly', 'derived',
+                 NBS_SOURCE, source_row[2], note, updated_at))
+            total_upserted += cursor.rowcount
+            derived += 1
+        details[target_code] = {
+            'source_code': source_code, 'rows_upserted': derived,
+            'skipped_gap_periods': skipped_gaps,
+            'negative_periods': negative_periods,
+        }
+    return {'rows_upserted': total_upserted, 'series': details,
+            'method': '相邻月份同年度官方累计值差分；缺少上月不插值、不拆分合并发布期。'}
 
 
 # ── 解析(可单测) ──────────────────────────────────────────────────────────────
@@ -704,7 +868,7 @@ def discover_70city_releases(max_pages=6):
     return out
 
 
-def extract_sales_search_releases(payload, start_year=2015, end_year=None):
+def extract_sales_search_releases(payload, start_year=NBS_SALES_MONTHLY_START_YEAR, end_year=None):
     """从统计局官网搜索结果提取房地产销售月报，按累计截止月去重。"""
     end_year = int(end_year or datetime.now().year)
     found = {}
@@ -723,7 +887,7 @@ def extract_sales_search_releases(payload, start_year=2015, end_year=None):
     return [(period, *found[period]) for period in sorted(found, reverse=True)]
 
 
-def discover_sales_history(start_year=2015, end_year=None, max_pages=30):
+def discover_sales_history(start_year=NBS_SALES_MONTHLY_START_YEAR, end_year=None, max_pages=30):
     """搜索两代官方标题，发现历史房地产开发与销售新闻稿。"""
     end_year = int(end_year or datetime.now().year)
     found = {}
@@ -780,7 +944,7 @@ def discover_sales_releases(max_pages=8):
     return [found[period] for period in sorted(found, reverse=True)]
 
 
-def discover_sales_archive(start_year=2015, end_year=None, max_pages=90):
+def discover_sales_archive(start_year=NBS_SALES_MONTHLY_START_YEAR, end_year=None, max_pages=90):
     """Deep-scan official release-list pages; covers headline-style 2022 releases missed by search."""
     end_year = int(end_year or datetime.now().year)
 
@@ -832,25 +996,49 @@ def _upsert_sales_release(conn, values, period, url, updated_at):
     return upserted
 
 
-def backfill_housing_sales_history(db_path, start_year=2015, end_year=None,
+def backfill_housing_sales_history(db_path, start_year=NBS_SALES_MONTHLY_START_YEAR, end_year=None,
                                    sleep_seconds=0.4, max_search_pages=30, workers=4):
     """回填房地产销售累计值与官方同比；失败保留旧数据并如实返回。"""
     started = datetime.now().isoformat()
-    releases = discover_sales_history(start_year, end_year, max_search_pages)
-    if int(start_year) <= 2022:
-        combined = {parse_sales_period_from_title(title): (url, title) for url, title in releases}
-        for url, title in discover_sales_archive(start_year, end_year):
-            combined[parse_sales_period_from_title(title)] = (url, title)
-        releases = [combined[key] for key in sorted(combined, reverse=True) if key]
     errors, upserted, ok = [], 0, 0
-    annual_seed = {'rows_upserted': 0, 'static_rows': 0, 'year_end_rows': 0}
+    end_year = int(end_year or datetime.now().year)
+    releases = load_nbs_sales_release_manifest(
+        start_year=start_year, end_year=end_year)
+    manifest_periods = {parse_sales_period_from_title(title) for _, title in releases}
+    requested_years = range(int(start_year), end_year + 1)
+    fully_manifested = all(
+        all(f'{year}-{month:02d}' in manifest_periods for month in range(2, 13))
+        for year in requested_years)
+    if not fully_manifested:
+        try:
+            releases.extend(discover_sales_history(start_year, end_year, max_search_pages))
+        except Exception as exc:
+            errors.append(f'统计局站内搜索不可用，保留官方清单和旧数据: {exc}')
+        if int(start_year) <= 2022:
+            try:
+                releases.extend(discover_sales_archive(start_year, end_year))
+            except Exception as exc:
+                errors.append(f'统计局发布列表深扫不可用，保留官方清单和旧数据: {exc}')
+    combined = {}
+    for url, title in releases:
+        period = parse_sales_period_from_title(title)
+        if not period:
+            continue
+        current = combined.get(period)
+        if current is None or _release_path_rank(url) < _release_path_rank(current[0]):
+            combined[period] = (url, title)
+    releases = [combined[key] for key in sorted(combined, reverse=True)]
+    annual_seed = {'rows_upserted': 0, 'static_rows': 0, 'year_end_rows': 0,
+                   'static_observations': 0, 'static_value_rows': 0,
+                   'year_end_value_rows': 0}
+    monthly_flow = {'rows_upserted': 0, 'series': {}}
     with connect(db_path) as conn:
         ensure_housing_tables(conn)
         try:
             annual_seed = seed_housing_annual_sales_history(conn)
             conn.commit()
         except Exception as exc:
-            errors.append(f'年度销售面积历史载入失败: {exc}')
+            errors.append(f'年度销售面积/销售额历史载入失败: {exc}')
         pending = []
         for url, title in releases:
             period = parse_sales_period_from_title(title)
@@ -883,12 +1071,17 @@ def backfill_housing_sales_history(db_path, start_year=2015, end_year=None,
                     errors.append(f'{period} {title[:32]}: {exc}')
                 if sleep_seconds:
                     time.sleep(float(sleep_seconds))
+        monthly_flow = derive_monthly_sales_flows(conn, updated_at=datetime.now().isoformat())
+        upserted += monthly_flow['rows_upserted']
         coverage = conn.execute('''SELECT COUNT(DISTINCT period),MIN(period),MAX(period)
             FROM housing_national_observations WHERE indicator_code='sales_area_ytd_yoy_official' ''').fetchone()
     return {'success': ok > 0 or bool(coverage[0]) or annual_seed['static_rows'] > 0,
             'records_upserted': upserted, 'annual_history_upserted': annual_seed['rows_upserted'],
             'annual_history_static_rows': annual_seed['static_rows'],
             'annual_history_year_end_rows': annual_seed['year_end_rows'],
+            'annual_value_history_static_rows': annual_seed['static_value_rows'],
+            'annual_value_history_year_end_rows': annual_seed['year_end_value_rows'],
+            'monthly_flow': monthly_flow,
             'releases_found': len(releases), 'releases_ok': ok,
             'coverage_periods': coverage[0], 'coverage_start': coverage[1], 'coverage_end': coverage[2],
             'errors': errors[:20], 'started_at': started, 'finished_at': datetime.now().isoformat()}
@@ -999,7 +1192,10 @@ def backfill_housing_city_history(db_path, start_year=2011, end_year=None,
 def update_housing_prices(db_path):
     started = datetime.now().isoformat()
     errors, upserted = [], 0
-    annual_seed = {'rows_upserted': 0, 'static_rows': 0, 'year_end_rows': 0}
+    annual_seed = {'rows_upserted': 0, 'static_rows': 0, 'year_end_rows': 0,
+                   'static_observations': 0, 'static_value_rows': 0,
+                   'year_end_value_rows': 0}
+    monthly_flow = {'rows_upserted': 0, 'series': {}}
     releases = discover_70city_releases()
     try:
         sales_releases = discover_sales_releases()
@@ -1050,7 +1246,12 @@ def update_housing_prices(db_path):
             annual_seed = seed_housing_annual_sales_history(conn, updated_at=now)
             upserted += annual_seed['rows_upserted']
         except Exception as exc:
-            errors.append(f'年度销售面积历史载入失败: {exc}')
+            errors.append(f'年度销售面积/销售额历史载入失败: {exc}')
+        try:
+            monthly_flow = derive_monthly_sales_flows(conn, updated_at=now)
+            upserted += monthly_flow['rows_upserted']
+        except Exception as exc:
+            errors.append(f'全国商品房月度流量派生失败: {exc}')
         # 3) BIS 长指数(FRED 免 key,幂等全量)
         for fred_id, name, kind in FRED_SERIES:
             try:
@@ -1079,6 +1280,9 @@ def update_housing_prices(db_path):
             'annual_history_upserted': annual_seed['rows_upserted'],
             'annual_history_static_rows': annual_seed['static_rows'],
             'annual_history_year_end_rows': annual_seed['year_end_rows'],
+            'annual_value_history_static_rows': annual_seed['static_value_rows'],
+            'annual_value_history_year_end_rows': annual_seed['year_end_value_rows'],
+            'monthly_flow': monthly_flow,
             'releases_found': len(releases), 'sales_releases_found': len(sales_releases),
             'errors': errors[:8]}
 
@@ -1158,15 +1362,37 @@ def build_housing_payload(db_path):
         cov_city = dict(conn.execute("""SELECT COUNT(DISTINCT period) periods, MIN(period) earliest, MAX(period) latest,
                                         COUNT(*) records FROM housing_city_observations""").fetchone())
         cov_nat = dict(conn.execute('SELECT COUNT(*) records, MIN(period) earliest, MAX(period) latest FROM housing_national_observations').fetchone())
-        # 全国商品房销售(统计局官方累计,2015 起;只读,缺失置 missing 不补零)
+        # 全国商品房销售（官方月度累计 + 1991 起官方年度长历史）。
         sales_codes = {'area': 'sales_area_ytd', 'area_yoy': 'sales_area_ytd_yoy_official',
                        'value': 'sales_value_ytd', 'value_yoy': 'sales_value_ytd_yoy_official'}
         sales_raw = {key: {r['period']: r['value'] for r in conn.execute(
             'SELECT period, value FROM housing_national_observations WHERE indicator_code=? ORDER BY period', (code,))}
             for key, code in sales_codes.items()}
+        monthly_flow_codes = {
+            'area': 'sales_area_monthly_derived',
+            'value': 'sales_value_monthly_derived',
+        }
+        monthly_flow_raw = {key: {r['period']: r['value'] for r in conn.execute(
+            'SELECT period, value FROM housing_national_observations WHERE indicator_code=? ORDER BY period', (code,))}
+            for key, code in monthly_flow_codes.items()}
+        monthly_flow_periods = sorted(set(monthly_flow_raw['area']) | set(monthly_flow_raw['value']))
+        monthly_flow = {
+            'data_status': 'derived' if monthly_flow_periods else 'missing',
+            'latest_period': monthly_flow_periods[-1] if monthly_flow_periods else None,
+            'area_series': [{'period': p, 'value': monthly_flow_raw['area'].get(p)}
+                            for p in monthly_flow_periods],
+            'value_series': [{'period': p, 'value': monthly_flow_raw['value'].get(p)}
+                             for p in monthly_flow_periods],
+            'method': '由同一年度相邻月份国家统计局官方累计值差分得到；缺少上月时不推断。',
+            'notes': [
+                '这是项目内 derived 月度流量，不是国家统计局单独发布的月度流量序列。',
+                '1—2月合并发布或历史缺少上月累计值的月份保留缺失，不拆分、不插值。',
+            ],
+        }
         sales_periods = sorted(set(sales_raw['area']) | set(sales_raw['value']) |
                                set(sales_raw['area_yoy']) | set(sales_raw['value_yoy']))
         sales_area_periods = sorted(sales_raw['area'])
+        sales_value_periods = sorted(sales_raw['value'])
         annual_rows = [dict(r) for r in conn.execute('''SELECT period, value, source_url,
                 data_status, parser_notes FROM housing_national_observations
                 WHERE indicator_code=? ORDER BY period''', (ANNUAL_SALES_INDICATOR,))]
@@ -1176,27 +1402,51 @@ def build_housing_payload(db_path):
             'data_status': row['data_status'] or 'official', 'frequency': 'annual',
             'parser_notes': row['parser_notes'],
         } for row in annual_rows]
-        if sales_periods or annual_history:
-            sp = sales_periods[-1] if sales_periods else annual_history[-1]['period']
+        annual_value_rows = [dict(r) for r in conn.execute('''SELECT period, value, source_url,
+                data_status, parser_notes FROM housing_national_observations
+                WHERE indicator_code=? ORDER BY period''', (ANNUAL_SALES_VALUE_INDICATOR,))]
+        annual_value_history = [{
+            'period': row['period'], 'label_period': f"{row['period'][:4]}年",
+            'value': row['value'], 'source_url': row['source_url'],
+            'data_status': row['data_status'] or 'official', 'frequency': 'annual',
+            'parser_notes': row['parser_notes'],
+        } for row in annual_value_rows]
+        historical_summary = build_historical_sales_summary(
+            annual_history, annual_value_history)
+        if sales_periods or annual_history or annual_value_history:
+            available_latest = ([sales_periods[-1]] if sales_periods else [])
+            if annual_history:
+                available_latest.append(annual_history[-1]['period'])
+            if annual_value_history:
+                available_latest.append(annual_value_history[-1]['period'])
+            sp = max(available_latest)
             sales = {
                 'data_status': 'official', 'latest_period': sp,
                 'cards': [
-                    {'label': '销售面积累计', 'value': sales_raw['area'].get(sp), 'unit': '万平方米',
+                    {'label': '当年销售面积累计', 'value': sales_raw['area'].get(sp), 'unit': '万平方米',
                      'yoy': sales_raw['area_yoy'].get(sp), 'period': sp},
-                    {'label': '销售额累计', 'value': sales_raw['value'].get(sp), 'unit': '亿元',
+                    {'label': '当年销售额累计', 'value': sales_raw['value'].get(sp), 'unit': '亿元',
                      'yoy': sales_raw['value_yoy'].get(sp), 'period': sp}],
                 'series': [{'period': p, 'area_yoy': sales_raw['area_yoy'].get(p),
                             'value_yoy': sales_raw['value_yoy'].get(p)} for p in sales_periods],
                 'area_series': [{'period': p, 'value': sales_raw['area'].get(p)}
                                 for p in sales_area_periods],
+                'value_series': [{'period': p, 'value': sales_raw['value'].get(p)}
+                                 for p in sales_value_periods],
+                'monthly_flow': monthly_flow,
                 'annual_history': annual_history,
+                'annual_value_history': annual_value_history,
+                'historical_summary': historical_summary,
                 'notes': ['累计同比为统计局官方可比口径;1-2月合并计入2月,不拆分。',
                           '销售面积/销售额为年初至今累计值,非当月值。',
-                          '销售面积累计图显示实际累计规模，不是单月销售流量。',
-                          '年度长序列从1991年起；2004年以前为实际销售统计口径，2005年起包括期房和现房合同面积；年度点不拆分为月度。']}
+                          '“当年销售面积累计/当年销售额累计”图显示年初至今实际累计规模，不是单月销售流量。',
+                          '年度面积与销售额长序列从1991年起；2004年以前为实际销售统计口径，2005年起包括期房和现房合同；年度点不拆分为月度。',
+                          f'月度累计按可连续核验的官方新闻稿展示，当前真实起点为{sales_periods[0] if sales_periods else "—"}；不以年度值伪造1991年月度数据。']}
         else:
             sales = {'data_status': 'missing', 'latest_period': None, 'cards': [], 'series': [],
-                     'area_series': [], 'annual_history': [],
+                     'area_series': [], 'value_series': [], 'monthly_flow': monthly_flow,
+                     'annual_history': [], 'annual_value_history': [],
+                     'historical_summary': build_historical_sales_summary([], []),
                      'notes': ['暂无全国销售官方数据。']}
         latest_sales_yoy_period = next(
             (period for period in sorted(sales_raw['area_yoy'], reverse=True)

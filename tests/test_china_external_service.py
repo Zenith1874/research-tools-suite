@@ -151,7 +151,7 @@ class ChinaExternalPersistenceTests(unittest.TestCase):
     def test_empty_dashboard_payload_contract(self):
         payload = build_china_macro_payload(self.path)
         self.assertTrue(payload['success'])
-        self.assertEqual(len(payload['groups']), 6)
+        self.assertEqual(len(payload['groups']), 7)
         self.assertIn('currency_options', payload)
         self.assertIn('coverage', payload)
 

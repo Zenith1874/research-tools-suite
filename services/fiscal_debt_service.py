@@ -171,7 +171,7 @@ FISCAL_SOURCE_REGISTRY = {
 
 DATA_STATUS = [
     'official', 'derived', 'projected_from_bond_schedule', 'rough_estimate',
-    'scenario', 'cache', 'missing', 'error'
+    'official_plan', 'not_available', 'scenario', 'cache', 'missing', 'error'
 ]
 
 

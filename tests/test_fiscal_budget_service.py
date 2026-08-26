@@ -6,16 +6,23 @@ from pathlib import Path
 from services.fiscal_budget_service import (
     build_land_transfer_annual_series,
     build_land_transfer_half_year_analysis,
+    build_land_transfer_latest_ytd_analysis,
     build_budget_half_year_analysis,
+    build_budget_latest_ytd_analysis,
     build_budget_monthly_coverage,
     build_budget_forecast,
+    build_current_year_fiscal_summary,
+    build_full_caliber_expenditure_series,
+    build_historical_fiscal_summary,
     derive_monthly_budget_series,
     derive_budget_values,
     parse_budget_index_links,
     parse_budget_period_from_title,
     parse_budget_report_text,
     simulate_budget_uncertainty,
+    upsert_official_national_fiscal_deficit_backfill,
     upsert_land_transfer_annual_backfill,
+    upsert_latest_official_fiscal_budget_backfill,
 )
 
 
@@ -73,6 +80,26 @@ class FiscalBudgetParserTests(unittest.TestCase):
         self.assertEqual(parse_budget_period_from_title('2026年1-5月财政收支情况'), '2026-05')
         self.assertEqual(parse_budget_period_from_title('2024年11月财政收支情况'), '2024-11')
 
+    def test_july_cumulative_report_parses_all_current_fields(self):
+        values = parse_budget_report_text('''
+            1-7月，全国一般公共预算收入143696亿元，同比增长5.8%。
+            1-7月，全国一般公共预算支出162889亿元，同比增长1.3%。
+            1-7月，全国政府性基金预算收入18219亿元，同比下降21.2%。
+            1-7月，全国政府性基金预算支出45410亿元，同比下降16.4%。
+            其中，国有土地使用权出让收入11731亿元，同比下降30.8%。
+            债务付息支出7966亿元，同比增长5.2%。
+        ''')
+        self.assertEqual(values['general_budget_revenue_ytd'], 143696.0)
+        self.assertEqual(values['general_budget_revenue_ytd_yoy_official'], 5.8)
+        self.assertEqual(values['general_budget_expenditure_ytd'], 162889.0)
+        self.assertEqual(values['gov_fund_revenue_ytd'], 18219.0)
+        self.assertEqual(values['gov_fund_expenditure_ytd_yoy_official'], -16.4)
+        self.assertEqual(values['govfund_land_transfer_revenue_ytd'], 11731.0)
+        self.assertEqual(values['govfund_land_transfer_revenue_ytd_yoy_official'], -30.8)
+        self.assertEqual(values['budget_interest_expenditure_ytd'], 7966.0)
+        self.assertEqual(values['budget_interest_expenditure_ytd_yoy_official'], 5.2)
+        self.assertEqual(parse_budget_period_from_title('2026年1-7月财政收支情况'), '2026-07')
+
     def test_legacy_report_prefers_cumulative_value_over_month_value(self):
         values = parse_budget_report_text('''
             12月份，全国财政收入6340亿元。
@@ -112,6 +139,46 @@ class FiscalBudgetParserTests(unittest.TestCase):
         })
         self.assertEqual(values['general_budget_balance_ytd'], -20.0)
         self.assertNotIn('combined_budget_balance_ytd', values)
+
+    def test_historical_summary_separates_statutory_deficit_from_accounting_gap(self):
+        result = build_historical_fiscal_summary([
+            {'period': '2025', 'year': 2025,
+             'general_budget_revenue_ytd': 216045.0,
+             'general_budget_expenditure_ytd': 287395.0,
+             'gov_fund_revenue_ytd': 57704.0,
+             'gov_fund_expenditure_ytd': 112874.0,
+             'combined_budget_revenue_ytd': 273749.0,
+             'combined_budget_expenditure_ytd': 400269.0,
+             'data_status': 'official', 'source_url': 'https://example.test/2025'}])
+        row = result['records'][0]
+        self.assertEqual(row['official_national_fiscal_deficit'], 56600.0)
+        self.assertEqual(row['official_national_fiscal_deficit_data_status'], 'official')
+        self.assertEqual(row['general_budget_deficit_gap'], 71350.0)
+        self.assertEqual(row['gov_fund_deficit_gap'], 55170.0)
+        self.assertEqual(row['combined_budget_deficit_gap'], 126520.0)
+        self.assertEqual(row['official_deficit_minus_general_gap'], -14750.0)
+        self.assertEqual(result['coverage']['official_deficit_periods'], 1)
+
+    def test_current_year_summary_keeps_ytd_gap_and_budget_plan_separate(self):
+        result = build_current_year_fiscal_summary(
+            [{'period': '2026-06',
+              'general_budget_revenue_ytd': 121047.0,
+              'general_budget_expenditure_ytd': 143329.0,
+              'gov_fund_revenue_ytd': 15244.0,
+              'gov_fund_expenditure_ytd': 38705.0,
+              'combined_budget_revenue_ytd': 136291.0,
+              'combined_budget_expenditure_ytd': 182034.0,
+              'data_status': 'official', 'source_url': 'https://example.test/2026-06'}],
+            [{'period': '2025', 'year': 2025}])
+        row = result['records'][0]
+        self.assertEqual(row['period'], '2026-06')
+        self.assertEqual(row['general_budget_deficit_gap_ytd'], 22282.0)
+        self.assertEqual(row['gov_fund_deficit_gap_ytd'], 23461.0)
+        self.assertEqual(row['combined_budget_deficit_gap_ytd'], 45743.0)
+        self.assertIsNone(row['official_national_fiscal_deficit'])
+        self.assertEqual(row['official_national_fiscal_deficit_plan'], 58900.0)
+        self.assertEqual(row['official_national_fiscal_deficit_plan_data_status'], 'official_plan')
+        self.assertEqual(result['cards'][-1]['data_status'], 'official_plan')
 
     def test_monthly_flow_keeps_jan_feb_combined_and_does_not_bridge_gap(self):
         series = [
@@ -168,6 +235,23 @@ class FiscalBudgetParserTests(unittest.TestCase):
         self.assertEqual(coverage['joint_total_flow_periods'], 2)
         self.assertEqual(coverage['joint_total_latest'], '2025-03')
         self.assertIn('1月没有单独官方观测', ' '.join(coverage['warnings']))
+
+    def test_full_caliber_expenditure_exposes_same_window_yoy(self):
+        series = [
+            {'period': '2024-02', 'source_url': 'u24',
+             'general_budget_expenditure_ytd': 120.0,
+             'gov_fund_expenditure_ytd': 30.0},
+            {'period': '2025-02', 'source_url': 'u25',
+             'general_budget_expenditure_ytd': 130.0,
+             'gov_fund_expenditure_ytd': 35.0},
+        ]
+        monthly = derive_monthly_budget_series(series)
+        full_caliber = build_full_caliber_expenditure_series(monthly)
+        by_period = {row['period']: row for row in full_caliber['records']}
+        self.assertEqual(by_period['2025-02']['full_caliber_expenditure_monthly'], 165.0)
+        self.assertEqual(by_period['2025-02']['full_caliber_expenditure_yoy_pct'], 10.0)
+        self.assertIn('u24', by_period['2025-02']['source_urls'])
+        self.assertEqual(full_caliber['coverage']['yoy_records'], 1)
 
     def test_budget_archive_parser_accepts_main_site_links_and_skips_self_link(self):
         html = '''
@@ -313,6 +397,29 @@ class FiscalBudgetForecastTests(unittest.TestCase):
         self.assertEqual(forecast['uncertainty']['records'][0]['period'], '2023')
         self.assertEqual(forecast['half_year_analysis']['current']['year'], 2023)
 
+    def test_current_year_forecast_switches_to_latest_cutoff_after_h1(self):
+        annual, series = [], []
+        for year, share in ((2018, .50), (2019, .52), (2020, .48),
+                            (2021, .51), (2022, .50)):
+            values = {
+                'general_budget_revenue_ytd': 1000 + (year - 2019) * 50,
+                'general_budget_expenditure_ytd': 1200 + (year - 2019) * 60,
+                'gov_fund_revenue_ytd': 500 + (year - 2019) * 20,
+                'gov_fund_expenditure_ytd': 600 + (year - 2019) * 30,
+            }
+            annual.append({'period': str(year), 'year': year, **values})
+            series.append({'period': f'{year}-07', **{
+                code: value * share for code, value in values.items()}})
+        series.append({'period': '2023-07',
+                       'general_budget_revenue_ytd': 700.0,
+                       'general_budget_expenditure_ytd': 800.0,
+                       'gov_fund_revenue_ytd': 300.0,
+                       'gov_fund_expenditure_ytd': 400.0})
+        forecast = build_budget_forecast(annual, series, horizon=1)
+        self.assertEqual(forecast['current_year_forecast_mode'], 'latest_ytd_seasonality')
+        self.assertEqual(forecast['latest_ytd_cutoff_label'], '1—7月')
+        self.assertEqual(forecast['latest_ytd_analysis']['current']['period'], '2023-07')
+
 
 class FiscalLandAnnualSeriesTests(unittest.TestCase):
     def test_land_annual_series_keeps_missing_years_and_computes_shares(self):
@@ -367,6 +474,28 @@ class FiscalLandAnnualSeriesTests(unittest.TestCase):
             self.assertEqual(row[1], 'official')
             self.assertTrue(row[2].startswith('https://'))
 
+    def test_official_deficit_annual_backfill_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / 'fiscal.db')
+            first = upsert_official_national_fiscal_deficit_backfill(db_path)
+            second = upsert_official_national_fiscal_deficit_backfill(db_path)
+            conn = sqlite3.connect(db_path)
+            count = conn.execute(
+                "SELECT COUNT(*) FROM fiscal_budget_observations "
+                "WHERE indicator_code='official_national_fiscal_deficit'"
+            ).fetchone()[0]
+            row = conn.execute(
+                "SELECT value,data_status,source_url FROM fiscal_budget_observations "
+                "WHERE indicator_code='official_national_fiscal_deficit' AND period='2025-12'"
+            ).fetchone()
+            conn.close()
+            self.assertEqual(first['records_upserted'], len(first['years']))
+            self.assertEqual(second['records_upserted'], len(second['years']))
+            self.assertEqual(count, len(first['years']))
+            self.assertEqual(row[0], 56600.0)
+            self.assertEqual(row[1], 'official')
+            self.assertTrue(row[2].startswith('https://'))
+
 
 class FiscalLandHalfYearAnalysisTests(unittest.TestCase):
     def test_half_year_matches_same_year_full_year_and_backtests_without_lookahead(self):
@@ -418,6 +547,72 @@ class FiscalLandHalfYearAnalysisTests(unittest.TestCase):
         self.assertIsNone(result['current']['implied_full_year_median'])
         self.assertEqual(result['predictive_power']['data_status'], 'insufficient_sample')
 
+    def test_latest_ytd_land_analysis_uses_same_cutoff_month(self):
+        series = []
+        for year, share in ((2020, .40), (2021, .42), (2022, .44), (2023, .46), (2024, .43)):
+            full = 100.0 + (year - 2020) * 10
+            series.extend([
+                {'period': f'{year}-07', 'govfund_land_transfer_revenue_ytd': full * share,
+                 'govfund_land_transfer_revenue_ytd_yoy_official': 1.0,
+                 'source_url': f'u{year}07'},
+                {'period': f'{year}-12', 'govfund_land_transfer_revenue_ytd': full,
+                 'source_url': f'u{year}12'},
+            ])
+        series.append({'period': '2025-07', 'govfund_land_transfer_revenue_ytd': 55.0,
+                       'govfund_land_transfer_revenue_ytd_yoy_official': -30.8,
+                       'source_url': 'u202507'})
+        result = build_land_transfer_latest_ytd_analysis(series, start_year=2020)
+        self.assertEqual(result['current']['period'], '2025-07')
+        self.assertEqual(result['current']['cutoff_label'], '1—7月')
+        self.assertEqual(result['n_obs'], 5)
+        self.assertAlmostEqual(result['current']['historical_share_median_pct'], 43.0)
+        self.assertAlmostEqual(result['current']['implied_full_year_median'], 127.91, places=2)
+        self.assertIn('同截止月', result['current']['formula'])
+
+    def test_latest_ytd_budget_analysis_drives_scenarios(self):
+        annual, series = [], []
+        for year in range(2018, 2023):
+            values = {
+                'general_budget_revenue_ytd': 1000.0 + (year - 2018) * 50,
+                'general_budget_expenditure_ytd': 1200.0 + (year - 2018) * 60,
+                'gov_fund_revenue_ytd': 500.0 + (year - 2018) * 20,
+                'gov_fund_expenditure_ytd': 600.0 + (year - 2018) * 30,
+            }
+            annual.append({'period': str(year), 'year': year, **values})
+            series.append({'period': f'{year}-07', **{
+                code: value * .50 for code, value in values.items()}})
+        current = {
+            'general_budget_revenue_ytd': 700.0,
+            'general_budget_expenditure_ytd': 800.0,
+            'gov_fund_revenue_ytd': 300.0,
+            'gov_fund_expenditure_ytd': 400.0,
+        }
+        series.append({'period': '2023-07', **current})
+        result = build_budget_latest_ytd_analysis(annual, series)
+        self.assertEqual(result['current']['period'], '2023-07')
+        self.assertEqual(result['current']['cutoff_label'], '1—7月')
+        self.assertEqual(result['current']['scenarios']['baseline']['values']['general_budget_revenue_ytd'], 1400.0)
+        self.assertEqual(result['current']['scenarios']['baseline']['values']['gov_fund_expenditure_ytd'], 800.0)
+        self.assertEqual(result['simulation']['n_share_vectors'], 5)
+
+    def test_latest_official_backfill_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = str(Path(directory) / 'fiscal_budget.db')
+            first = upsert_latest_official_fiscal_budget_backfill(db_path)
+            second = upsert_latest_official_fiscal_budget_backfill(db_path)
+            conn = sqlite3.connect(db_path)
+            count = conn.execute(
+                "SELECT COUNT(*) FROM fiscal_budget_observations WHERE period='2026-07'"
+            ).fetchone()[0]
+            source = conn.execute(
+                "SELECT DISTINCT source_url FROM fiscal_budget_observations WHERE period='2026-07'"
+            ).fetchone()[0]
+            conn.close()
+        self.assertEqual(first['periods'], ['2026-07'])
+        self.assertEqual(second['periods'], ['2026-07'])
+        self.assertEqual(count, 17)
+        self.assertIn('gks.mof.gov.cn', source)
+
 
 class FiscalBudgetPageContractTests(unittest.TestCase):
     def test_page_exposes_account_and_scenario_switches(self):
@@ -428,11 +623,20 @@ class FiscalBudgetPageContractTests(unittest.TestCase):
                      '财政月度实际流量', '由YTD相邻差分', '最可能（基准）',
                      '历史波动模拟区间', 'P10较差', 'P50中位', 'P90较好'):
             self.assertIn(text, page)
+        self.assertIn('财政全口径支出逐月演变', page)
+        self.assertIn('full_caliber_expenditure_yoy_pct', page)
         self.assertIn('全国土地出让收入年度历史', page)
         self.assertIn('上半年土地出让收入与全年回测', page)
         self.assertIn('halfYear.cards', page)
         self.assertIn('本年上半年累计→全年推演', page)
         self.assertIn('half_year_analysis', page)
+        self.assertIn('本年最新累计月→全年推演', page)
+        self.assertIn('latest_ytd_analysis', page)
+        self.assertIn('土地出让收入：最新累计月→全年推演', page)
+        self.assertIn('历年财政汇总', page)
+        self.assertIn('当前年度财政汇总', page)
+        self.assertIn('official_national_fiscal_deficit', page)
+        self.assertIn('general_budget_deficit_gap', page)
 
 
 if __name__ == '__main__':

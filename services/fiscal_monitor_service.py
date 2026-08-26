@@ -356,15 +356,21 @@ def build_liquidity_timeline(omo_records, completed_repo_records, projected_repo
         timeline.setdefault(row['period'], {'period': row['period']}).update(row)
     for row in completed_repo_records:
         if row.get('period', '') >= '2024-08':
-            timeline.setdefault(row['period'], {'period': row['period']}).update({
+            update = {
                 'buyout_repo_completed_stock': row.get('outstanding_amount'),
                 'buyout_repo_status': 'derived', 'source_url': row.get('source_url'),
-            })
+            }
+            if row.get('monthly_bucket_outstanding_amount') is not None:
+                update['buyout_repo_month_bucket_stock'] = row.get('monthly_bucket_outstanding_amount')
+            timeline.setdefault(row['period'], {'period': row['period']}).update(update)
     for row in projected_repo_records:
-        timeline.setdefault(row['period'], {'period': row['period']}).update({
+        update = {
             'buyout_repo_projected_stock': row.get('outstanding_amount'),
             'buyout_repo_status': 'projected', 'source_url': row.get('source_url'),
-        })
+        }
+        if row.get('monthly_bucket_outstanding_amount') is not None:
+            update['buyout_repo_month_bucket_stock'] = row.get('monthly_bucket_outstanding_amount')
+        timeline.setdefault(row['period'], {'period': row['period']}).update(update)
     for row in balance_records:
         if row.get('period', '') >= '2024-08':
             timeline.setdefault(row['period'], {'period': row['period']}).update({
@@ -587,6 +593,7 @@ def build_fiscal_monitor_payload(db_path):
     repo_as_of = buyout.get('as_of_stock')
     repo_latest = buyout.get('latest')
     repo_projection = buyout.get('current_month_projection')
+    repo_bucket_current = repo_projection or repo_latest
     repo_projection_records = [dict(row, projection_status='projected')
                                for row in buyout.get('projection_records', [])]
     repo_cards = [
@@ -620,6 +627,21 @@ def build_fiscal_monitor_payload(db_path):
             repo_projection.get('formula') if repo_projection else None,
             warning='仅按截至当前已公告操作预测；月末前新增操作会改变该数值。' if repo_projection else None,
             source_urls=repo_projection.get('source_urls') if repo_projection else None,
+        ),
+        _card(
+            '截图同口径月度归集余额',
+            repo_bucket_current.get('monthly_bucket_outstanding_amount') if repo_bucket_current else None,
+            '亿元', repo_bucket_current.get('period') if repo_bucket_current else None,
+            'derived' if repo_bucket_current else 'missing',
+            repo_bucket_current.get('source_name') if repo_bucket_current else None,
+            repo_bucket_current.get('source_url') if repo_bucket_current else None,
+            '买断式逆回购截图月度归集对照' if repo_bucket_current else None,
+            '按截图月度归集规则的 derived 对照值，不替代 exact-date 余额。'
+            if repo_bucket_current else None,
+            repo_bucket_current.get('monthly_bucket_formula') if repo_bucket_current else None,
+            warning='业务公告从次月归集，招标公告从操作月归集；用于和截图逐月对照。'
+            if repo_bucket_current else None,
+            source_urls=repo_bucket_current.get('source_urls') if repo_bucket_current else None,
         ),
         _card(
             '当前未到期操作笔数', repo_as_of.get('operation_count') if repo_as_of else None,
@@ -774,17 +796,27 @@ def build_fiscal_monitor_payload(db_path):
             'latest_ytd_cards': budget.get('cards', []),
             'tables': {
                 'annual': budget.get('annual_series', []),
+                'historical_summary': budget.get('historical_fiscal_summary', {}).get('records', []),
+                'current_year_summary': budget.get('current_year_fiscal_summary', {}).get('records', []),
                 'land_transfer_annual': budget.get('land_transfer_annual_series', []),
                 'land_transfer_half_year': budget.get(
                     'land_transfer_half_year_analysis', {}).get('rows', []),
+                'land_transfer_latest_ytd': budget.get(
+                    'land_transfer_latest_ytd_analysis', {}).get('rows', []),
                 'ytd': budget.get('series', []),
                 'monthly': budget.get('monthly_series', []),
+                'full_caliber_expenditure': budget.get('full_caliber_expenditure', {}).get('records', []),
             },
             'monthly_cards': budget.get('monthly_cards', []),
             'monthly_coverage': budget.get('monthly_coverage', {}),
+            'full_caliber_expenditure': budget.get('full_caliber_expenditure', {}),
             'forecast': budget.get('forecast', {}),
+            'historical_summary': budget.get('historical_fiscal_summary', {}),
+            'current_year_summary': budget.get('current_year_fiscal_summary', {}),
             'half_year_analysis': budget.get('land_transfer_half_year_analysis', {}),
+            'latest_ytd_analysis': budget.get('land_transfer_latest_ytd_analysis', {}),
             'budget_half_year_analysis': budget.get('budget_half_year_analysis', {}),
+            'budget_latest_ytd_analysis': budget.get('budget_latest_ytd_analysis', {}),
             'debt_service_cashflow': {
                 'data_status': 'scenario', 'cards': cashflow_cards,
                 'history': debt_service_history,
@@ -856,6 +888,7 @@ def build_fiscal_monitor_payload(db_path):
                 'pboc_buyout_reverse_repo_active_operations': _without_raw(
                     repo_as_of.get('active_operations', []) if repo_as_of else []
                 ),
+                'pboc_buyout_reverse_repo_matrix': buyout.get('matrix', {}),
                 'new_liquidity_timeline': liquidity_timeline,
                 'non_fx_channel_changes': non_fx_changes,
             },
@@ -876,6 +909,14 @@ def build_fiscal_monitor_payload(db_path):
             'cards': [], 'tables': [], 'warnings': [],
         },
     }
+    buyout_coverage = buyout.get('coverage', {})
+    buyout_monthly_coverage = buyout_coverage.get('monthly_stock', {})
+    buyout_module_coverage = {
+        **buyout_monthly_coverage,
+        'announcements': buyout_coverage.get('announcements', {}),
+        'operations': buyout_coverage.get('operations', {}),
+        'monthly_stock': buyout_monthly_coverage,
+    }
     coverage = {
         'central_government_debt': {'records': len(central_records), 'earliest_period': central_records[0]['period'] if central_records else None,
                                     'latest_period': central_records[-1]['period'] if central_records else None},
@@ -885,7 +926,7 @@ def build_fiscal_monitor_payload(db_path):
         'local_government_debt': {'records': len(local_records), 'earliest_period': local_records[0]['period'] if local_records else None,
                                   'latest_period': local_records[-1]['period'] if local_records else None},
         'pboc_balance_sheet': balance.get('coverage'), 'pboc_gov_bond_omo': omo.get('coverage'),
-        'pboc_buyout_reverse_repo': buyout.get('coverage'), 'mof_treasury_bonds': treasury_issuance.get('coverage'),
+        'pboc_buyout_reverse_repo': buyout_module_coverage, 'mof_treasury_bonds': treasury_issuance.get('coverage'),
         'fiscal_budget': {
             'records': budget.get('coverage', {}).get('periods', 0),
             'earliest_period': budget.get('coverage', {}).get('earliest'),
@@ -1002,14 +1043,22 @@ def build_fiscal_monitor_debug(db_path):
             "SELECT * FROM fiscal_debt_update_logs WHERE status='error' ORDER BY id DESC LIMIT 1").fetchone()
     missing_modules = [
         {'module_code': 'fiscal_gap',
-         'reason': '一般公共预算/政府性基金收支(YTD)已接入，收支差额为 derived；官方预算口径赤字(含调入资金/结转结余)仍未单列。',
-         'next_source': '财政部预算执行报告、全国人大预算决议。'},
+         'reason': '全国法定财政赤字（2009—2025）已接入财政部年度预算执行报告；地方财政/城投等更细的财政缺口仍未形成独立可比序列。',
+         'next_source': '地方财政决算、政府债务预算和可核验的城投债数据。'},
         {'module_code': 'treasury_principal_interest',
          'reason': '已用已抓逐只国债给出 derived 估计(未来12个月还本 + 存量附息年付息)；全口径(含2024年前存量)完整序列仍缺。',
          'next_source': '财政部国债发行兑付公告和中央国债登记结算公开统计。'},
         {'module_code': 'complete_maturity_schedule', 'reason': '当前国债发行明细不等于完整存量债券到期表。',
          'next_source': '财政部历史公告、中国债券信息网或中债登。'},
     ]
+    buyout_coverage = buyout.get('coverage', {})
+    buyout_monthly_coverage = buyout_coverage.get('monthly_stock', {})
+    buyout_module_coverage = {
+        **buyout_monthly_coverage,
+        'announcements': buyout_coverage.get('announcements', {}),
+        'operations': buyout_coverage.get('operations', {}),
+        'monthly_stock': buyout_monthly_coverage,
+    }
     base.update({
         'modules': {'fiscal_debt': {'indicator_coverage': base.get('indicator_coverage', [])},
                     'pboc_balance_sheet': balance, 'pboc_gov_bond_omo': omo,
@@ -1018,7 +1067,7 @@ def build_fiscal_monitor_debug(db_path):
         'coverage': {'fiscal_debt': base.get('indicator_coverage', []),
                      'pboc_balance_sheet': balance.get('coverage'),
                      'pboc_gov_bond_omo': omo.get('coverage'),
-                     'pboc_buyout_reverse_repo': buyout.get('coverage'),
+                     'pboc_buyout_reverse_repo': buyout_module_coverage,
                      'mof_treasury_bonds': treasury.get('coverage'),
                      'fiscal_budget': budget.get('coverage')},
         'recent_source_records': recent_sources,

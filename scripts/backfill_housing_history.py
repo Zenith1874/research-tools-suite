@@ -3,7 +3,7 @@
 
 示例：
   python scripts/backfill_housing_history.py --source nbs --start-year 2011
-  python scripts/backfill_housing_history.py --source nbs-sales --start-year 2015
+  python scripts/backfill_housing_history.py --source nbs-sales --start-year 2012
   python scripts/backfill_housing_history.py --source anjuke --start-year 2010 --max-requests 90
   python scripts/backfill_housing_history.py --source anjuke-yearly --no-network
 
@@ -26,7 +26,8 @@ from services.anjuke_listing_service import (  # noqa: E402
     update_anjuke_yearly_rankings,
 )
 from services.housing_price_service import (  # noqa: E402
-    backfill_housing_city_history, backfill_housing_sales_history,
+    NBS_SALES_MONTHLY_START_YEAR, backfill_housing_city_history,
+    backfill_housing_sales_history,
 )
 
 
@@ -82,7 +83,7 @@ def main():
     else:
         result = backfill_housing_sales_history(
             db_path=args.db_path or os.path.join(ROOT, 'pboc_data.db'),
-            start_year=args.start_year or 2015,
+            start_year=args.start_year or NBS_SALES_MONTHLY_START_YEAR,
             end_year=args.end_year,
             sleep_seconds=args.nbs_sleep,
         )
