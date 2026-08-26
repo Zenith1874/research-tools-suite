@@ -1053,6 +1053,29 @@ def ensure_faculty_jobs_tables(db_path=None):
                     f"reprocessed {repair_stats['links']} source links without replacing them with guessed cities."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=50").fetchone():
+            # business_scope is derived at ingest, so classifier improvements do
+            # not reach stored rows on their own.  35% of jobs sat in 'unknown';
+            # replaying the boundary applies the 2026-08-26 role and field rules
+            # (plural professor titles, bare "business", French postings, senior
+            # administration, observed non-business fields) to existing records.
+            # Derived fields only: no source row, source link or raw excerpt is
+            # touched, and quarantined records are skipped as always.
+            before = dict(conn.execute(
+                "SELECT business_scope, COUNT(*) FROM jobs GROUP BY business_scope").fetchall())
+            _backfill_business_scope(conn)
+            after = dict(conn.execute(
+                "SELECT business_scope, COUNT(*) FROM jobs GROUP BY business_scope").fetchall())
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (50, now_utc(), (
+                    "Replayed business_scope with the 2026-08-26 role/field rules. "
+                    f"unknown {before.get('unknown', 0)} -> {after.get('unknown', 0)}; "
+                    f"business_school {before.get('business_school', 0)} -> {after.get('business_school', 0)}; "
+                    f"business_discipline {before.get('business_discipline', 0)} -> {after.get('business_discipline', 0)}; "
+                    f"non_business {before.get('non_business', 0)} -> {after.get('non_business', 0)}."
+                )),
+            )
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:

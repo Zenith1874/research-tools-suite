@@ -861,16 +861,25 @@ _STAFF_ROLE_RE = re.compile(
     r"research\s+administrative)\s+assistant\b|"
     r"\b(?:coordinator|administrator|recruiter|programmer|developer|engineer|"
     r"analyst|accountant|product\s+manager|product\s+designer|project\s+manager|"
-    r"operations\s+manager|business\s+manager|vice\s+president|"
-    r"research\s+(?:associate|scientist))\b",
+    r"operations\s+manager|business\s+manager|"
+    r"research\s+(?:associate|scientist))\b|"
+    # University-wide administration is not a faculty-market vacancy.  The
+    # hyphenated spelling is the common one in Canadian postings and never
+    # matched the whitespace-only pattern.
+    r"\bvice[-\s]?president\b|\b(?:provost|chancellor|rector)\b|"
+    r"\b(?:transitional\s+|interim\s+)?president\b(?!\s*(?:['’]s)?\s*(?:chair|professor))|"
+    r"\bvice[-\s]?doyen",
     re.I,
 )
-_PROFESSOR_ROLE_RE = re.compile(r"\bprofessor\b", re.I)
-_TEACHING_ROLE_RE = re.compile(r"\b(?:lecturer|instructor|faculty|reader)\b", re.I)
-_LEADERSHIP_ROLE_RE = re.compile(r"\b(?:dean|chair(?:person)?|department\s+head)\b", re.I)
+_PROFESSOR_ROLE_RE = re.compile(
+    r"\bprofessors?\b|\bprofesseure?s?\b|\bmaître\s+de\s+conférences\b", re.I)
+_TEACHING_ROLE_RE = re.compile(
+    r"\b(?:lecturers?|instructors?|faculty|readers?)\b|\bchargée?s?\s+de\s+cours\b", re.I)
+_LEADERSHIP_ROLE_RE = re.compile(
+    r"\b(?:dean|chair(?:person)?|department\s+head)\b|\bdoyen(?:ne)?s?\b", re.I)
 _POSTDOC_ROLE_RE = re.compile(r"\bpost[- ]?doc(?:toral)?\b", re.I)
 _RESEARCH_ACADEMIC_ROLE_RE = re.compile(
-    r"\b(?:research|teaching)\s+fellow\b",
+    r"\b(?:research|teaching)\s+fellows?\b",
     re.I,
 )
 _OPEN_RANK_RE = re.compile(r"\bopen[- ]rank\b", re.I)
@@ -973,7 +982,8 @@ _BUSINESS_DISCIPLINE_RE = re.compile(
     r"international business|marketing|finance|accounting|business law|legal studies|"
     r"insurance|risk management|real estate|operations management|supply chain|"
     r"logistics|transportation\s+(?:management|logistics)|general business|"
-    r"business administration|business management|management)\b",
+    r"business administration|business management|management|"
+    r"management science|decision sciences?|organi[sz]ational studies|business)\b",
     re.I,
 )
 _NON_BUSINESS_RE = re.compile(
@@ -982,6 +992,7 @@ _NON_BUSINESS_RE = re.compile(
     r"sociology|psychology|computer science|electrical engineering|mechanical engineering|"
     r"radiopharmaceutical|radiochemical|pharmacy|pharmaceutical|chiropractic|cosmetology|"
     r"dental(?:\s+hygiene)?|dentistry|graphic design|studio art|fine arts?|journalism|"
+    r"nurse\s+practitioner|\bnurse\b|"
     r"mass communication|recreation|swim(?:ming)?|health sciences?|educational administration|"
     r"aviation(?:\s+science)?|biostatistics?|manufacturing\s+engineering|chemical\s+engineering|"
     r"biological\s+engineering|civil\s+engineering|aerospace\s+engineering|"
@@ -992,7 +1003,23 @@ _NON_BUSINESS_RE = re.compile(
     r"pain\s+management|paralegal|professor\s+of\s+law|law\s+school|"
     r"(?:school|college)\s+of\s+law|"
     r"culinary(?:\s+arts?)?|bak(?:ing|ery)|pastry|literature|languages?|"
-    r"materials?\s+science|epidemiolog(?:y|ical)|implementation\s+science)\b",
+    r"materials?\s+science|epidemiolog(?:y|ical)|implementation\s+science|"
+    # Fields observed in the unclassified bucket on 2026-08-26.  Each one was
+    # taken from an actual posting title, not guessed, so the list stays
+    # auditable against the records that motivated it.
+    r"archaeolog(?:y|ical)|anthropolog(?:y|ical)|indigenous\s+studies|"
+    r"library\s+(?:science|technolog(?:y|ies))|librarian(?:ship)?|"
+    r"(?:urban|community|regional)\s+planning|public\s+health|health\s+policy|"
+    r"mental\s+health|forestr(?:y|ies)|forest\s+sciences?|kinesiolog(?:y|ical)|"
+    r"linguistics?|theolog(?:y|ical)|divinity|musicolog(?:y|ical)|"
+    r"veterinary(?:\s+medicine)?|mathematics|"
+    r"teacher\s+education|educational\s+leadership|curriculum\s+and\s+instruction|"
+    r"\bk-?12\b|francophone\s+studies|"
+    # French-language equivalents: University Affairs publishes bilingually and
+    # an English-only field list left every French posting unclassified.
+    r"santé\s+publique|sciences?\s+forestières?|sociologie|médecine|"
+    r"bibliothèques?|lettres\s+et\s+communication|"
+    r"génie(?:\s+\w+)?|sciences?\s+infirmières?|psychologie|anthropologie)\b",
     re.I,
 )
 _AMBIGUOUS_MANAGEMENT_FIELD_RE = re.compile(
@@ -1036,8 +1063,25 @@ def classify_business_scope(
     title_department = " ".join(item for item in (title_text, department_text) if item)
     role = faculty_role or classify_faculty_market_role(title_text, description_text)
     if not role.get("eligible"):
+        if role.get("role") in {"student_role", "staff_role", "listing_page"}:
+            return {
+                "scope": "non_academic",
+                "confidence": role.get("confidence") or "low",
+                "reason": role.get("reason") or "No eligible faculty-market role was established.",
+            }
+        # An unrecognised role is not a reason to throw away field evidence we
+        # do have.  A posting that names a non-business academic field is known
+        # not to be a business vacancy, which is strictly more informative than
+        # "unknown".  Both are excluded from the default market either way, so
+        # this sharpens the audit view without widening it.
+        if _NON_BUSINESS_RE.search(title_department):
+            return {
+                "scope": "non_business", "confidence": "medium",
+                "reason": "Role was not identified, but the title/department names a "
+                          "non-business academic field.",
+            }
         return {
-            "scope": "non_academic" if role.get("role") in {"student_role", "staff_role", "listing_page"} else "unknown",
+            "scope": "unknown",
             "confidence": role.get("confidence") or "low",
             "reason": role.get("reason") or "No eligible faculty-market role was established.",
         }
