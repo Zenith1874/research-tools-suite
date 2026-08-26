@@ -1219,6 +1219,31 @@ def ensure_faculty_jobs_tables(db_path=None):
             conn.execute(
                 "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
                 (54, now_utc(), note))
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=55").fetchone():
+            before_scope = dict(conn.execute(
+                "SELECT business_scope, COUNT(*) FROM jobs GROUP BY business_scope").fetchall())
+            link_stats = _link_jobs_to_unique_school(conn)
+            after_scope = dict(conn.execute(
+                "SELECT business_scope, COUNT(*) FROM jobs GROUP BY business_scope").fetchall())
+            linked_total = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE derived_quality='accepted' "
+                "AND business_scope IN ('business_school','business_discipline') "
+                "AND school_id IS NOT NULL").fetchone()[0]
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (55, now_utc(), (
+                    f"Linked {link_stats['linked']} school-less business jobs to their "
+                    f"institution's only business school; {link_stats['ambiguous_skipped']} left "
+                    f"alone because the institution has more than one. Default-market jobs with a "
+                    f"school entity now {linked_total}. The link is recorded as "
+                    f"institution_unique_school and is excluded from posting-level evidence, so "
+                    f"business_scope is unchanged: "
+                    f"business_school {before_scope.get('business_school', 0)}->"
+                    f"{after_scope.get('business_school', 0)}, business_discipline "
+                    f"{before_scope.get('business_discipline', 0)}->"
+                    f"{after_scope.get('business_discipline', 0)}."
+                )),
+            )
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:
@@ -1734,6 +1759,88 @@ def _backfill_job_location_from_entity(conn):
             "considered": len(rows)}
 
 
+# School links that this database derived rather than read off the posting.
+# They must never count as posting-level evidence, or a job would be promoted to
+# business_school scope on the strength of a link we made ourselves.
+_DERIVED_SCHOOL_CONTEXTS = {"aacsb_roster_target", "institution_unique_school"}
+
+
+def _school_name_key(value):
+    text = re.sub(r"[^a-z0-9 ]", " ", (value or "").casefold())
+    return re.sub(r"^the ", "", re.sub(r"\s+", " ", text).strip())
+
+
+def _canonical_variant_school(conn, institution_id):
+    """Pick the canonical entity when an institution's schools are one school.
+
+    Duplicate rows accumulate as name variants of the same unit -- "A. B.
+    Freeman School of Business" beside "Freeman School of Business", or a
+    posting's programme text prepended as in "Full-time Fully On-Campus Farmer
+    School of Business". When every name contains, or is contained by, another,
+    they are the same school and the fullest name wins.
+
+    Returns None when the names are genuinely distinct, so a university with two
+    real business schools is never collapsed. This links a job to an existing
+    entity; it does not merge the duplicate rows, which stay for review.
+    """
+    schools = conn.execute(
+        "SELECT id, official_name FROM business_schools "
+        "WHERE institution_id=? AND is_current=1", (institution_id,)).fetchall()
+    keys = {row["id"]: _school_name_key(row["official_name"]) for row in schools}
+    if len(keys) < 2 or not all(keys.values()):
+        return None
+    for left in keys.values():
+        if not any(left != right and (left in right or right in left)
+                   for right in keys.values()):
+            return None
+    best = max(schools, key=lambda row: (len(keys[row["id"]]), -row["id"]))
+    return best
+
+
+def _link_jobs_to_unique_school(conn):
+    """Point a school-less business job at its institution's only business school.
+
+    Half the default market had no school entity, so no tier could render on the
+    card even where the school's tier was known. When an institution has exactly
+    one current business school the link is unambiguous; two or more and it is
+    guesswork, so those are left alone.
+
+    The link is recorded as ``institution_unique_school`` and is deliberately
+    excluded from posting-level evidence: it says which school entity this job
+    belongs to, not that the posting named a school.
+    """
+    linked = ambiguous = 0
+    rows = conn.execute("""
+        SELECT j.id, i.id AS institution_id,
+               (SELECT COUNT(*) FROM business_schools bs
+                WHERE bs.institution_id=i.id AND bs.is_current=1) AS school_count
+        FROM jobs j JOIN institutions i ON i.id=j.institution_id
+        WHERE j.school_id IS NULL AND j.derived_quality='accepted'
+          AND j.business_scope IN ('business_school','business_discipline')
+    """).fetchall()
+    for row in rows:
+        if row["school_count"] < 1:
+            continue
+        if row["school_count"] == 1:
+            school = conn.execute(
+                "SELECT id FROM business_schools WHERE institution_id=? AND is_current=1",
+                (row["institution_id"],)).fetchone()
+        else:
+            school = _canonical_variant_school(conn, row["institution_id"])
+            if school is None:
+                # Genuinely separate schools at one university -- Virginia has
+                # both Darden and McIntire -- so there is nothing to pick.
+                ambiguous += 1
+                continue
+        if not school:
+            continue
+        conn.execute(
+            "UPDATE jobs SET school_id=?, school_evidence_context='institution_unique_school' "
+            "WHERE id=? AND school_id IS NULL", (school["id"], row["id"]))
+        linked += 1
+    return {"linked": linked, "ambiguous_skipped": ambiguous, "considered": len(rows)}
+
+
 def _backfill_business_scope(conn):
     """Recompute the auditable business-market boundary for existing rows.
 
@@ -1765,7 +1872,7 @@ def _backfill_business_scope(conn):
             school=row["business_school_name"],
             school_is_posting_evidence=(
                 row["school_id"] is not None
-                and row["school_evidence_context"] != "aacsb_roster_target"
+                and row["school_evidence_context"] not in _DERIVED_SCHOOL_CONTEXTS
             ),
             faculty_role=role,
         )
@@ -3521,6 +3628,7 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
                 # adopted city otherwise. Only jobs with neither city nor state
                 # are touched, so posting-level values are never overwritten.
                 _backfill_job_location_from_entity(conn)
+                _link_jobs_to_unique_school(conn)
                 conn.commit()
                 _record_source_coverage_history(
                     conn,
