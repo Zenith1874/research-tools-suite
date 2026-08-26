@@ -74,6 +74,16 @@ def main():
             print(json.dumps(affiliation_coverage(conn), indent=2, ensure_ascii=False))
 
         if args.top:
+            coverage = affiliation_coverage(conn)
+            if not coverage['comparable_across_years']:
+                covered = [row for row in coverage['coverage_by_year']
+                           if row['checked_pct'] >= 50 and row['total'] >= 100]
+                span = (f"{covered[0]['year']}-{covered[-1]['year']}" if covered else 'none')
+                print(f"\nWARNING: backfill coverage is uneven across years "
+                      f"(spread {coverage['year_coverage_spread_pct']} points; "
+                      f"years at least half covered: {span}).")
+                print("These counts reflect the covered years only, not the whole corpus. "
+                      "Finish the backfill before comparing schools.")
             print(f'\ntop {args.top} institutions by observed A* articles'
                   + (f' since {args.since}' if args.since else '') + ':')
             for row in top_institutions(conn, since_year=args.since, limit=args.top,

@@ -290,6 +290,31 @@ class AffiliationDBTests(unittest.TestCase):
             "SELECT COUNT(*) FROM astar_articles WHERE affiliation_status IS NULL").fetchone()[0]
         self.assertEqual(299, pending)
 
+    def test_coverage_flags_an_uneven_year_sample(self):
+        """A partial backfill walks id order, so it is not a random sample."""
+        recent = [(f'W{i}', 't', 'AMJ', 2025) for i in range(1, 201)]
+        older = [(f'X{i}', 't', 'AMJ', 2021) for i in range(1, 201)]
+        self.seed(recent + older)
+        works = [work(f'W{i}', [authorship('X', 'A1', [institution('I1', 'U')])])
+                 for i in range(1, 201)]
+        backfill_affiliations(self.conn, limit=200, session=FakeSession(works), delay=0)
+        coverage = affiliation_coverage(self.conn)
+        self.assertFalse(coverage['comparable_across_years'])
+        self.assertGreater(coverage['year_coverage_spread_pct'], 5.0)
+        by_year = {row['year']: row['checked_pct'] for row in coverage['coverage_by_year']}
+        self.assertEqual(100.0, by_year[2025])
+        self.assertEqual(0.0, by_year[2021])
+
+    def test_coverage_reports_even_sample_as_comparable(self):
+        self.seed([(f'W{i}', 't', 'AMJ', 2025) for i in range(1, 3)]
+                  + [(f'X{i}', 't', 'AMJ', 2021) for i in range(1, 3)])
+        works = ([work(f'W{i}', [authorship('X', 'A1', [institution('I1', 'U')])])
+                  for i in range(1, 3)]
+                 + [work(f'X{i}', [authorship('Y', 'A2', [institution('I1', 'U')])])
+                    for i in range(1, 3)])
+        backfill_affiliations(self.conn, limit=100, session=FakeSession(works), delay=0)
+        self.assertTrue(affiliation_coverage(self.conn)['comparable_across_years'])
+
     def test_coverage_reports_unchecked_rows_as_pending(self):
         self.seed([('W1', 'one', 'AMJ', 2023), ('W2', 'two', 'ASQ', 2023)])
         works = [work('W1', [authorship('X', 'A1', [institution('I1', 'U')])])]

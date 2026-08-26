@@ -154,9 +154,29 @@ State after the 2026-08-26 window closed:
 | affiliation rows | 181,627 |
 | distinct institutions | 9,414 |
 
-Per-school counts must not be read yet. At 37% coverage the counts are a sample of the
-corpus with no reason to be uniform across schools or years, so a school's total today is a
-floor, not a measurement.
+**The 37% is not a random sample, and that is the important part.** Backfill walks the
+corpus in id order, which is insert order, which tracks the years the radar ingested first.
+Observed coverage by publication year:
+
+| Year | Covered |
+|---|---:|
+| 2019 | 0.0% |
+| 2020 | 1.8% |
+| 2021 | 1.5% |
+| 2022 | 1.3% |
+| 2023 | 1.1% |
+| 2024 | 97.5% |
+| 2025 | 95.4% |
+| 2026 | 70.0% |
+
+So the current institution counts are effectively a **2024-2026** table, not an all-time
+one. 6 of 261 journals are fully covered, 237 partly, 18 untouched.
+
+`affiliation_coverage` now returns `coverage_by_year`, `year_coverage_spread_pct` and a
+`comparable_across_years` flag, and the CLI prints a warning above `--top` whenever the
+spread exceeds 5 points. A partial backfill must not be read as a partial ranking.
+
+The skew resolves itself: two more daily windows bring every year to full coverage.
 
 16 tests in `tests/test_astar_affiliations.py` cover parsing (ROR, ORCID, dual affiliation,
 author with no institution), the status vocabulary, idempotent re-recording, resumability,

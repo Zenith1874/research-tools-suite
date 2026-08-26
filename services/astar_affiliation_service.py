@@ -351,6 +351,22 @@ def affiliation_coverage(conn):
         "WHERE institution_openalex_id!=''").fetchone()[0]
     rows = conn.execute("SELECT COUNT(*) FROM astar_article_affiliations").fetchone()[0]
     checked = total - by_status.get('pending', 0)
+    # Backfill walks the corpus in id order, which is insert order, which tracks
+    # the years the radar ingested first. A partial backfill is therefore not a
+    # random sample of the corpus, and per-institution counts taken from one are
+    # a ranking of whichever years happen to be covered. Report the skew so no
+    # caller has to guess whether the totals are safe to compare.
+    by_year = [{'year': row[0], 'checked': row[1], 'total': row[2],
+                'checked_pct': round(100.0 * row[1] / row[2], 1) if row[2] else 0.0}
+               for row in conn.execute("""
+        SELECT publication_year,
+               SUM(CASE WHEN affiliation_status IS NOT NULL THEN 1 ELSE 0 END),
+               COUNT(*)
+        FROM astar_articles WHERE publication_year IS NOT NULL
+        GROUP BY publication_year ORDER BY publication_year
+    """).fetchall()]
+    percentages = [row['checked_pct'] for row in by_year if row['total'] >= 100]
+    skew = round(max(percentages) - min(percentages), 1) if percentages else 0.0
     return {
         'articles_total': total,
         'articles_checked': checked,
@@ -358,6 +374,9 @@ def affiliation_coverage(conn):
         'by_status': by_status,
         'affiliation_rows': rows,
         'distinct_institutions': institutions,
+        'coverage_by_year': by_year,
+        'year_coverage_spread_pct': skew,
+        'comparable_across_years': skew <= 5.0,
     }
 
 
