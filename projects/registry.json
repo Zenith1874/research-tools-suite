@@ -320,7 +320,9 @@
         "services/faculty_school_astar_evidence.py",
         "tests/test_faculty_school_astar_evidence.py",
         "tests/test_faculty_jobs_canonical_names.py",
-        "tests/test_faculty_jobs_aacsb_reconciliation.py"
+        "tests/test_faculty_jobs_aacsb_reconciliation.py",
+        "scripts/academic_career_status_report.py",
+        "tests/test_academic_career_status_report.py"
       ],
       "tracked_data": [
         "data/faculty_job_taxonomy.json",

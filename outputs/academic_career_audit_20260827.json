@@ -1,0 +1,106 @@
+{
+  "generated_at": "2026-08-27T07:34:04Z",
+  "integrity": {
+    "quick_check": "ok",
+    "foreign_key_violations": 0,
+    "schema_version": 58
+  },
+  "grain": {
+    "jobs": 1599,
+    "source_records": 1603,
+    "job_source_links": 1603
+  },
+  "scope": {
+    "business_discipline": 217,
+    "business_school": 209,
+    "non_academic": 90,
+    "non_business": 656,
+    "unknown": 427
+  },
+  "market": {
+    "jobs": 426,
+    "with_school_entity": 347,
+    "with_city_or_state": 365,
+    "with_official_url": 74
+  },
+  "location_evidence": {
+    "aacsb_roster": 42,
+    "city_hint": 22,
+    "description_text": 1,
+    "institution_entity": 50,
+    "institution_hint": 3,
+    "institution_text": 9,
+    "location_raw": 247,
+    "none": 26,
+    "source_region_country": 5,
+    "state_province": 21
+  },
+  "visa_status": {
+    "sponsorship_explicit_no": 4,
+    "unclear": 3,
+    "unknown": 1592
+  },
+  "entities": {
+    "institutions_current": 1213,
+    "institutions_retired": 653,
+    "schools_current": 957,
+    "schools_retired": 308,
+    "institutions_with_ror": 712
+  },
+  "tiers": {
+    "T2": 1,
+    "T3": 2,
+    "T4": 882,
+    "Unclassified": 72
+  },
+  "school_evidence": {
+    "AACSB": 915,
+    "AMBA": 1,
+    "EQUIS": 1,
+    "Russell_Group": 1,
+    "astar_publication_footprint": 327,
+    "astar_publication_footprint_observed": 388,
+    "business_phd_program": 3,
+    "official_business_school_page": 6
+  },
+  "duplicates": {
+    "open": 196,
+    "resolved": 195,
+    "by_basis": {
+      "fingerprint_review_only": 1,
+      "fuzzy_review_only": 123,
+      "identical_title_review_only": 72
+    }
+  },
+  "aacsb_roster": {
+    "active": 1054,
+    "inactive": 0,
+    "pending_miss_streak": 0
+  },
+  "invariants": {
+    "jobs_on_retired_school": 0,
+    "jobs_on_retired_institution": 0,
+    "source_links_without_job": 0
+  },
+  "astar": {
+    "available": true,
+    "articles": 136364,
+    "affiliation_checked": 50673,
+    "affiliation_coverage_pct": 37.16,
+    "distinct_institutions": 9414,
+    "coverage_by_year": {
+      "2015": 0.0,
+      "2016": 0.0,
+      "2017": 0.0,
+      "2018": 0.0,
+      "2019": 0.0,
+      "2020": 1.8,
+      "2021": 1.5,
+      "2022": 1.3,
+      "2023": 1.1,
+      "2024": 97.5,
+      "2025": 95.4,
+      "2026": 70.1
+    }
+  }
+}
