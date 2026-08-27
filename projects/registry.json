@@ -318,7 +318,8 @@
         "tests/fixtures/faculty_jobs/**",
         "projects/academic_career/**",
         "services/faculty_school_astar_evidence.py",
-        "tests/test_faculty_school_astar_evidence.py"
+        "tests/test_faculty_school_astar_evidence.py",
+        "tests/test_faculty_jobs_canonical_names.py"
       ],
       "tracked_data": [
         "data/faculty_job_taxonomy.json",

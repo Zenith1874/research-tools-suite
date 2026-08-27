@@ -1289,6 +1289,25 @@ def ensure_faculty_jobs_tables(db_path=None):
                     "evidence row, override and roster link moved to the surviving entity."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=58").fetchone():
+            recanon = _recanonicalize_merged_schools(conn)
+            # A revived row may now sit beside a duplicate the earlier pass had
+            # not reached, so run the ordinary variant merge afterwards.
+            follow_up = _merge_variant_school_entities(conn)
+            for row in conn.execute(
+                    "SELECT id FROM business_schools WHERE is_current=1").fetchall():
+                refresh_school_classification(conn, row["id"])
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (58, now_utc(), (
+                    f"Re-canonicalized {recanon['groups']} previously merged school groups after "
+                    f"correcting the name rule: {recanon['recanonicalized']} rows revived as the "
+                    f"canonical entity and {recanon['merged']} re-merged onto them, plus "
+                    f"{follow_up['merged']} in the follow-up variant pass. The old rule picked the "
+                    "longest name, which selected leaked listing prefixes such as 'Full-time Fully "
+                    "On-Campus Farmer School of Business' over 'Farmer School of Business'."
+                )),
+            )
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:
@@ -1815,6 +1834,72 @@ def _school_name_key(value):
     return re.sub(r"^the ", "", re.sub(r"\s+", " ", text).strip())
 
 
+# Prefixes observed leaking into school names from listing cards: programme
+# modes ("Full-time Fully On-Campus Farmer School of Business"), navigation
+# labels ("Teaching Office Faculty of Business", "AREA LEE KONG CHIAN SCHOOL OF
+# BUSINESS") and section headers. They make a name longer without making it more
+# official, which is why picking the longest name chose the worst one.
+_SCHOOL_NAME_NOISE_PREFIX_RE = re.compile(
+    r"^(?:full[\s-]?time|part[\s-]?time|fully|on[\s-]?campus|online|hybrid|blended|"
+    r"evening|weekend|remote|area|teaching\s+office|office|the\s+department|department|"
+    r"undergraduate|graduate|postgraduate|apply|chain\s+transformation|house\s+innovation|"
+    # A school is never called "University ..."; when that word leads, it is the
+    # parent institution bleeding into the school label.
+    r"university|universiteit|universite|the)"
+    r"\b[\s,:.–-]*", re.I)
+_SCHOOL_CORE_RE = re.compile(r"\b(?:school|college|faculty|business|management|escuela|facultad)\b", re.I)
+
+
+def _strip_school_name_noise(name, institution_name=None):
+    """Remove leaked prefixes and a repeated institution name from a school label.
+
+    Returns (cleaned, removed) so a caller can prefer a name that needed no
+    cleaning at all over one that only becomes sensible after stripping.
+    """
+    text = (name or "").strip()
+    removed = False
+    for _ in range(6):
+        stripped = _SCHOOL_NAME_NOISE_PREFIX_RE.sub("", text, count=1).strip()
+        if stripped == text or not stripped:
+            break
+        text, removed = stripped, True
+    # "University Tennessee Knoxville Haslam College of Business" repeats the
+    # institution before the actual school name. Matching is by leading tokens
+    # rather than a joined prefix, because the repeat usually drops small words
+    # ("University of Tennessee, Knoxville" becomes "University Tennessee
+    # Knoxville"). At least two tokens must be consumed: one shared word is a
+    # coincidence, and stripping it would turn the legitimate "Stockholm School
+    # of Economics" into "School of Economics".
+    institution_tokens = set(_school_name_key(institution_name).split())
+    if institution_tokens:
+        words = text.split()
+        consumed = 0
+        while consumed < len(words) and _school_name_key(words[consumed]) in institution_tokens:
+            consumed += 1
+        remainder = " ".join(words[consumed:]).strip()
+        if (consumed >= 2 and len(remainder.split()) >= 2
+                and _SCHOOL_CORE_RE.search(remainder)):
+            text, removed = remainder, True
+    return text, removed
+
+
+def _school_name_quality(name, institution_name=None):
+    """Rank a candidate school label. Lower sorts better.
+
+    The ordering is deliberate: a label that needs no cleaning beats one that
+    does, a normally-cased label beats a shouted one, and only then does the
+    fuller name win -- so "A. B. Freeman School of Business" still beats
+    "Freeman School of Business" while "Full-time Fully On-Campus Farmer School
+    of Business" loses to "Farmer School of Business".
+    """
+    text = (name or "").strip()
+    _cleaned, removed = _strip_school_name_noise(text, institution_name)
+    letters = [character for character in text if character.isalpha()]
+    shouted = bool(letters) and all(character.isupper() for character in letters)
+    lacks_core = not _SCHOOL_CORE_RE.search(text)
+    return (int(removed), int(shouted), int(lacks_core), -len(_school_name_key(text)))
+
+
 def _canonical_variant_school(conn, institution_id):
     """Pick the canonical entity when an institution's schools are one school.
 
@@ -1831,14 +1916,29 @@ def _canonical_variant_school(conn, institution_id):
     schools = conn.execute(
         "SELECT id, official_name FROM business_schools "
         "WHERE institution_id=? AND is_current=1", (institution_id,)).fetchall()
-    keys = {row["id"]: _school_name_key(row["official_name"]) for row in schools}
+    institution = conn.execute(
+        "SELECT official_name FROM institutions WHERE id=?", (institution_id,)).fetchone()
+    institution_name = institution["official_name"] if institution else None
+    # Compare the cleaned names. Two rows for one school can each carry a
+    # different leaked prefix -- "Chain Transformation. University Stockholm
+    # School of Economics" beside "House Innovation. University Stockholm School
+    # of Economics" -- and neither raw name contains the other, so a raw
+    # comparison called them separate schools.
+    keys = {row["id"]: _school_name_key(
+        _strip_school_name_noise(row["official_name"], institution_name)[0])
+        for row in schools}
     if len(keys) < 2 or not all(keys.values()):
         return None
-    for left in keys.values():
-        if not any(left != right and (left in right or right in left)
-                   for right in keys.values()):
+    # Compare pairs of rows, not pairs of strings. Two rows whose cleaned names
+    # are *identical* are the clearest case of one school, but a value-based
+    # "left != right" test discarded exactly those.
+    items = list(keys.items())
+    for left_id, left in items:
+        if not any(right_id != left_id and (left == right or left in right or right in left)
+                   for right_id, right in items):
             return None
-    best = max(schools, key=lambda row: (len(keys[row["id"]]), -row["id"]))
+    best = min(schools, key=lambda row: (
+        _school_name_quality(row["official_name"], institution_name), row["id"]))
     return best
 
 
@@ -1928,12 +2028,20 @@ def _merge_institution_entity(conn, old_id, target_id, reason):
             conn.execute(f"UPDATE institutions SET {field}=? WHERE id=?", (old[field], target_id))
 
     for school in conn.execute(
-            "SELECT id, normalized_name FROM business_schools WHERE institution_id=?",
+            "SELECT id, normalized_name, is_current FROM business_schools WHERE institution_id=?",
             (old_id,)).fetchall():
+        # (institution_id, normalized_name) is unique, so a twin has to be found
+        # whether or not it is current -- moving onto a retired twin would fail
+        # the constraint.
         twin = conn.execute(
-            "SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=? "
-            "AND is_current=1 LIMIT 1", (target_id, school["normalized_name"])).fetchone()
+            "SELECT id, is_current FROM business_schools WHERE institution_id=? "
+            "AND normalized_name=? ORDER BY is_current DESC LIMIT 1",
+            (target_id, school["normalized_name"])).fetchone()
         if twin:
+            if school["is_current"] and not twin["is_current"]:
+                # The incoming row is the live one; keep the school represented.
+                conn.execute("UPDATE business_schools SET is_current=1, updated_at=? WHERE id=?",
+                             (now_utc(), twin["id"]))
             _merge_school_entity(conn, int(school["id"]), int(twin["id"]),
                                  "Same school name under a merged duplicate institution row.")
         else:
@@ -1949,6 +2057,86 @@ def _merge_institution_entity(conn, old_id, target_id, reason):
     """, (now_utc(), "merge_duplicate_institution", None, str(old_id), str(target_id),
           reason[:2000]))
     return 1
+
+
+def _previously_merged_school_ids(conn):
+    """Ids this database retired through a variant merge, from the audit trail."""
+    ids = set()
+    for row in conn.execute(
+        "SELECT old_value FROM faculty_job_repair_audit "
+        "WHERE action IN ('merge_variant_school_entity') AND old_value IS NOT NULL"
+    ).fetchall():
+        try:
+            ids.add(int(row["old_value"]))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _recanonicalize_merged_schools(conn):
+    """Re-pick the surviving row for schools merged under the old rule.
+
+    The first canonical rule was "longest name", which is exactly backwards for
+    this data: the extra length is usually a leaked prefix, so "Full-time Fully
+    On-Campus Farmer School of Business" beat "Farmer School of Business". Every
+    row it retired is still present as ``is_current=0``, so the choice is
+    reversible: recompute the canonical over the whole group, revive it if it
+    was the one retired, and move everything else onto it.
+
+    Only groups whose names are still all variants of one another are touched.
+    """
+    retired_by_merge = _previously_merged_school_ids(conn)
+    if not retired_by_merge:
+        return {"groups": 0, "recanonicalized": 0, "merged": 0}
+
+    placeholders = ",".join("?" * len(retired_by_merge))
+    institutions = [row["institution_id"] for row in conn.execute(
+        f"SELECT DISTINCT institution_id FROM business_schools "
+        f"WHERE id IN ({placeholders}) AND institution_id IS NOT NULL",
+        list(retired_by_merge)).fetchall()]
+
+    groups = recanonicalized = merged = 0
+    for institution_id in institutions:
+        rows = conn.execute(
+            f"SELECT id, official_name, is_current FROM business_schools "
+            f"WHERE institution_id=? AND (is_current=1 OR id IN ({placeholders}))",
+            [institution_id, *retired_by_merge]).fetchall()
+        if len(rows) < 2:
+            continue
+        keys = {row["id"]: _school_name_key(row["official_name"]) for row in rows}
+        if not all(keys.values()):
+            continue
+        # Still one school under several spellings? If a later import added a
+        # genuinely different school to this institution, leave the group alone.
+        if any(not any(left != right and (left in right or right in left)
+                       for right in keys.values()) for left in keys.values()):
+            continue
+        groups += 1
+        institution = conn.execute(
+            "SELECT official_name FROM institutions WHERE id=?", (institution_id,)).fetchone()
+        institution_name = institution["official_name"] if institution else None
+        target = min(rows, key=lambda row: (
+            _school_name_quality(row["official_name"], institution_name), row["id"]))
+        if not target["is_current"]:
+            conn.execute("UPDATE business_schools SET is_current=1, updated_at=? WHERE id=?",
+                         (now_utc(), target["id"]))
+            recanonicalized += 1
+            conn.execute("""
+                INSERT INTO faculty_job_repair_audit
+                  (observed_at,action,job_id,old_value,new_value,reason)
+                VALUES (?,?,?,?,?,?)
+            """, (now_utc(), "recanonicalize_school_entity", None,
+                  str(target["id"]), "is_current=1",
+                  "Revived as the canonical row: the previous rule picked the longest name, "
+                  "which selected a leaked listing prefix over the school's own name."))
+        for row in rows:
+            if row["id"] == target["id"]:
+                continue
+            merged += _merge_school_entity(
+                conn, row["id"], target["id"],
+                f"Re-canonicalized: '{row['official_name']}' merged into "
+                f"'{target['official_name']}' under the corrected name rule.")
+    return {"groups": groups, "recanonicalized": recanonicalized, "merged": merged}
 
 
 def _merge_duplicate_institutions(conn):
@@ -3849,6 +4037,14 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
                 # re-ingested job is rewritten from source values and loses an
                 # adopted city otherwise. Only jobs with neither city nor state
                 # are touched, so posting-level values are never overwritten.
+                # Duplicates re-accumulate as new sources ingest, so the
+                # resolvers run every pass rather than once as a migration.
+                # Order matters: institutions first, because merging them brings
+                # duplicate schools together; then schools; then the links that
+                # depend on a settled entity graph. All three are idempotent and
+                # reach a fixed point in one pass.
+                _merge_duplicate_institutions(conn)
+                _merge_variant_school_entities(conn)
                 _backfill_job_location_from_entity(conn)
                 _link_jobs_to_unique_school(conn)
                 conn.commit()
