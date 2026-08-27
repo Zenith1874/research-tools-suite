@@ -253,7 +253,8 @@ def _ensure_aacsb_tables(conn):
         "opt_in", "Opt-in bounded scan; not part of the default daily update because it visits public school websites.",
         timestamp, timestamp,
     ))
-
+    _ensure_column(conn, "aacsb_directory_schools", "consecutive_missing_runs",
+                   "INTEGER NOT NULL DEFAULT 0")
 
 def ensure_faculty_jobs_tables(db_path=None):
     """Create/migrate the domain database idempotently and quickly."""
@@ -5381,6 +5382,95 @@ def _save_aacsb_scan_result(conn, directory_id, scan, checked_at):
            scan.response_status, scan.reason, directory_id))
 
 
+# A roster record has to be absent from this many complete runs before it is
+# deactivated. Mirrors the job-source rule: one empty or partial observation is
+# not evidence that something is gone.
+AACSB_MISSING_RUNS_BEFORE_INACTIVE = 3
+# A run only counts for reconciliation if it observed close to the whole roster.
+# The directory's reported total and its parseable /accredited/ rows differ by a
+# known handful, so exact equality would never hold.
+AACSB_SNAPSHOT_COMPLETENESS = 0.9
+
+
+def _aacsb_snapshot_is_complete(observed, reported_total, max_records, max_pages_used,
+                                pages_fetched):
+    """Whether this run saw enough of the roster to judge what is missing.
+
+    A bounded run -- ``--max-pages 2`` while testing, or a run cut short by an
+    HTTP error -- observes a slice, and treating that slice as the world would
+    deactivate a thousand accredited schools. Reconciliation is refused unless
+    the run was unbounded and came close to the directory's own reported total.
+    """
+    if max_records is not None:
+        return False, "run was limited by max_records"
+    if pages_fetched < max_pages_used:
+        # Stopping before the page budget means the pagination ended naturally,
+        # which is the normal complete case.
+        pass
+    if not reported_total:
+        return False, "directory did not report a total to compare against"
+    if observed < reported_total * AACSB_SNAPSHOT_COMPLETENESS:
+        return False, (f"observed {observed} of {reported_total} reported records, "
+                       f"below the {int(AACSB_SNAPSHOT_COMPLETENESS * 100)}% completeness bar")
+    return True, f"observed {observed} of {reported_total} reported records"
+
+
+def _reconcile_aacsb_snapshot(conn, seen_directory_ids, reported_total, max_records,
+                              max_pages_used, pages_fetched):
+    """Retire roster rows this run did not see, after enough complete runs.
+
+    Without this the roster only ever grows: a school that loses accreditation,
+    merges, or is renamed stays listed forever, and every count derived from the
+    roster keeps including it.
+
+    Deactivation is never destructive: ``active=0`` retains the row, its
+    location evidence and its link to a business school.
+    """
+    seen = {int(item) for item in seen_directory_ids if item is not None}
+    observed = len(seen)
+    complete, reason = _aacsb_snapshot_is_complete(
+        observed, reported_total, max_records, max_pages_used, pages_fetched)
+    if not complete:
+        return {"reconciled": False, "reason": reason, "observed": observed,
+                "missing_marked": 0, "deactivated": 0, "revived": 0}
+
+    now = now_utc()
+    # A record seen again clears its miss streak; a record that had been
+    # deactivated and reappears is revived, because the roster is the authority.
+    revived = 0
+    for row in conn.execute(
+            "SELECT id, active, consecutive_missing_runs FROM aacsb_directory_schools").fetchall():
+        if row["id"] in seen:
+            if row["active"] != 1 or int(row["consecutive_missing_runs"] or 0):
+                conn.execute(
+                    "UPDATE aacsb_directory_schools SET active=1, consecutive_missing_runs=0, "
+                    "updated_at=? WHERE id=?", (now, row["id"]))
+                revived += int(row["active"] != 1)
+            continue
+        if row["active"] != 1:
+            continue
+        missing = int(row["consecutive_missing_runs"] or 0) + 1
+        active = 1 if missing < AACSB_MISSING_RUNS_BEFORE_INACTIVE else 0
+        conn.execute(
+            "UPDATE aacsb_directory_schools SET consecutive_missing_runs=?, active=?, updated_at=? "
+            "WHERE id=?", (missing, active, now, row["id"]))
+
+    missing_marked = conn.execute(
+        "SELECT COUNT(*) FROM aacsb_directory_schools WHERE consecutive_missing_runs>0 AND active=1"
+    ).fetchone()[0]
+    deactivated = conn.execute(
+        "SELECT COUNT(*) FROM aacsb_directory_schools WHERE active=0").fetchone()[0]
+    conn.execute("""
+        INSERT INTO faculty_job_repair_audit (observed_at,action,job_id,old_value,new_value,reason)
+        VALUES (?,?,?,?,?,?)
+    """, (now, "aacsb_snapshot_reconciliation", None, str(observed), str(deactivated),
+          f"Reconciled the AACSB roster against a complete run ({reason}). Rows absent from "
+          f"{AACSB_MISSING_RUNS_BEFORE_INACTIVE} consecutive complete runs are set active=0; "
+          "nothing is deleted and a reappearing row is revived."))
+    return {"reconciled": True, "reason": reason, "observed": observed,
+            "missing_marked": missing_marked, "deactivated": deactivated, "revived": revived}
+
+
 def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_details=True,
                            refresh_details=False, scan_websites=False, max_details=None,
                            max_schools=None, timeout=20, delay=0.45, max_jobs_per_school=20,
@@ -5421,6 +5511,16 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
                     directory_ids.append(directory_id)
                 if progress and (index == 1 or index % 25 == 0):
                     progress(f"AACSB roster {index}/{len(records)}")
+
+            with conn:
+                reconciliation = _reconcile_aacsb_snapshot(
+                    conn, directory_ids, total, max_records, max_pages, pages_fetched)
+            if progress:
+                progress("AACSB reconciliation: " + (
+                    f"{reconciliation['deactivated']} inactive, "
+                    f"{reconciliation['missing_marked']} pending"
+                    if reconciliation["reconciled"]
+                    else f"skipped ({reconciliation['reason']})"))
 
             details_fetched = 0
             detail_budget = len(records) if max_details is None else max(0, min(len(records), int(max_details)))
@@ -5523,6 +5623,7 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
                 "jobs_found": jobs_found, "items_inserted": inserted, "items_updated": updated,
                 "items_merged": merged, "candidates_seen": candidates_seen,
                 "candidates_rejected": candidates_rejected,
+                "snapshot_reconciliation": reconciliation,
                 "errors": source_errors, "updated_at": finished,
             }
         except Exception as exc:

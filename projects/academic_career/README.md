@@ -79,6 +79,13 @@ python3 scripts/update_aacsb_directory.py \
   --scan-existing --max-schools 25 --site-max-pages 4 --delay 0.75 --timeout 20
 ```
 
+The roster is reconciled against each complete run: a record the run did not observe starts a
+miss streak and is set `active=0` only after three consecutive **complete** runs, mirroring the
+job-source rule. A bounded run — a page or record limit, or one cut short by an HTTP error —
+never reconciles, because treating a slice as the whole roster would retire a thousand
+accredited schools; the run reports why it declined. Nothing is deleted, and a record that
+reappears is revived, since the directory is the authority.
+
 Website results are recorded as `jobs_found`, `no_current_jobs`, `not_found`, `not_checked`, `blocked`, `robots_disallowed`, or `unknown`. A blocked or inaccessible page is never treated as evidence that a school has no vacancy. The scanner uses public pages only, a small page budget, timeouts/backoff, and bounded excerpts; it honours robots.txt and does not bypass login, CAPTCHA, Cloudflare, or anti-bot controls. When robots.txt refuses part of a site, the scan is reported as `unknown` rather than `no_current_jobs`, because the site was not fully read. Synthetic AACSB fixtures in `tests/fixtures/faculty_jobs/` test parsing without internet access; they are not live-source evidence.
 
 ## Verification
