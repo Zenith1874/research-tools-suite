@@ -94,6 +94,10 @@ python scripts/watchdog.py --start-if-down
 - `TRUST_CLOUDFLARE_HEADERS=1` — 仅在 Cloudflare Tunnel 是唯一反向代理时启用；把带 `CF-Connecting-IP` 的 loopback 转发按远程请求处理，避免公网 POST 被误判成本机写操作。默认关闭。
 - `PAPER_TRANSLATION_ENABLED=0` — 硬关闭论文翻译页面和 API（整站返回 404）；默认 `1` 可用。模块本身不会自动连接 GPU，见下方“GPU 按需连接”。
 - `AUDIO_TRANSCRIPTION_ENABLED=0` — 硬关闭语音转写页面和 API；默认 `1` 可用。
+- `FACULTY_ASTAR_TIER_SIGNAL=1` — 允许 A* 发表足迹参与商学院 tier 判定。默认关闭：
+  足迹是从部分回填的语料里数出来的下限，把它当成 tier 依据是对"tier 代表什么"的判断，
+  不该由程序替你决定。关闭时足迹仍然完整展示（Observed A* Publication Footprint，
+  含覆盖率与年份窗口），只是不影响 tier。
 - `AFFIL_AUTO=0` — 关闭 A* 机构层每日增量回填。默认开启，跟在雷达抓取之后运行，
   只用当日 OpenAlex 预算的剩余部分（免费额度 1000 次/天，UTC 零点重置；雷达自身约需 219 次）。
   预算耗尽时回填自行停止，剩余文章保持 pending，第二天续跑。

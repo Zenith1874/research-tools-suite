@@ -7,12 +7,15 @@ lands a school on T4 by definition. This adds the one research signal the suite
 actually owns -- observed A* publication output -- without inventing a ranking.
 """
 
+import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from services.faculty_jobs_school_service import classify_business_school
+from services.faculty_jobs_school_service import (
+    ASTAR_FOOTPRINT_LABEL, astar_footprint_for_school, classify_business_school)
 from services.faculty_jobs_service import ensure_faculty_jobs_tables
 from services.faculty_school_astar_evidence import (
     EVIDENCE_TYPE,
@@ -114,10 +117,45 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual("01wh", row["ror"])
         self.assertEqual("I1", row["openalex_institution_id"])
 
-    def test_a_substantial_footprint_becomes_a_research_signal(self):
+    def test_a_substantial_footprint_is_recorded_but_does_not_move_the_tier(self):
+        """The footprint is shown on its own, not folded into the tier.
+
+        Promoting a school on a derived count from a partially backfilled corpus
+        is a judgement about what a tier means, so it is opt-in only.
+        """
         self.link(HIGH_RESEARCH_MIN_ARTICLES + 5)
         self.assertIn(EVIDENCE_TYPE, self.evidence_types())
-        self.assertEqual("T2", classify_business_school(self.conn, 1)["tier"])
+        self.assertEqual("T4", classify_business_school(self.conn, 1)["tier"],
+                         "accreditation alone is still T4")
+
+    def test_the_tier_signal_can_be_opted_into(self):
+        self.link(HIGH_RESEARCH_MIN_ARTICLES + 5)
+        with mock.patch.dict(os.environ, {"FACULTY_ASTAR_TIER_SIGNAL": "1"}):
+            self.assertEqual("T2", classify_business_school(self.conn, 1)["tier"])
+        self.assertEqual("T4", classify_business_school(self.conn, 1)["tier"],
+                         "the default must stay off")
+
+    def test_the_footprint_is_exposed_with_its_coverage(self):
+        self.link(40)
+        footprint = astar_footprint_for_school(self.conn, 1)
+        self.assertEqual(ASTAR_FOOTPRINT_LABEL, footprint["label"])
+        self.assertEqual(40, footprint["articles"])
+        self.assertIsNotNone(footprint["coverage_pct"])
+        self.assertTrue(footprint["meets_research_threshold"])
+        self.assertFalse(footprint["counts_toward_tier"])
+        self.assertIn("does not affect this school", footprint["explanation"])
+        self.assertIn("not an official ranking", footprint["explanation"])
+
+    def test_the_explanation_says_so_when_the_signal_is_opted_into(self):
+        self.link(40)
+        with mock.patch.dict(os.environ, {"FACULTY_ASTAR_TIER_SIGNAL": "1"}):
+            footprint = astar_footprint_for_school(self.conn, 1)
+        self.assertTrue(footprint["counts_toward_tier"])
+        self.assertIn("FACULTY_ASTAR_TIER_SIGNAL=1", footprint["explanation"])
+
+    def test_an_unlinked_school_reports_no_footprint_rather_than_zero(self):
+        self.assertIsNone(astar_footprint_for_school(self.conn, 1),
+                          "no link is not the same claim as zero articles")
 
     def test_a_small_footprint_is_recorded_but_does_not_promote(self):
         # One incidental co-authorship must not make a school research-intensive.
@@ -129,14 +167,19 @@ class EvidenceTests(unittest.TestCase):
 
     def test_t1_still_requires_phd_evidence(self):
         self.link(500)
-        self.assertEqual("T2", classify_business_school(self.conn, 1)["tier"],
-                         "publication evidence alone must not reach the top tier")
+        with mock.patch.dict(os.environ, {"FACULTY_ASTAR_TIER_SIGNAL": "1"}):
+            self.assertEqual("T2", classify_business_school(self.conn, 1)["tier"],
+                             "publication evidence alone must not reach the top tier")
         self.conn.execute(
             "INSERT INTO school_evidence (school_id,evidence_type,value,source_name,"
             "source_url,verified_at,confidence) VALUES (1,'business_phd_program','PhD in Management',"
             "'School page','https://example.edu/phd',?,'High')", (NOW,))
         self.conn.commit()
-        self.assertEqual("T1", classify_business_school(self.conn, 1)["tier"])
+        self.assertEqual("T3", classify_business_school(self.conn, 1)["tier"],
+                         "by default the footprint is not a research signal, so PhD + "
+                         "accreditation is T3")
+        with mock.patch.dict(os.environ, {"FACULTY_ASTAR_TIER_SIGNAL": "1"}):
+            self.assertEqual("T1", classify_business_school(self.conn, 1)["tier"])
 
     def test_the_coverage_caveat_travels_with_the_evidence(self):
         self.link(40)

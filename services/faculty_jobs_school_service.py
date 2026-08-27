@@ -4,6 +4,7 @@
 from datetime import datetime, timezone
 import json
 import re
+import os
 import sqlite3
 from urllib.parse import urlparse
 
@@ -43,6 +44,75 @@ def evidence_for_school(conn, school_id):
     return [dict(row) for row in rows]
 
 
+ASTAR_FOOTPRINT_LABEL = "Observed A* Publication Footprint"
+_ASTAR_EVIDENCE_TYPES = ("astar_publication_footprint", "astar_publication_footprint_observed")
+
+
+def astar_footprint_for_school(conn, school_id, evidence=None):
+    """The school's A* publication footprint, presented as its own observation.
+
+    This is shown next to the tier, never folded into it. The count is a floor:
+    it is drawn from whatever share of the A* corpus has been affiliation-
+    backfilled so far, and the covered years are not uniform, so the payload
+    carries the coverage alongside the number rather than leaving a reader to
+    assume it is a complete publication record.
+
+    Returns None when the school has no linked A* identity, which is the honest
+    answer for a school this database has not matched to the corpus.
+    """
+    rows = evidence if evidence is not None else evidence_for_school(conn, school_id)
+    row = next((item for item in rows
+                if item.get("evidence_type") in _ASTAR_EVIDENCE_TYPES), None)
+    if not row:
+        return None
+    try:
+        articles = int(str(row.get("value") or "0"))
+    except (TypeError, ValueError):
+        articles = 0
+    note = str(row.get("notes") or "")
+    coverage_pct = None
+    window = None
+    match = re.search(r"([\d.]+)%\s+affiliation coverage", note)
+    if match:
+        try:
+            coverage_pct = float(match.group(1))
+        except ValueError:
+            coverage_pct = None
+    window_match = re.search(r"at least half covered:\s*([0-9]{4}-[0-9]{4}|none)", note)
+    if window_match:
+        window = window_match.group(1)
+    counts_toward_tier = (
+        row.get("evidence_type") == "astar_publication_footprint"
+        and os.environ.get("FACULTY_ASTAR_TIER_SIGNAL") == "1"
+    )
+    return {
+        "label": ASTAR_FOOTPRINT_LABEL,
+        "articles": articles,
+        "coverage_pct": coverage_pct,
+        "covered_window": window,
+        "source_name": row.get("source_name"),
+        "source_url": row.get("source_url"),
+        "observed_at": row.get("verified_at"),
+        "meets_research_threshold": row.get("evidence_type") == "astar_publication_footprint",
+        # Say plainly whether this number moved the tier, so the page never
+        # implies a promotion that did not happen.
+        "counts_toward_tier": counts_toward_tier,
+        "explanation": (
+            f"{articles} distinct ABDC A* article(s) list at least one author at this "
+            f"institution, observed from "
+            + (f"{coverage_pct}% of the A* corpus" if coverage_pct is not None
+               else "the A* corpus")
+            + (f" (years at least half covered: {window})" if window else "")
+            + ". This is a floor, not a complete publication record, and it is not an "
+              "official ranking. "
+            + ("It is counted as a research signal in the tier ladder because "
+               "FACULTY_ASTAR_TIER_SIGNAL=1 is set."
+               if counts_toward_tier else
+               "It does not affect this school's tier.")
+        ),
+    }
+
+
 def _confidence(value):
     value = str(value or "").casefold()
     return {"high": 1.0, "medium": 0.7, "low": 0.4}.get(value, 0.0)
@@ -66,8 +136,16 @@ def classify_business_school(conn, school_id):
 
     verified = [item for item in evidence if _confidence(item.get("confidence")) > 0]
     types = {str(item.get("evidence_type") or "") for item in verified}
-    high_research = bool(types & {"UTD24_publication_footprint", "FT50_publication_footprint",
-                                  "recognized_research_ranking", "astar_publication_footprint"})
+    # astar_publication_footprint is deliberately NOT in this set. It is shown
+    # on its own as an Observed A* Publication Footprint with its coverage, and
+    # it does not move a school's tier: a derived count from a partially
+    # backfilled corpus is not the same kind of claim as a recognised ranking.
+    # Set FACULTY_ASTAR_TIER_SIGNAL=1 to opt in explicitly.
+    research_types = {"UTD24_publication_footprint", "FT50_publication_footprint",
+                      "recognized_research_ranking"}
+    if os.environ.get("FACULTY_ASTAR_TIER_SIGNAL") == "1":
+        research_types.add("astar_publication_footprint")
+    high_research = bool(types & research_types)
     phd = "business_phd_program" in types
     accreditation = bool(types & {"AACSB", "EQUIS", "AMBA"})
     research_network = bool(types & {"U15", "Russell_Group", "LERU", "German_U15", "Carnegie"})
@@ -75,14 +153,12 @@ def classify_business_school(conn, school_id):
         tier, score, confidence = "T1", 90, "High"
     elif phd and accreditation and research_network:
         tier, score, confidence = "T2", 75, "Medium"
-    elif high_research and accreditation:
-        # Added 2026-08-26. Without this the ladder is unusable: T3 and above
-        # all require business_phd_program evidence, which exists for 3 of 1,029
-        # schools and has no available source, so 920 accredited schools sat on
-        # T4 no matter how much they publish. A verified A* publication
-        # footprint plus accreditation is real research evidence and reaches T2;
-        # T1 still requires the full accreditation + PhD + research triple, so
-        # the top tier is not reachable on publication evidence alone.
+    elif high_research and accreditation and os.environ.get("FACULTY_ASTAR_TIER_SIGNAL") == "1":
+        # Opt-in only. Without it the ladder cannot move past T4 for most
+        # schools, because T3 and above require business_phd_program evidence
+        # that exists for 3 of 1,029 schools with no available source. That is a
+        # real limitation, but promoting on a derived publication count is a
+        # judgement about what a tier means, so it stays the operator's call.
         tier, score, confidence = "T2", 70, "Medium"
     elif phd and accreditation:
         tier, score, confidence = "T3", 60, "Medium"
@@ -198,7 +274,15 @@ def list_schools(db_path, query=None, limit=50, offset=0):
                         ELSE 'linked_school_entity' END AS evidence_status
             {from_sql} ORDER BY js.current_openings DESC, bs.official_name LIMIT ? OFFSET ?
         """, job_stats_args + args + [max(1, min(200, int(limit))), max(0, int(offset))]).fetchall()
-        return {"ok": True, "schools": [dict(row) for row in rows], "pagination": {"total": count, "limit": limit, "offset": offset}}
+        schools = []
+        for row in rows:
+            item = dict(row)
+            # One extra lookup per listed school so the directory can show the
+            # footprint without the reader having to open each school.
+            item["astar_footprint"] = astar_footprint_for_school(conn, item["id"])
+            schools.append(item)
+        return {"ok": True, "schools": schools,
+                "pagination": {"total": count, "limit": limit, "offset": offset}}
     finally:
         conn.close()
 
@@ -237,6 +321,9 @@ def school_detail(db_path, school_id):
             "evidence": classification["evidence"], "classification": classification, "jobs": jobs,
             "evidence_status": evidence_status,
             "evidence_status_label": evidence_label,
+            # Presented beside the tier, never inside it.
+            "astar_footprint": astar_footprint_for_school(
+                conn, school_id, classification["evidence"]),
         })
         return {"ok": True, "school": result}
     finally:
