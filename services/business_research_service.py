@@ -75,6 +75,15 @@ PRECISE_BASIS = 'precise_classification_tag'
 BROAD_BASIS = 'broad_classification_tag'
 KEYWORD_BASIS = 'title_abstract_keyword_inference'
 
+# Milestone 1 keeps the legacy link cache for compatibility, but every new or
+# rebuilt link also receives an auditable assertion.  These labels deliberately
+# describe what the current metadata can show, not what a full paper proves.
+ASSERTION_PIPELINE_VERSION = 'business-research-m1-2026-09-02'
+ASSERTION_CANDIDATE = 'KEYWORD_CANDIDATE'
+ASSERTION_EVIDENCE_METADATA = 'E1_METADATA'
+ASSERTION_EVIDENCE_TITLE_ABSTRACT = 'E2_TITLE_ABSTRACT'
+ASSERTION_STATUS_CANDIDATE = 'CANDIDATE'
+
 # A landscape built on a handful of papers cannot support a statement about what
 # the literature under-studies.  Below this many analyzed papers the payload
 # still reports distributions, but suppresses the underexplored-combination
@@ -375,7 +384,7 @@ def _keyword_hit(text, keyword):
     return keyword in text
 
 
-def _refs_from_raw(raw_tags, catalog, kind):
+def _refs_from_raw(raw_tags, catalog, kind, catalog_index=None):
     """Map classifier tags onto catalog entities, keeping the basis explicit.
 
     A precise tag wins; a broad tag still produces a link, but one labelled as
@@ -384,9 +393,25 @@ def _refs_from_raw(raw_tags, catalog, kind):
     raw = set()
     for tag in raw_tags or []:
         raw |= _tag_variants(tag)
+    indexed = (catalog_index or {}).get(kind.upper())
+    precise_ids = set()
+    broad_ids = set()
+    if indexed:
+        for variant in raw:
+            precise_ids.update(entity['id'] for entity in
+                               indexed.get('precise', {}).get(variant, []))
+            broad_ids.update(entity['id'] for entity in
+                             indexed.get('broad', {}).get(variant, []))
     refs = []
     for entity in catalog.get(kind, []):
-        if raw & _entity_tags(entity):
+        if indexed:
+            if entity['id'] in precise_ids:
+                basis = PRECISE_BASIS
+            elif entity['id'] in broad_ids:
+                basis = BROAD_BASIS
+            else:
+                continue
+        elif raw & _entity_tags(entity):
             basis = PRECISE_BASIS
         elif raw & _entity_broad_tags(entity):
             basis = BROAD_BASIS
@@ -402,11 +427,13 @@ def _refs_from_raw(raw_tags, catalog, kind):
     return refs
 
 
-def _infer_construct_refs(text, catalog):
+def _infer_construct_refs(text, catalog, keyword_index=None):
     text = (text or '').lower()
     refs = []
-    for entity in catalog.get('constructs', []):
-        if any(_keyword_hit(text, keyword) for keyword in entity.get('keywords', [])):
+    entries = keyword_index or _build_assertion_catalog_index(catalog).get('construct_keywords', [])
+    for entity, patterns in entries:
+        if any((pattern.search(text) if hasattr(pattern, 'search') else pattern in text)
+               for pattern in patterns):
             refs.append({
                 'id': entity['id'],
                 'name': entity['name'],
@@ -512,6 +539,30 @@ def ensure_business_research_tables(conn=None, state_db_path=None):
         PRIMARY KEY (paper_id, kind, entity_id)
     )''')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_research_links_entity ON research_paper_links(kind, entity_id, basis)')
+    conn.execute('''CREATE TABLE IF NOT EXISTS research_entity_assertions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        paper_id INTEGER NOT NULL,
+        entity_kind TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        assertion_type TEXT NOT NULL,
+        matched_text TEXT,
+        matched_field TEXT,
+        rule_id TEXT,
+        classifier_name TEXT,
+        classifier_version TEXT,
+        confidence REAL,
+        evidence_level TEXT NOT NULL,
+        verification_status TEXT NOT NULL,
+        review_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        reviewed_at TEXT,
+        UNIQUE (paper_id, entity_kind, entity_id, assertion_type, rule_id)
+    )''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_research_assertions_entity '
+                 'ON research_entity_assertions(entity_kind, entity_id, verification_status)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_research_assertions_paper '
+                 'ON research_entity_assertions(paper_id)')
     conn.execute('''CREATE TABLE IF NOT EXISTS research_index_meta (
         key TEXT PRIMARY KEY,
         value TEXT
@@ -537,19 +588,146 @@ def _set_index_meta(conn, key, value):
                     ON CONFLICT(key) DO UPDATE SET value=excluded.value''', (key, str(value)))
 
 
-def _links_for_row(row, catalog):
+def _links_for_row(row, catalog, catalog_index=None):
     """All catalog links implied by one article row."""
     title = row['title'] or ''
     abstract = row['abstract'] or ''
     text = (title + '\n' + abstract).lower()
     links = []
-    for ref in _refs_from_raw(_json_list(row['theory_tags_json']), catalog, 'theories'):
+    for ref in _refs_from_raw(_json_list(row['theory_tags_json']), catalog, 'theories', catalog_index):
         links.append(('theory', ref['id'], ref['relation_basis']))
-    for ref in _refs_from_raw(_json_list(row['method_tags_json']), catalog, 'methods'):
+    for ref in _refs_from_raw(_json_list(row['method_tags_json']), catalog, 'methods', catalog_index):
         links.append(('method', ref['id'], ref['relation_basis']))
-    for ref in _infer_construct_refs(text, catalog):
+    for ref in _infer_construct_refs(
+            text, catalog, (catalog_index or {}).get('construct_keywords')):
         links.append(('construct', ref['id'], ref['relation_basis']))
     return links
+
+
+def _first_matching_tag(raw_tags, entity, broad=False):
+    """Return the raw classifier tag that explains an entity link."""
+    candidates = _entity_broad_tags(entity) if broad else _entity_tags(entity)
+    for raw in raw_tags or []:
+        if _tag_variants(raw) & candidates:
+            return str(raw)
+    return None
+
+
+def _first_matching_keyword(text, entity):
+    for keyword in entity.get('keywords') or []:
+        if _keyword_hit(text, keyword):
+            return str(keyword)
+    return None
+
+
+def _build_assertion_catalog_index(catalog):
+    """Index classifier tags once so a full rebuild avoids rescanning entities."""
+    result = {}
+    for kind, catalog_kind in (('THEORY', 'theories'), ('METHOD', 'methods')):
+        precise = defaultdict(list)
+        broad = defaultdict(list)
+        for entity in catalog.get(catalog_kind, []):
+            for tag in _entity_tags(entity):
+                for variant in _tag_variants(tag):
+                    precise[variant].append(entity)
+            for tag in _entity_broad_tags(entity):
+                for variant in _tag_variants(tag):
+                    broad[variant].append(entity)
+        result[kind] = {'precise': precise, 'broad': broad}
+    construct_keywords = []
+    for entity in catalog.get('constructs', []):
+        patterns = []
+        for keyword in entity.get('keywords') or []:
+            value = str(keyword or '').strip().lower()
+            if not value:
+                continue
+            if re.match(r'^[a-z0-9][a-z0-9 _/-]*$', value):
+                patterns.append(re.compile(
+                    r'(?<![a-z0-9])' + re.escape(value) + r'(?![a-z0-9])'))
+            else:
+                patterns.append(value)
+        if patterns:
+            construct_keywords.append((entity, patterns))
+    result['construct_keywords'] = construct_keywords
+    return result
+
+
+def _assertions_for_row(row, catalog, catalog_index=None):
+    """Build candidate assertions without upgrading classifier output to use."""
+    row = dict(row)
+    title = row['title'] or ''
+    abstract = row['abstract'] or ''
+    title_abstract = (title + '\n' + abstract).lower()
+    classifier_name = row.get('classification_method') or 'existing_astar_classifier'
+    classifier_version = ASSERTION_PIPELINE_VERSION
+    now = _now()
+    assertions = []
+
+    for kind, raw_key, catalog_kind in (
+            ('THEORY', 'theory_tags_json', 'theories'),
+            ('METHOD', 'method_tags_json', 'methods')):
+        raw_tags = _json_list(row.get(raw_key))
+        raw_variants = set().union(*(_tag_variants(tag) for tag in raw_tags)) if raw_tags else set()
+        tag_index = (catalog_index or _build_assertion_catalog_index(catalog)).get(kind, {})
+        precise_by_id = {
+            entity['id']: entity
+            for variant in raw_variants
+            for entity in tag_index.get('precise', {}).get(variant, [])
+        }
+        broad_by_id = {
+            entity['id']: entity
+            for variant in raw_variants
+            for entity in tag_index.get('broad', {}).get(variant, [])
+            if entity['id'] not in precise_by_id
+        }
+        for entity in list(precise_by_id.values()) + list(broad_by_id.values()):
+            precise = entity['id'] in precise_by_id
+            broad = not precise
+            matched = (_first_matching_tag(raw_tags, entity, broad=broad) or
+                       entity.get('name'))
+            # A tag may have been produced from concepts rather than visible
+            # title/abstract text. Keep that conservative boundary explicit.
+            in_text = bool(matched and _keyword_hit(title_abstract, matched))
+            assertions.append({
+                'paper_id': row['id'], 'entity_kind': kind,
+                'entity_id': entity['id'], 'assertion_type': ASSERTION_CANDIDATE,
+                'matched_text': matched, 'matched_field':
+                    'title_abstract' if in_text else 'classification_tag',
+                'rule_id': '%s:%s' % (kind.lower(), matched.lower()),
+                'classifier_name': classifier_name,
+                'classifier_version': classifier_version,
+                'confidence': 0.55 if precise else 0.25,
+                'evidence_level': (ASSERTION_EVIDENCE_TITLE_ABSTRACT if in_text
+                                   else ASSERTION_EVIDENCE_METADATA),
+                'verification_status': ASSERTION_STATUS_CANDIDATE,
+                'review_reason': None, 'created_at': now, 'updated_at': now,
+                'reviewed_at': None,
+            })
+
+    for entity, patterns in (catalog_index or _build_assertion_catalog_index(catalog)).get(
+            'construct_keywords', []):
+        matched = None
+        for keyword, pattern in zip(entity.get('keywords') or [], patterns):
+            hit = (pattern.search(title_abstract) if hasattr(pattern, 'search')
+                   else pattern in title_abstract)
+            if hit:
+                matched = str(keyword)
+                break
+        if not matched:
+            continue
+        assertions.append({
+            'paper_id': row['id'], 'entity_kind': 'CONSTRUCT',
+            'entity_id': entity['id'], 'assertion_type': ASSERTION_CANDIDATE,
+            'matched_text': matched, 'matched_field': 'title_abstract',
+            'rule_id': 'construct_keyword:%s' % entity['id'],
+            'classifier_name': 'business_research_construct_matcher',
+            'classifier_version': ASSERTION_PIPELINE_VERSION,
+            'confidence': 0.35, 'evidence_level': ASSERTION_EVIDENCE_TITLE_ABSTRACT,
+            'verification_status': ASSERTION_STATUS_CANDIDATE,
+            'review_reason': None, 'created_at': now, 'updated_at': now,
+            'reviewed_at': None,
+        })
+    return assertions
 
 
 def rebuild_link_index(db_path=None, state_db_path=None, catalog=None, force=False):
@@ -560,29 +738,52 @@ def rebuild_link_index(db_path=None, state_db_path=None, catalog=None, force=Fal
     arrive, so they are computed once and refreshed incrementally.
     """
     catalog = catalog or load_catalog()
+    assertion_catalog_index = _build_assertion_catalog_index(catalog)
     fingerprint = _catalog_fingerprint(catalog)
     state = _state_connect(state_db_path)
     try:
         stored = _index_meta(state, 'catalog_fingerprint')
+        stored_pipeline = _index_meta(state, 'pipeline_version')
         last_id = _as_int(_index_meta(state, 'max_article_id')) or 0
-        full = force or stored != fingerprint
+        full = force or stored != fingerprint or stored_pipeline != ASSERTION_PIPELINE_VERSION
 
         articles = _article_connect(db_path)
         try:
+            article_columns = {row['name'] for row in articles.execute(
+                'PRAGMA table_info(astar_articles)').fetchall()}
+            article_revision = ' | '.join(
+                str(articles.execute('SELECT COALESCE(MAX(%s), \'\') FROM astar_articles' % field).fetchone()[0] or '')
+                for field in ('updated_at', 'created_at') if field in article_columns)
+            classification_columns = {row['name'] for row in articles.execute(
+                'PRAGMA table_info(astar_article_classifications)').fetchall()}
+            classification_revision = ('%s' % (articles.execute(
+                'SELECT COALESCE(MAX(classified_at), \'\') FROM astar_article_classifications').fetchone()[0] or '')) \
+                if 'classified_at' in classification_columns else ''
             max_id = articles.execute(
                 'SELECT COALESCE(MAX(id), 0) FROM astar_articles').fetchone()[0] or 0
-            if not full and max_id <= last_id:
+            prior_article_revision = _index_meta(state, 'article_revision_watermark') or ''
+            prior_classification_revision = _index_meta(state, 'classification_revision_watermark') or ''
+            revisions_changed = (article_revision != prior_article_revision or
+                                 classification_revision != prior_classification_revision)
+            if not full and max_id == last_id and not revisions_changed:
                 return {'rebuilt': False, 'papers_indexed': 0, 'max_article_id': last_id}
+
+            # Existing-row updates can remove a relation, so a changed
+            # revision watermark requires a complete replacement, not an
+            # append-only scan. This is intentionally conservative.
+            full = full or revisions_changed or max_id < last_id
 
             if full:
                 state.execute('DELETE FROM research_paper_links')
+                state.execute('DELETE FROM research_entity_assertions')
                 since = 0
             else:
                 since = last_id
 
             cursor = articles.execute('''
                 SELECT a.id, a.title, a.abstract,
-                       c.theory_tags_json, c.method_tags_json
+                       c.theory_tags_json, c.method_tags_json,
+                       c.classification_method
                 FROM astar_articles a
                 LEFT JOIN astar_article_classifications c ON c.article_id = a.id
                 WHERE a.is_duplicate = 0 AND a.id > ?
@@ -597,16 +798,44 @@ def rebuild_link_index(db_path=None, state_db_path=None, catalog=None, force=Fal
                 if not rows:
                     break
                 batch = []
+                assertion_batch = []
                 for row in rows:
                     indexed += 1
-                    for kind, entity_id, basis in _links_for_row(row, catalog):
+                    for kind, entity_id, basis in _links_for_row(
+                            row, catalog, assertion_catalog_index):
                         batch.append((row['id'], kind, entity_id, basis))
+                    assertion_batch.extend(
+                        _assertions_for_row(row, catalog, assertion_catalog_index))
                 if batch:
                     state.executemany(
                         '''INSERT INTO research_paper_links (paper_id, kind, entity_id, basis)
                            VALUES (?,?,?,?)
                            ON CONFLICT(paper_id, kind, entity_id) DO UPDATE SET basis=excluded.basis''',
                         batch)
+                if assertion_batch:
+                    state.executemany(
+                        '''INSERT INTO research_entity_assertions
+                           (paper_id, entity_kind, entity_id, assertion_type,
+                            matched_text, matched_field, rule_id, classifier_name,
+                            classifier_version, confidence, evidence_level,
+                            verification_status, review_reason, created_at,
+                            updated_at, reviewed_at)
+                           VALUES (:paper_id, :entity_kind, :entity_id,
+                                   :assertion_type, :matched_text, :matched_field,
+                                   :rule_id, :classifier_name, :classifier_version,
+                                   :confidence, :evidence_level,
+                                   :verification_status, :review_reason,
+                                   :created_at, :updated_at, :reviewed_at)
+                           ON CONFLICT(paper_id, entity_kind, entity_id,
+                                       assertion_type, rule_id)
+                           DO UPDATE SET matched_text=excluded.matched_text,
+                             matched_field=excluded.matched_field,
+                             classifier_name=excluded.classifier_name,
+                             classifier_version=excluded.classifier_version,
+                             confidence=excluded.confidence,
+                             evidence_level=excluded.evidence_level,
+                             verification_status=excluded.verification_status,
+                             updated_at=excluded.updated_at''', assertion_batch)
                 # Commit per batch so a multi-minute rebuild never holds one long
                 # write lock; readers see a partially rebuilt index rather than an
                 # error, and the fingerprint is only written once the scan finishes.
@@ -616,6 +845,10 @@ def rebuild_link_index(db_path=None, state_db_path=None, catalog=None, force=Fal
 
         _set_index_meta(state, 'catalog_fingerprint', fingerprint)
         _set_index_meta(state, 'max_article_id', max_id)
+        _set_index_meta(state, 'pipeline_version', ASSERTION_PIPELINE_VERSION)
+        _set_index_meta(state, 'article_revision_watermark', article_revision)
+        _set_index_meta(state, 'classification_revision_watermark', classification_revision)
+        _set_index_meta(state, 'index_generation', ASSERTION_PIPELINE_VERSION + ':' + _now())
         _set_index_meta(state, 'built_at', _now())
         state.commit()
         return {'rebuilt': True, 'full': full, 'papers_indexed': indexed, 'max_article_id': max_id}
@@ -624,21 +857,13 @@ def rebuild_link_index(db_path=None, state_db_path=None, catalog=None, force=Fal
 
 
 def _ensure_index(db_path=None, state_db_path=None, catalog=None):
-    """Build the index on first use per database, then refresh incrementally."""
-    key = (str(db_path or DEFAULT_ARTICLE_DB_PATH), str(state_db_path or DEFAULT_STATE_DB_PATH))
-    with _INDEX_LOCK:
-        first = key not in _INDEX_READY
-        _INDEX_READY.add(key)
+    """Refresh large corpora once in the background, preserving the served index."""
+    import sys
+    from services.business_index_refresh import ensure
     try:
-        rebuild_link_index(db_path, state_db_path, catalog, force=False)
+        return ensure(sys.modules[__name__], db_path, state_db_path, catalog)
     except sqlite3.Error:
-        # A read-only or locked state database must not take the pages down;
-        # callers fall back to counting directly against the article cache.
-        if first:
-            with _INDEX_LOCK:
-                _INDEX_READY.discard(key)
         return False
-    return True
 
 
 def _entity_counts(kind, state_db_path=None):
@@ -694,6 +919,73 @@ def _links_for_papers(paper_ids, state_db_path=None):
     finally:
         conn.close()
     return result
+
+
+def _assertions_for_papers(paper_ids, entity_kind, entity_id, state_db_path=None):
+    """Return the latest assertion for each paper/entity pair."""
+    ids = [int(value) for value in paper_ids if str(value).isdigit()]
+    if not ids:
+        return {}
+    conn = _state_connect(state_db_path)
+    result = {}
+    try:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                'SELECT * FROM research_entity_assertions '
+                'WHERE entity_kind=? AND entity_id=? AND paper_id IN (%s) '
+                'ORDER BY id DESC' % ','.join('?' for _ in chunk),
+                [entity_kind, entity_id] + chunk).fetchall()
+            for row in rows:
+                result.setdefault(row['paper_id'], dict(row))
+    finally:
+        conn.close()
+    return result
+
+
+def _with_paper_assertions(papers, entity_kind, entity_id, state_db_path=None):
+    """Attach safe evidence semantics to paper references without changing IDs."""
+    assertions = _assertions_for_papers(
+        [paper.get('id') for paper in papers], entity_kind, entity_id, state_db_path)
+    enriched = []
+    for paper in papers:
+        row = dict(paper)
+        assertion = assertions.get(_as_int(paper.get('id')))
+        if assertion:
+            row['assertion'] = {
+                'type': assertion['assertion_type'],
+                'verification_status': assertion['verification_status'],
+                'evidence_level': assertion['evidence_level'],
+                'confidence': assertion['confidence'],
+                'matched_text': assertion['matched_text'],
+                'matched_field': assertion['matched_field'],
+                'classifier': assertion['classifier_name'],
+                'classifier_version': assertion['classifier_version'],
+            }
+        enriched.append(row)
+    return enriched
+
+
+def _paper_assertion_groups(papers):
+    """Group paper refs for UI labels; unreviewed links stay candidates."""
+    groups = {
+        'verified_applications': [],
+        'strong_candidates': [],
+        'keyword_candidates': [],
+        'rejected': [],
+    }
+    for paper in papers:
+        assertion = paper.get('assertion') or {}
+        status = assertion.get('verification_status')
+        if status == 'VERIFIED':
+            groups['verified_applications'].append(paper)
+        elif status == 'REJECTED':
+            groups['rejected'].append(paper)
+        elif status == 'HUMAN_REVIEWED':
+            groups['strong_candidates'].append(paper)
+        else:
+            groups['keyword_candidates'].append(paper)
+    return groups
 
 
 # ── paper model ──────────────────────────────────────────────────────────────
@@ -760,7 +1052,7 @@ def _paper_from_row(row, catalog, links=None):
         theory_refs = _refs_from_raw(cls['theory_tags'], catalog, 'theories')
         method_refs = _refs_from_raw(cls['method_tags'], catalog, 'methods')
         construct_refs = _infer_construct_refs(text, catalog)
-    year = _as_int(row.get('publication_year'))
+    year = _as_int(row.get('archive_year', row.get('publication_year')))
     rank = row.get('journal_abdc_rating')
     return {
         'id': str(row.get('id')),
@@ -768,6 +1060,7 @@ def _paper_from_row(row, catalog, links=None):
         'abstract': abstract or None,
         'authors': _author_names(row.get('authors_json')),
         'year': year,
+        'sourcePublicationYear': _as_int(row.get('publication_year')),
         'publicationDate': row.get('publication_date'),
         'journal': {
             'title': row.get('journal_title'),
@@ -811,7 +1104,7 @@ def _paper_from_row(row, catalog, links=None):
 
 
 def _paper_reference(paper):
-    return {
+    result = {
         'id': paper.get('id'),
         'title': paper.get('title'),
         'journal': (paper.get('journal') or {}).get('title'),
@@ -821,6 +1114,15 @@ def _paper_reference(paper):
         'url': paper.get('url'),
         'cited_by_count': paper.get('citedByCount'),
     }
+    if paper.get('assertion'):
+        result['assertion'] = paper['assertion']
+    return result
+
+
+def _paper_assertion_payload(papers, entity_kind, entity_id, state_db_path=None):
+    refs = [_paper_reference(paper) for paper in papers]
+    refs = _with_paper_assertions(refs, entity_kind, entity_id, state_db_path)
+    return refs, _paper_assertion_groups(refs)
 
 
 def _search_terms(value):
@@ -884,6 +1186,8 @@ def _query_papers(params=None, db_path=None, catalog=None, state_db_path=None, l
     catalog = catalog or load_catalog()
     conn = _article_connect(db_path)
     try:
+        from services.astar_archive_year_service import year_expression
+        archive_year_sql = year_expression(conn)
         where = ['a.is_duplicate=0']
         args = []
         id_filter_applied = False
@@ -912,10 +1216,10 @@ def _query_papers(params=None, db_path=None, catalog=None, state_db_path=None, l
             where.append('c.broad_area=?')
             args.append(params['discipline'])
         if params.get('from_year'):
-            where.append('a.publication_year>=?')
+            where.append(archive_year_sql + '>=?')
             args.append(int(params['from_year']))
         if params.get('to_year'):
-            where.append('a.publication_year<=?')
+            where.append(archive_year_sql + '<=?')
             args.append(int(params['to_year']))
         rank = str(params.get('rank') or '').strip()
         if rank and rank not in ('All', 'all'):
@@ -954,8 +1258,12 @@ def _query_papers(params=None, db_path=None, catalog=None, state_db_path=None, l
         rows = []
         if limit:
             select = PAPER_SELECT_LIGHT if light else PAPER_SELECT
+            select = select.rstrip() + ', ' + archive_year_sql + ' AS archive_year\n'
             sql = select + base + ' ORDER BY %s LIMIT ? OFFSET ?' % order
             rows = conn.execute(sql, args + [limit, offset]).fetchall()
+        from services.astar_publication_precision_service import attach_precision
+        rows = [dict(row) for row in rows]
+        attach_precision(conn, rows)
         if light:
             links = _links_for_papers([row['id'] for row in rows], state_db_path)
             papers = [_paper_from_row(row, catalog, links.get(row['id'])) for row in rows]
@@ -971,7 +1279,9 @@ def _query_papers(params=None, db_path=None, catalog=None, state_db_path=None, l
 
 
 def _data_boundary(catalog, sampled=False, sample_size=None):
+    from services.business_index_refresh import status as index_status
     return {
+        'link_index': index_status(),
         'catalog': {
             'status': catalog.get('catalog_status', 'demo_catalog'),
             'note': catalog.get('provenance_note'),
@@ -1022,6 +1332,8 @@ def _entity_card(entity, kind, catalog=None, precise=None, broad=None):
     result['paper_count'] = precise_count
     result['broad_paper_count'] = broad_count
     result['broad_tags'] = sorted(entity.get('broad_tags') or [])
+    result.pop('deep_dive', None)
+    result['has_deep_dive'] = entity.get('deep_dive_status') == 'authored_analysis'
     result['mapping_status'] = _mapping_status(entity, precise_count, broad_count)
     result['mapping_note'] = MAPPING_NOTES.get(result['mapping_status'])
     result['source_works'] = _seminal_works(entity)
@@ -1098,12 +1410,23 @@ def _catalog_payload(kind, params=None, db_path=None, state_db_path=None, extra=
         category = (params.get('category') or '').strip().lower()
         if category and category != 'all':
             entities = [item for item in entities if item.get('category') == category]
+    deep_only = str(params.get('depth') or '').strip().lower() in ('deep', 'analysis', '1', 'true')
+    deep_total = sum(1 for item in entities
+                     if item.get('deep_dive_status') == 'authored_analysis')
+    if deep_only:
+        entities = [item for item in entities
+                    if item.get('deep_dive_status') == 'authored_analysis']
     precise, broad = _entity_counts(kind, state_db_path)
     payload = {
         'success': True,
         'entities': [_entity_card(entity, kind, catalog, precise, broad) for entity in entities],
         'disciplines': list(DISCIPLINES),
         'total': len(entities),
+        'deep_dive_total': deep_total,
+        'deep_dive_filter': deep_only,
+        'deep_dive_note': ('A deep dive is a written analysis of why the theory exists, how its '
+                           'argument runs, which debates are open, and which of its limits are '
+                           'bound to the era it was written in. Coverage is partial and growing.'),
         'data_boundary': _data_boundary(catalog),
     }
     payload.update(extra or {})
@@ -1160,6 +1483,39 @@ def _conceptual_model(catalog, theory):
 
 
 
+
+def _deep_dive_note(entity):
+    """Say plainly whether an analysis exists and what kind of thing it is."""
+    if entity.get('deep_dive'):
+        return ('Written analysis, not extracted from any source text. Attributions name the '
+                'scholars who made each argument; verify against the primary source before citing.')
+    return ('No long-form analysis has been written for this entry yet. The fields below are the '
+            'short catalog record only.')
+
+
+def _obvious_review_title(value):
+    """Detect provider records that cannot stand in for an original work."""
+    return bool(re.search(r'\bbook\s+review\b|\breview\s*:', str(value or ''), re.I))
+
+
+def _source_status(work):
+    """Separate provider matching from human/primary-source verification."""
+    verification = work.get('verification')
+    provider = work.get('verification_source')
+    if not provider:
+        provider = {'verified_openalex': 'OpenAlex',
+                    'verified_crossref': 'Crossref',
+                    'verified_pubmed': 'PubMed'}.get(verification)
+    provider_title = work.get('crossref_title') or work.get('openalex_title')
+    if _obvious_review_title(provider_title):
+        return 'REJECTED', False, 'rejected — provider record is a book review, not the original source'
+    if verification in {'verified_openalex', 'verified_crossref', 'verified_pubmed'}:
+        return 'MACHINE_MATCHED', True, ('machine matched against ' + provider +
+                                        '; verify work identity and primary source')
+    if work.get('verification_status') == 'HUMAN_VERIFIED':
+        return 'HUMAN_VERIFIED', True, 'human verified against the primary source'
+    return 'CANDIDATE', False, 'catalog candidate — verify the primary source'
+
 def _seminal_works(entity):
     """Source records with bibliographic and full-text access state explicit.
 
@@ -1180,7 +1536,7 @@ def _seminal_works(entity):
     works = []
     for work in entity.get('seminal_works') or []:
         verification = work.get('verification')
-        verified = verification in {'verified_openalex', 'verified_crossref', 'verified_pubmed'}
+        verification_status, bibliographic_match, display_status = _source_status(work)
         source = work.get('verification_source')
         if not source and verification == 'verified_openalex':
             source = 'OpenAlex'
@@ -1193,15 +1549,18 @@ def _seminal_works(entity):
                       ('https://doi.org/' + work['doi'] if work.get('doi') else None))
         works.append(dict(
             work,
-            verified=verified,
+            # ``verified`` remains a backwards-compatible bibliographic-match
+            # boolean for existing consumers; the user-facing status below is
+            # intentionally MACHINE_MATCHED until a reviewer verifies it.
+            verified=bibliographic_match,
+            verification_status=verification_status,
             verification_source=source,
             doi_url=('https://doi.org/' + work['doi']) if work.get('doi') else None,
             source_url=source_url,
             access_status=access_status,
             access_display_status=access_labels.get(access_status, access_status),
             access_is_full_text=(access_status == 'open_full_text'),
-            display_status=(('verified against ' + source) if verified and source
-                            else 'unverified — check the primary source'),
+            display_status=display_status,
         ))
     return works
 
@@ -1213,7 +1572,7 @@ def _source_authors(entity):
         if not work.get('authors'):
             continue
         verification = work.get('verification')
-        verified = verification in {'verified_openalex', 'verified_crossref', 'verified_pubmed'}
+        verification_status, bibliographic_match, display_status = _source_status(work)
         source = work.get('verification_source')
         if not source and verification == 'verified_openalex':
             source = 'OpenAlex'
@@ -1226,10 +1585,10 @@ def _source_authors(entity):
             'work_title': work.get('title'),
             'year': work.get('year'),
             'verification': verification,
-            'verified': verified,
+            'verified': bibliographic_match,
+            'verification_status': verification_status,
             'verification_source': source,
-            'display_status': (('verified against ' + source) if verified and source
-                               else 'catalog lead — verify primary source'),
+            'display_status': display_status,
         })
     return rows
 
@@ -1254,11 +1613,19 @@ def build_theory_detail(slug, db_path=None, state_db_path=None):
             'papers': [p for p in broad_all['papers'] if p['id'] not in precise_ids],
             'sampled': broad_all['sampled'],
         }
+    paper_refs, paper_assertions = _paper_assertion_payload(
+        papers['papers'], 'THEORY', entity['id'], state_db_path)
+    broad_refs = _with_paper_assertions(
+        [_paper_reference(paper) for paper in broad_papers['papers']],
+        'THEORY', entity['id'], state_db_path)
     card = _entity_card(entity, 'theories', catalog, precise, broad)
     return {
         'success': True,
         'theory': dict(card, paper_count=papers['total']),
         'conceptual_model': _conceptual_model(catalog, entity),
+        'deep_dive': entity.get('deep_dive'),
+        'deep_dive_status': entity.get('deep_dive_status', 'not_written'),
+        'deep_dive_note': _deep_dive_note(entity),
         'core_constructs': [
             dict(_catalog_entity(catalog, 'constructs', item), relation_basis='catalog_theory_construct_link')
             for item in entity.get('core_constructs', [])
@@ -1267,11 +1634,15 @@ def build_theory_detail(slug, db_path=None, state_db_path=None):
         'antecedents': _resolve_refs(catalog, 'constructs', entity.get('antecedents')),
         'outcomes': _resolve_refs(catalog, 'constructs', entity.get('outcomes')),
         'moderators': _resolve_refs(catalog, 'constructs', entity.get('moderators')),
-        'recent_applications': [_paper_reference(paper) for paper in papers['papers']],
+        # Kept for API compatibility; consumers should use paper_assertions to
+        # distinguish verified, reviewed, candidate, and rejected relations.
+        'recent_applications': paper_refs,
+        'paper_assertions': paper_assertions,
+        'application_note': 'Current classifier links are candidates from metadata. They are not verified as actual theory use until a reviewer records a decision.',
         'broad_tag_applications': {
             'tags': sorted(entity.get('broad_tags') or []),
             'total': broad_papers['total'],
-            'papers': [_paper_reference(paper) for paper in broad_papers['papers']],
+            'papers': broad_refs,
             'note': 'These papers carry a broader umbrella tag that also covers other entities. They are shown separately because the tag does not establish that this specific theory was used.',
         },
         'seminal_works': _seminal_works(entity),
@@ -1302,6 +1673,8 @@ def build_construct_detail(slug, params=None, db_path=None, state_db_path=None):
         sort = 'relevance_desc'
     papers = _query_papers({'construct': entity['id'], 'sort': sort, 'limit': 50},
                            db_path, catalog, state_db_path)
+    paper_refs, paper_assertions = _paper_assertion_payload(
+        papers['papers'], 'CONSTRUCT', entity['id'], state_db_path)
     card = _entity_card(entity, 'constructs', catalog, precise, broad)
     network = {
         'antecedents': _resolve_refs(catalog, 'constructs', entity.get('antecedents')),
@@ -1319,8 +1692,13 @@ def build_construct_detail(slug, params=None, db_path=None, state_db_path=None):
             if _catalog_entity(catalog, 'theories', item)
         ],
         'network': network,
+        'deep_dive': entity.get('deep_dive'),
+        'deep_dive_status': entity.get('deep_dive_status', 'not_written'),
+        'deep_dive_note': _deep_dive_note(entity),
         'sort': sort,
-        'papers': [_paper_reference(paper) for paper in papers['papers']],
+        'papers': paper_refs,
+        'paper_assertions': paper_assertions,
+        'paper_assertion_note': 'Keyword matches are candidates only. They do not establish construct identity, referent, level, or validated measurement.',
         'data_boundary': _data_boundary(catalog, papers['sampled'], len(papers['papers'])),
     }
 
@@ -1334,6 +1712,8 @@ def build_method_detail(slug, db_path=None, state_db_path=None):
     precise, broad = _entity_counts('methods', state_db_path)
     papers = _query_papers({'method': entity['id'], 'sort': 'relevance_desc', 'limit': 50},
                            db_path, catalog, state_db_path)
+    paper_refs, paper_assertions = _paper_assertion_payload(
+        papers['papers'], 'METHOD', entity['id'], state_db_path)
     broad_papers = {'total': 0, 'papers': []}
     if entity.get('broad_tags'):
         broad_all = _query_papers({'method': entity['id'], 'include_broad': True,
@@ -1348,11 +1728,18 @@ def build_method_detail(slug, db_path=None, state_db_path=None):
     return {
         'success': True,
         'method': dict(card, paper_count=papers['total']),
-        'example_papers': [_paper_reference(paper) for paper in papers['papers']],
+        'deep_dive': entity.get('deep_dive'),
+        'deep_dive_status': entity.get('deep_dive_status', 'not_written'),
+        'deep_dive_note': _deep_dive_note(entity),
+        'example_papers': paper_refs,
+        'paper_assertions': paper_assertions,
+        'paper_assertion_note': 'Classifier links are candidates only. A method mention or broad tag is not verified method use.',
         'broad_tag_papers': {
             'tags': sorted(entity.get('broad_tags') or []),
             'total': broad_papers['total'],
-            'papers': [_paper_reference(paper) for paper in broad_papers['papers']],
+            'papers': _with_paper_assertions(
+                [_paper_reference(paper) for paper in broad_papers['papers']],
+                'METHOD', entity['id'], state_db_path),
             'note': 'These papers carry a broader umbrella tag such as survey or causal_inference. The tag does not establish that this specific method was used.',
         },
         'related_methods': [

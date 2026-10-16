@@ -8,12 +8,17 @@ fixtures.
 
 from pathlib import Path
 from types import SimpleNamespace
+import contextlib
 import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from services.faculty_jobs_service import (
+    FACULTY_JOBS_SCHEMA_VERSION,
+    _aacsb_source_is_known_false_positive,
+    _quarantine_known_aacsb_false_positives,
+    _refresh_aacsb_accreditation_state,
     build_aacsb_directory_summary,
     ensure_faculty_jobs_tables,
     list_aacsb_directory,
@@ -58,6 +63,60 @@ class FacultyJobsAACSBTests(unittest.TestCase):
         self.assertEqual("Dublin, Ireland", records[0].location_raw)
         self.assertEqual(3, parse_directory_total(html))
 
+    def test_false_positive_policy_uses_source_identity_not_local_job_id(self):
+        with tempfile.TemporaryDirectory(prefix="aacsb-decision-grain-") as directory:
+            db = Path(directory) / "faculty_jobs.db"
+            ensure_faculty_jobs_tables(db)
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            source_id = conn.execute(
+                "SELECT id FROM sources WHERE name='aacsb_official'"
+            ).fetchone()["id"]
+            reviewed_source_job_id = "92253496ea68c11694a496dbee0c6384"
+            valid_source_job_id = "valid-finance-record-with-local-id-202"
+            self.assertTrue(_aacsb_source_is_known_false_positive(
+                conn, source_id, reviewed_source_job_id))
+            self.assertFalse(_aacsb_source_is_known_false_positive(
+                conn, source_id, valid_source_job_id))
+
+            now = "2026-08-27T00:00:00Z"
+            for job_id, key, title in (
+                (202, "valid-local-202", "Assistant Professor of Finance"),
+                (987, "reviewed-source-987", "Dean of AAGBS"),
+            ):
+                conn.execute("""
+                    INSERT INTO jobs
+                      (id,canonical_key,title_raw,title_normalized,derived_quality,
+                       business_scope,faculty_market_role,faculty_market_eligible,status,
+                       first_seen_at,last_seen_at,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (job_id, key, title, title.casefold(), "accepted",
+                      "business_discipline", "faculty", 1, "open",
+                      now, now, now, now))
+            conn.execute("""
+                INSERT INTO job_sources
+                  (job_id,source_id,source_job_id,source_url,first_seen,last_seen,active)
+                VALUES (202,?,?,?, ?,?,1)
+            """, (source_id, valid_source_job_id, "https://example.edu/valid", now, now))
+            conn.execute("""
+                INSERT INTO job_sources
+                  (job_id,source_id,source_job_id,source_url,first_seen,last_seen,active)
+                VALUES (987,?,?,?, ?,?,1)
+            """, (source_id, reviewed_source_job_id, "https://example.edu/reviewed", now, now))
+
+            stats = _quarantine_known_aacsb_false_positives(conn)
+            conn.commit()
+            self.assertEqual(1, stats["jobs"])
+            self.assertEqual((1, "accepted"), tuple(conn.execute("""
+                SELECT js.active,j.derived_quality FROM job_sources js
+                JOIN jobs j ON j.id=js.job_id WHERE js.source_job_id=?
+            """, (valid_source_job_id,)).fetchone()))
+            self.assertEqual((0, "quarantined"), tuple(conn.execute("""
+                SELECT js.active,j.derived_quality FROM job_sources js
+                JOIN jobs j ON j.id=js.job_id WHERE js.source_job_id=?
+            """, (reviewed_source_job_id,)).fetchone()))
+            conn.close()
+
     def test_directory_fetch_records_raw_result_and_exclusion_grains(self):
         client = AACSBDirectoryClient(timeout=5, max_pages=1, delay=0.1)
         response = _Response(
@@ -75,6 +134,12 @@ class FacultyJobsAACSBTests(unittest.TestCase):
             "accredited_records_observed": 2,
             "non_accredited_results_excluded": 1,
             "complete": True,
+            "max_pages_requested": 1,
+            "max_records": None,
+            "pages_fetched": 1,
+            "pagination_natural_end": True,
+            "page_budget_exhausted": False,
+            "error_count": 0,
         }, client.last_directory_metadata)
 
     def test_detail_parser_preserves_official_website_and_accreditation_scope(self):
@@ -295,9 +360,16 @@ class FacultyJobsAACSBTests(unittest.TestCase):
             db = Path(directory) / "faculty_jobs.db"
             ensure_faculty_jobs_tables(db)
             ensure_faculty_jobs_tables(db)
-            conn = sqlite3.connect(db)
+            # closing() matters here: without it a failed assertion leaves the
+            # handle open, Windows refuses to remove the temp directory, and the
+            # cleanup error replaces the assertion in the report.
+            with contextlib.closing(sqlite3.connect(db)) as conn:
+                self.check_migrated_schema(conn)
+
+    def check_migrated_schema(self, conn):
             names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            self.assertTrue({"aacsb_directory_schools", "aacsb_scan_history", "aacsb_scan_runs"}.issubset(names))
+            self.assertTrue({"aacsb_directory_schools", "aacsb_scan_history", "aacsb_scan_runs",
+                             "source_record_decisions"}.issubset(names))
             self.assertEqual("ok", conn.execute("PRAGMA quick_check").fetchone()[0])
             self.assertEqual([], conn.execute("PRAGMA foreign_key_check").fetchall())
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=16").fetchone()[0])
@@ -317,6 +389,18 @@ class FacultyJobsAACSBTests(unittest.TestCase):
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=36").fetchone()[0])
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=37").fetchone()[0])
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=38").fetchone()[0])
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=67").fetchone()[0])
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=68").fetchone()[0])
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=69").fetchone()[0])
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=70").fetchone()[0])
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=71").fetchone()[0])
+            self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM faculty_job_migrations WHERE version=72").fetchone()[0])
+            self.assertEqual(FACULTY_JOBS_SCHEMA_VERSION,
+                             conn.execute("PRAGMA user_version").fetchone()[0],
+                             "user_version must track the migration ledger")
+            self.assertEqual(16, conn.execute(
+                "SELECT COUNT(*) FROM source_record_decisions WHERE decision='false_positive' AND is_current=1"
+            ).fetchone()[0])
             job_columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
             self.assertTrue({
                 "derived_quality", "faculty_market_role", "faculty_market_eligible",
@@ -330,6 +414,15 @@ class FacultyJobsAACSBTests(unittest.TestCase):
                 "directory_results_reported", "directory_results_observed",
                 "non_accredited_results_excluded", "directory_observation_complete", "scan_rule_version",
             }.issubset({row[1] for row in conn.execute("PRAGMA table_info(aacsb_scan_runs)")}))
+            self.assertTrue({
+                "seen_source_job_ids", "reconciliation_complete", "reconciliation_reason", "scan_run_id",
+            }.issubset({row[1] for row in conn.execute("PRAGMA table_info(aacsb_scan_history)")}))
+            self.assertTrue({
+                "directory_pagination_natural_end", "directory_metadata_json",
+            }.issubset({row[1] for row in conn.execute("PRAGMA table_info(aacsb_scan_runs)")}))
+            self.assertTrue({
+                "directory_school_id", "source_job_id", "consecutive_missing_runs", "active",
+            }.issubset({row[1] for row in conn.execute("PRAGMA table_info(aacsb_job_source_partitions)")}))
             self.assertEqual(1, conn.execute("SELECT COUNT(*) FROM sources WHERE name='aacsb_official'").fetchone()[0])
             self.assertEqual("opt_in", conn.execute("SELECT support_status FROM sources WHERE name='aacsb_official'").fetchone()[0])
             conn.close()
@@ -371,7 +464,7 @@ class FacultyJobsAACSBTests(unittest.TestCase):
                 def scan_official_site(self, record, max_pages=2, max_jobs=20):
                     return OfficialSiteScan("ok", "found", "jobs_found",
                                            "https://business.example.edu/faculty-positions",
-                                           [job], 200, "fixture job")
+                                           [job], 200, "fixture job", complete=True)
 
             with patch("services.faculty_jobs_sources.aacsb.AACSBDirectoryClient", FakeClient):
                 result = scan_aacsb_official_websites(db, max_schools=1, delay=0.1)
@@ -388,6 +481,115 @@ class FacultyJobsAACSBTests(unittest.TestCase):
             self.assertEqual([], conn.execute("PRAGMA foreign_key_check").fetchall())
             conn.close()
             self.assertEqual(0, result["stale_or_unchecked_remaining"])
+
+    def test_complete_site_partition_missing_runs_do_not_close_job_supported_elsewhere(self):
+        with tempfile.TemporaryDirectory(prefix="aacsb-partition-lifecycle-") as directory:
+            db = Path(directory) / "faculty_jobs.db"
+            ensure_faculty_jobs_tables(db)
+            now = "2026-08-24T00:00:00Z"
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            conn.execute("""
+                INSERT INTO aacsb_directory_schools
+                  (directory_result_id,directory_url,institution_name,school_name,directory_title,
+                   official_website,roster_source_url,first_seen_at,last_seen_at,detail_status,
+                   active,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, ("partition-school", "https://www.aacsb.edu/accredited/a/partition-school",
+                   "Example University", "Example School of Business",
+                   "Example University Example School of Business",
+                   "https://business.example.edu/", "https://www.aacsb.edu/accredited",
+                   now, now, "ok", 1, now, now))
+            conn.commit()
+            conn.close()
+
+            job = SourceJob(
+                source="aacsb_official", source_job_id="partition-job-1",
+                source_url="https://business.example.edu/faculty-positions",
+                official_url="https://business.example.edu/jobs/partition-job-1",
+                title_raw="Assistant Professor of Finance",
+                institution_raw="Example University", school_raw="Example School of Business",
+                location_raw="Dublin, Ireland", captured_at=now,
+            )
+
+            class FakeClient:
+                calls = 0
+
+                def __init__(self, **kwargs):
+                    self.kwargs = kwargs
+
+                def scan_official_site(self, record, max_pages=2, max_jobs=20):
+                    type(self).calls += 1
+                    if type(self).calls in {1, 5}:
+                        return OfficialSiteScan(
+                            "ok", "found", "jobs_found", "https://business.example.edu/faculty-positions",
+                            [job], 200, "fixture job", complete=True,
+                        )
+                    return OfficialSiteScan(
+                        "ok", "found", "no_current_jobs", "https://business.example.edu/faculty-positions",
+                        [], 200, "fixture complete empty result", complete=True,
+                    )
+
+            with patch("services.faculty_jobs_sources.aacsb.AACSBDirectoryClient", FakeClient):
+                first = scan_aacsb_official_websites(db, max_schools=1, include_checked=True, delay=0.1)
+                self.assertTrue(first["ok"])
+
+                conn = sqlite3.connect(db)
+                job_id = conn.execute("SELECT id FROM jobs WHERE title_raw=?", (job.title_raw,)).fetchone()[0]
+                alternate_source = conn.execute(
+                    "SELECT id FROM sources WHERE name!='aacsb_official' ORDER BY id LIMIT 1"
+                ).fetchone()[0]
+                conn.execute("""
+                    INSERT INTO job_sources
+                      (job_id,source_id,source_job_id,source_url,official_url,first_seen,last_seen,active)
+                    VALUES (?,?,?,?,?,?,?,1)
+                """, (job_id, alternate_source, "alternate-source-job",
+                       "https://other.example/jobs/1", "https://other.example/jobs/1", now, now))
+                conn.commit()
+                conn.close()
+
+                for _ in range(3):
+                    result = scan_aacsb_official_websites(
+                        db, max_schools=1, include_checked=True, delay=0.1,
+                    )
+                    self.assertTrue(result["ok"])
+
+                conn = sqlite3.connect(db)
+                partition = conn.execute("""
+                    SELECT active,consecutive_missing_runs,last_scan_status
+                    FROM aacsb_job_source_partitions
+                """).fetchone()
+                aacsb_link = conn.execute(
+                    "SELECT active,consecutive_missing_runs FROM job_sources WHERE source_job_id=?",
+                    (job.source_job_id,),
+                ).fetchone()
+                other_link = conn.execute(
+                    "SELECT active FROM job_sources WHERE source_job_id='alternate-source-job'"
+                ).fetchone()
+                job_state = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()[0]
+                self.assertEqual((0, 3, "no_current_jobs"), partition)
+                self.assertEqual((0, 3), aacsb_link)
+                self.assertEqual((1,), other_link)
+                self.assertNotEqual("closed", job_state)
+                conn.close()
+
+                revived = scan_aacsb_official_websites(
+                    db, max_schools=1, include_checked=True, delay=0.1,
+                )
+                self.assertTrue(revived["ok"])
+
+            conn = sqlite3.connect(db)
+            self.assertEqual((1, 0), conn.execute(
+                "SELECT active,consecutive_missing_runs FROM aacsb_job_source_partitions"
+            ).fetchone())
+            self.assertEqual((1, 0), conn.execute(
+                "SELECT active,consecutive_missing_runs FROM job_sources WHERE source_job_id=?",
+                (job.source_job_id,),
+            ).fetchone())
+            self.assertEqual(5, conn.execute(
+                "SELECT COUNT(*) FROM aacsb_scan_history"
+            ).fetchone()[0])
+            conn.close()
 
     def test_roster_run_persists_reported_and_excluded_result_grains(self):
         with tempfile.TemporaryDirectory(prefix="aacsb-roster-run-") as directory:
@@ -428,6 +630,70 @@ class FacultyJobsAACSBTests(unittest.TestCase):
                 FROM aacsb_scan_runs ORDER BY id DESC LIMIT 1
             """).fetchone()
             self.assertEqual((2, 2, 1, 1), row)
+            conn.close()
+
+    def test_aacsb_current_evidence_retires_and_reappears_with_roster_state(self):
+        with tempfile.TemporaryDirectory(prefix="aacsb-accreditation-lifecycle-") as directory:
+            db = Path(directory) / "faculty_jobs.db"
+            ensure_faculty_jobs_tables(db)
+            now = "2026-08-24T00:00:00Z"
+            conn = sqlite3.connect(db)
+            conn.row_factory = sqlite3.Row
+            conn.execute("""
+                INSERT INTO institutions
+                  (id,official_name,normalized_name,country_code,is_current,created_at,updated_at)
+                VALUES (1,'Example University','example university','IE',1,?,?)
+            """, (now, now))
+            conn.execute("""
+                INSERT INTO business_schools
+                  (id,institution_id,official_name,normalized_name,is_current,created_at,updated_at)
+                VALUES (1,1,'Example School of Business','example school of business',1,?,?)
+            """, (now, now))
+            conn.execute("""
+                INSERT INTO aacsb_directory_schools
+                  (id,directory_result_id,directory_url,institution_name,school_name,directory_title,
+                   official_website,roster_source_url,first_seen_at,last_seen_at,detail_status,
+                   country_code,active,linked_business_school_id,created_at,updated_at)
+                VALUES (1,'lifecycle-school','https://www.aacsb.edu/accredited/a/lifecycle-school',
+                        'Example University','Example School of Business',
+                        'Example University Example School of Business','https://business.example.edu/',
+                        'https://www.aacsb.edu/accredited',?,?, 'ok','IE',1,1,?,?)
+            """, (now, now, now, now))
+            conn.commit()
+
+            _refresh_aacsb_accreditation_state(conn)
+            current = conn.execute(
+                "SELECT aacsb FROM business_schools WHERE id=1"
+            ).fetchone()[0]
+            evidence = conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=1 AND evidence_type='AACSB' AND is_current=1"
+            ).fetchone()[0]
+            self.assertEqual(1, current)
+            self.assertEqual(1, evidence)
+
+            conn.execute("UPDATE aacsb_directory_schools SET active=0 WHERE id=1")
+            _refresh_aacsb_accreditation_state(conn)
+            self.assertEqual(0, conn.execute(
+                "SELECT aacsb FROM business_schools WHERE id=1"
+            ).fetchone()[0])
+            self.assertEqual(0, conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=1 AND evidence_type='AACSB' AND is_current=1"
+            ).fetchone()[0])
+            self.assertEqual(1, conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=1 AND evidence_type='AACSB' AND is_current=0"
+            ).fetchone()[0])
+
+            conn.execute("UPDATE aacsb_directory_schools SET active=1 WHERE id=1")
+            _refresh_aacsb_accreditation_state(conn)
+            self.assertEqual(1, conn.execute(
+                "SELECT aacsb FROM business_schools WHERE id=1"
+            ).fetchone()[0])
+            self.assertEqual(1, conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=1 AND evidence_type='AACSB' AND is_current=1"
+            ).fetchone()[0])
+            self.assertEqual(1, conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=1 AND evidence_type='AACSB' AND is_current=0"
+            ).fetchone()[0])
             conn.close()
 
     def test_directory_prioritizes_current_rule_and_summary_separates_current_candidates(self):
@@ -477,7 +743,11 @@ class FacultyJobsAACSBTests(unittest.TestCase):
             thread.start()
             try:
                 with patch.object(server, "FACULTY_DB_PATH", db):
-                    for path in ("/api/faculty-jobs/aacsb/summary", "/api/faculty-jobs/aacsb/directory?limit=5"):
+                    for path in (
+                        "/api/faculty-jobs/aacsb/summary",
+                        "/api/aacsb-directory/summary",
+                        "/api/faculty-jobs/aacsb/directory?limit=5",
+                    ):
                         connection = http.client.HTTPConnection("127.0.0.1", httpd.server_port, timeout=20)
                         connection.request("GET", path)
                         response = connection.getresponse()

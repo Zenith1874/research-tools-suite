@@ -10,28 +10,45 @@
   <script src="/research-nav.js" defer></script>
   <script src="/faculty_jobs.js" defer></script>
 </head>
-<body class="faculty-career-body">
+<body class="faculty-career-body fc-action-home">
   <main class="fc-shell">
     <header class="fc-hero">
       <p class="fc-kicker">Academic Career / Faculty Job Market</p>
-      <h1>Business Faculty Jobs</h1>
-      <p>默认只显示商学院明确岗位与商科相关岗位；医学、建筑、诗歌、技术/产品等非商科记录保留在原始目录中，但不会混入默认市场视图。</p>
+      <h1>教职行动列表</h1>
+      <p>先看与你目标有关的岗位，再核对原文。收录记录不保证此刻仍开放；未读到不等于没有空缺。</p>
       <div class="fc-hero-actions">
         <a class="fc-button secondary" href="/school-explorer">School Explorer</a>
         <a class="fc-button secondary" href="/job-market-analytics">Market Analytics</a>
-        <a class="fc-button secondary fc-manage-only" href="/my-applications">My Applications</a>
-        <button class="fc-button secondary fc-manage-only" id="fc-save-search" type="button">Save current search</button>
-        <button class="fc-button primary fc-manage-only" id="fc-update" type="button">Update public sources</button>
+        <a class="fc-button secondary fc-manage-only fc-local-only" href="/my-applications">My Applications</a>
+        <button class="fc-button secondary fc-manage-only fc-local-only" id="fc-save-search" type="button">Save current search</button>
+        <button class="fc-button primary fc-manage-only fc-local-only" id="fc-update" type="button">Update public sources</button>
         <a class="fc-button secondary" id="fc-export" href="/api/faculty-jobs/export.csv">Export current results CSV</a>
       </div>
     </header>
 
     <div class="fc-main">
-      <div class="fc-kpis" id="fc-summary" aria-live="polite">
-        <div class="fc-kpi"><div class="fc-kpi-value">—</div><div class="fc-kpi-label">Loading active jobs</div></div>
-      </div>
-
-      <section class="fc-section" aria-labelledby="fc-filters-title">
+      <section class="fc-action-center" aria-label="求职快捷筛选">
+        <div class="fc-quick-line"><span class="fc-small">学校与学科</span><button class="fc-button primary" id="fc-preferred" type="button">我的目标 · 美国＋R2／教学导向＋IS／Management／OBHR</button><button class="fc-button secondary" id="fc-r1-reference" type="button">R1 专属参照</button></div>
+        <div class="fc-quick-line"><span class="fc-small">岗位类型</span><div class="fc-chip-row" id="fc-position-types" role="group" aria-label="独立岗位类型筛选"></div><span class="fc-small">与学校分类无关 · 可多选，标签可重叠</span></div>
+        <p class="fc-small" id="fc-current-selection" aria-live="polite">正在读取当前筛选…</p>
+        <div class="fc-action-grid" id="fc-actions" role="group" aria-label="行动列表"></div>
+        <div class="fc-action-caption"><button class="fc-chip" id="fc-action-all" type="button">全部目标岗位</button><span class="fc-small" id="fc-action-rule" aria-live="polite">四个行动列表可以重叠，不相加。</span></div>
+        <p class="fc-note error" id="fc-action-error" hidden role="alert"></p>
+      </section>
+      <section class="fc-section" id="fc-r1-comparison" hidden aria-labelledby="fc-r1-comparison-title">
+        <div class="fc-section-head"><div><h2 id="fc-r1-comparison-title">R1 岗位要求参照</h2><p>比较公开岗位原文中的研究、教学和申请要求。</p></div><a class="fc-button secondary fc-local-only" href="/my-applications">填写本机成果与教学经历</a></div>
+        <div class="fc-section-body" id="fc-r1-comparison-body" aria-live="polite"></div>
+      </section>
+      <details class="fc-section fc-advanced" id="fc-advanced">
+        <summary>高级筛选与学校分类 <span class="fc-small">关键词、国家、来源、层级、合同与日期</span></summary>
+      <section class="fc-career-panel" aria-labelledby="fc-career-title">
+        <div class="fc-section-body">
+          <h2 id="fc-career-title">选择求职方向</h2>
+          <div class="fc-career-views" id="fc-career-views" role="group" aria-label="Career views"></div>
+          <p class="fc-small" id="fc-career-note" aria-live="polite">Loading Carnegie views…</p>
+        </div>
+      </section>
+      <section aria-labelledby="fc-filters-title">
         <div class="fc-section-head">
           <div><h2 id="fc-filters-title">Search and filter</h2><p>Filters apply to the normalized local snapshot. Refresh time and source health are shown below.</p></div>
           <div class="fc-inline-actions"><span class="fc-small" id="fc-last-updated">Loading…</span><button class="fc-button" id="fc-reset" type="button">Reset</button></div>
@@ -39,42 +56,67 @@
         <div class="fc-section-body">
           <div class="fc-region-tabs" id="fc-regions" aria-label="Region filters"></div>
           <form class="fc-toolbar" id="fc-filter-form">
+            <input type="hidden" name="career_view" id="fc-career-view" value="r2_teaching">
+            <input type="hidden" name="position_type" id="fc-position-type" value="">
+            <input type="hidden" name="action_view" id="fc-action-view" value="all">
             <label class="fc-visually-hidden" for="fc-q">Search</label>
             <input class="fc-input fc-search" id="fc-q" name="q" type="search" placeholder="Institution, title, department, city, or evidence text">
             <select class="fc-select" id="fc-scope" name="scope" aria-label="Job market scope">
-              <option value="business">Business school / business discipline</option>
-              <option value="business_school">Explicit business-school evidence</option>
+              <option value="business_school">Business school faculty jobs</option>
+              <option value="business">Business-discipline roles · school unverified</option>
               <option value="all">All observed postings (audit)</option>
             </select>
-            <select class="fc-select" id="fc-discipline" name="discipline"><option value="">All disciplines</option></select>
-            <select class="fc-select" id="fc-rank" name="rank"><option value="">All ranks</option></select>
-            <select class="fc-select" id="fc-track" name="track"><option value="">All tracks</option></select>
-            <select class="fc-select" id="fc-country" name="country"><option value="">All countries</option></select>
-            <select class="fc-select" id="fc-state" name="state_province"><option value="">All states / provinces</option></select>
-            <select class="fc-select" id="fc-career-stage" name="career_stage"><option value="">All career stages</option></select>
-            <select class="fc-select" id="fc-status" name="status"><option value="">All statuses</option></select>
-            <select class="fc-select" id="fc-school-tier" name="school_tier"><option value="">All business tiers</option></select>
-            <select class="fc-select" id="fc-university-level" name="university_level"><option value="">All university levels</option></select>
+            <select class="fc-select" id="fc-discipline" data-multi="1" name="discipline"><option value="">All disciplines</option></select>
+            <select class="fc-select" id="fc-rank" data-multi="1" name="rank"><option value="">All ranks</option></select>
+            <select class="fc-select" id="fc-track" data-multi="1" name="track"><option value="">All tracks</option></select>
+            <select class="fc-select" id="fc-appointment" data-multi="1" name="appointment_type"><option value="">All appointment types</option></select>
+            <select class="fc-select" id="fc-visa" name="visa_stance" title="What the posting itself says about work authorization. &quot;Not stated&quot; means the posting did not address it — at current coverage that usually means its page has not been read, and it is not the employer saying no.">
+              <option value="">Any sponsorship stance</option>
+              <option value="supportive">Says it will sponsor or support</option>
+              <option value="blocking">Excludes candidates needing sponsorship</option>
+              <option value="unclear">Mentions it without committing</option>
+              <option value="unstated">Not stated in the posting</option>
+            </select>
+            <label class="fc-date-filter" title="Contingent roles are always retained. Unticked, market priority ranks them below continuing appointments; ticked, they are ranked purely by the other criteria."><input type="checkbox" id="fc-include-contingent" name="include_contingent" value="1"> Rank contingent / adjunct equally</label>
+            <select class="fc-select" id="fc-source" data-multi="1" name="source"><option value="">All sources</option></select>
+            <select class="fc-select" id="fc-posting-kind" name="posting_kind" aria-label="公告与人才库"><option value="">全部公告</option><option value="advertisement">岗位公告（排除明确人才库）</option><option value="pool">人才库／持续招聘</option></select>
+            <select class="fc-select" id="fc-exclude-source" data-multi="1" name="exclude_source"><option value="">Exclude no source</option></select>
+            <select class="fc-select" id="fc-ever-source" data-multi="1" name="ever_source" title="Matches jobs this board carried at any point, including listings it has since taken down."><option value="">Ever listed by any source</option></select>
+            <select class="fc-select" id="fc-country" data-multi="1" name="country"><option value="">All countries</option></select>
+            <select class="fc-select" id="fc-state" data-multi="1" name="state_province"><option value="">All states / provinces</option></select>
+            <select class="fc-select" id="fc-career-stage" data-multi="1" name="career_stage"><option value="">All career stages</option></select>
+            <select class="fc-select" id="fc-status" data-multi="1" name="status"><option value="">All statuses</option></select>
+            <select class="fc-select" id="fc-school-tier" data-multi="1" name="school_tier"><option value="">All business tiers</option></select>
+            <select class="fc-select" id="fc-university-level" data-multi="1" name="university_level"><option value="">All university levels</option></select>
             <select class="fc-select" id="fc-salary-known" name="salary_known"><option value="">Salary known / unknown</option><option value="yes">Salary known</option><option value="no">Salary unknown</option></select>
             <label class="fc-date-filter">Posted after <input class="fc-input" id="fc-posted-after" name="posted_after" type="date"></label>
             <label class="fc-date-filter">Closing before <input class="fc-input" id="fc-closing-before" name="closing_before" type="date"></label>
-            <select class="fc-select" id="fc-sort" name="sort"><option value="newest">Newest observed</option><option value="closing_soon">Closing soon</option><option value="salary">Known salary</option><option value="school_tier">School evidence</option></select>
+            <select class="fc-select" id="fc-sort" name="sort"><option value="market_priority">Market priority</option><option value="newest">Newest observed</option><option value="closing_soon">Closing soon</option><option value="salary">Known salary</option><option value="school_tier">School evidence</option></select>
             <button class="fc-button primary" type="submit">Apply filters</button>
+            <button class="fc-button" id="fc-clear-all" type="button">Clear all</button>
           </form>
-          <div class="fc-note info" id="fc-boundary">Source coverage is loading. The default business view excludes explicit non-business and non-academic postings; “business discipline” means the school itself still needs verification.</div>
+          <div class="fc-note info" id="fc-boundary">Source coverage is loading. The default business view excludes explicit non-business and non-academic postings; “business discipline” means the school itself still needs verification. Active links may also preserve disabled or opt-in source snapshots for auditability.</div>
         </div>
       </section>
+      </details>
 
-      <div class="fc-layout-2">
+      <div class="fc-action-results">
         <section class="fc-section" aria-labelledby="fc-jobs-title">
           <div class="fc-section-head"><div><h2 id="fc-jobs-title">Open and recently observed business jobs</h2><p id="fc-job-count">Loading…</p></div><div class="fc-inline-actions"><span class="fc-badge blue" id="fc-private-state">Business view</span></div></div>
           <div class="fc-section-body"><div class="fc-jobs-grid" id="fc-jobs"><div class="fc-loading">Loading public job snapshot…</div></div><div class="fc-pager" id="fc-pager"></div></div>
         </section>
-        <aside class="fc-sidebar">
+      </div>
+      <details class="fc-section fc-source-details" id="fc-source-details">
+        <summary>来源、覆盖范围与审计统计 <span class="fc-small">展开查看来源长表；非全美市场总量</span></summary>
+        <div class="fc-section-body">
+          <div class="fc-scope-strip" id="fc-scope-strip" aria-live="polite"></div>
+          <div class="fc-kpis" id="fc-summary" aria-live="polite"><div class="fc-loading">Loading coverage…</div></div>
+        <aside>
           <section class="fc-section"><div class="fc-section-head"><div><h2>Source health</h2><p>Adapter status and live coverage.</p></div></div><div class="fc-section-body"><div class="fc-stat-list" id="fc-sources"><div class="fc-loading">Loading sources…</div></div></div></section>
           <section class="fc-section"><div class="fc-section-head"><div><h2>Evidence rules</h2><p>How to read this page.</p></div></div><div class="fc-section-body"><div class="fc-note info">Rank mappings preserve local terms. Business-school evidence is separate from business-discipline evidence. Visa sponsorship is positive only when the source says so. “Unclassified” school tier means evidence has not been verified here.</div><p class="fc-small">Public listing URLs remain available for verification. Individual source failures are recorded independently; a partial update does not erase the last successful snapshot.</p><p class="fc-private-lock fc-note">Personal matching, notes, and applications are local-only. Open My Applications on the service machine.</p></div></section>
         </aside>
-      </div>
+        </div>
+      </details>
     </div>
   </main>
   <dialog class="fc-dialog" id="fc-detail-dialog" aria-labelledby="fc-detail-title"><div class="fc-dialog-head"><h2 id="fc-detail-title">Job detail</h2><button class="fc-button" id="fc-detail-close" type="button">Close</button></div><div class="fc-dialog-body" id="fc-detail-body"><div class="fc-loading">Loading…</div></div></dialog>

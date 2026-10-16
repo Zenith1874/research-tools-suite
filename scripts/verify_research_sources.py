@@ -42,6 +42,8 @@ MAILTO = 'zither1874@gmail.com'
 POLITE_DELAY = 1.2
 VERIFIED_STATUSES = {'verified_openalex', 'verified_crossref', 'verified_pubmed'}
 ENTITY_KINDS = ('theories', 'constructs', 'methods')
+BOOK_REVIEW_RE = re.compile(r'\bbook\s+reviews?\b|\breview\s*:', re.I)
+REVIEW_TYPES = {'review', 'book-review', 'book_review', 'journal-review'}
 
 
 class BudgetExhausted(RuntimeError):
@@ -83,6 +85,44 @@ def _match(work, record):
 def _is_confident(title_score, author_score, year_gap):
     """Require title agreement plus author/year corroboration."""
     return title_score >= 0.6 and not (author_score < 0.34 and year_gap > 1)
+
+
+def _candidate_rejection(record, work, provider):
+    """Reject bibliographic objects that cannot be the requested source.
+
+    A review may be the right object for an explicitly requested review source,
+    but a book review is never the original theory, construct, or method work.
+    Edition/reprint mismatches remain machine matches with a review flag rather
+    than being silently collapsed into the original identity.
+    """
+    title = ((work.get('title') or '') if provider == 'OpenAlex'
+             else ((work.get('title') or [''])[0]))
+    if BOOK_REVIEW_RE.search(title):
+        return 'provider record is a book review, not the requested original work'
+    source_type = str(work.get('type') or '').lower().replace('_', '-')
+    requested_kind = str(record.get('kind') or '').lower()
+    if source_type in REVIEW_TYPES and requested_kind not in {'major_review', 'review'}:
+        return 'provider record is a review object, not the requested original work'
+    expected_type = str(record.get('source_type') or '').lower().replace('_', '-')
+    if expected_type:
+        compatible = {
+            'article': {'article', 'journal-article', 'proceedings-article'},
+            'journal-article': {'article', 'journal-article'},
+            'book': {'book', 'monograph'},
+            'book-chapter': {'book-chapter', 'book-part'},
+            'review': {'review', 'journal-article'},
+        }.get(expected_type, {expected_type})
+        if source_type and source_type not in compatible:
+            return 'provider work type %s does not match expected %s' % (source_type, expected_type)
+    return None
+
+
+def _version_review_status(record, candidate_year):
+    if candidate_year and record.get('year'):
+        gap = abs(int(candidate_year) - int(record['year']))
+        if gap > 1:
+            return 'VERSION_REVIEW_REQUIRED'
+    return 'SAME_YEAR_OR_NEARBY'
 
 
 def _crossref_year(work):
@@ -158,7 +198,12 @@ def _lookup(session, record):
         return None, 'rate limited after retries'
 
     best = None
+    rejected = []
     for work in response.json().get('results', []):
+        rejection = _candidate_rejection(record, work, 'OpenAlex')
+        if rejection:
+            rejected.append(rejection)
+            continue
         title_score, author_score, year_gap = _match(work, record)
         # Require a strong title match plus corroboration from either an author
         # surname or a near-exact year.  A bare title hit is how wrong records
@@ -169,7 +214,7 @@ def _lookup(session, record):
         if best is None or score > best[0]:
             best = (score, work)
     if best is None:
-        return None, 'no confident match'
+        return None, rejected[0] if rejected else 'no confident match'
     return best[1], None
 
 
@@ -197,8 +242,13 @@ def _lookup_crossref(session, record):
         return None, 'Crossref rate limited after retries'
 
     best = None
+    rejected = []
     items = (response.json().get('message') or {}).get('items') or []
     for item in items:
+        rejection = _candidate_rejection(record, item, 'Crossref')
+        if rejection:
+            rejected.append(rejection)
+            continue
         title_score, author_score, year_gap = _match_crossref(item, record)
         if not _is_confident(title_score, author_score, year_gap):
             continue
@@ -206,7 +256,7 @@ def _lookup_crossref(session, record):
         if best is None or score > best[0]:
             best = (score, item)
     if best is None:
-        return None, 'no confident Crossref match'
+        return None, rejected[0] if rejected else 'no confident Crossref match'
     return best[1], None
 
 
@@ -223,6 +273,10 @@ def _apply(record, work):
         'openalex_venue': source.get('display_name'),
         'cited_by_count': work.get('cited_by_count'),
         'verification': 'verified_openalex',
+        'bibliographic_verification_status': 'machine_matched',
+        'verification_status': 'MACHINE_MATCHED',
+        'source_type': work.get('type'),
+        'version_review_status': _version_review_status(record, work.get('publication_year')),
         'verification_source': 'OpenAlex',
         'verified_at': time.strftime('%Y-%m-%d'),
         'verification_note': None,
@@ -248,6 +302,10 @@ def _apply_crossref(record, work):
         'crossref_type': work.get('type'),
         'crossref_cited_by_count': work.get('is-referenced-by-count'),
         'verification': 'verified_crossref',
+        'bibliographic_verification_status': 'machine_matched',
+        'verification_status': 'MACHINE_MATCHED',
+        'source_type': work.get('type'),
+        'version_review_status': _version_review_status(record, _crossref_year(work)),
         'verification_source': 'Crossref',
         'verified_at': time.strftime('%Y-%m-%d'),
         'verification_note': None,

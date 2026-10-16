@@ -19,6 +19,10 @@ from datetime import datetime, timedelta, date
 
 import requests
 
+from services.deepseek_client import MODEL_DEFAULT as DEEPSEEK_MODEL_DEFAULT_SHARED
+from services import deepseek_client
+from services.deepseek_offpeak import (
+    describe as offpeak_describe, is_offpeak, normalize_mode, wait_for_offpeak)
 from services.journal_lists import FT50, UTD24, match_norm
 
 log = logging.getLogger(__name__)
@@ -62,6 +66,7 @@ FOR_DISCIPLINE = {
     '3802': ('Econometrics', 'Economics'),
     '3803': ('Economic Theory', 'Economics'),
     '3804': ('Economics (other)', 'Economics'),
+    '3899': ('Economics (other)', 'Economics'),
     '4609': ('Information Systems', 'Information Systems'),
     '4602': ('Artificial Intelligence', 'Information Systems'),
     '3505 ': ('Human Resources & Industrial Relations', 'OB / HR'),
@@ -243,7 +248,9 @@ JOURNAL_DOI_FILTER = {
 INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_astar_pubdate ON astar_articles(publication_date)",
     "CREATE INDEX IF NOT EXISTS idx_astar_journal ON astar_articles(journal_issn)",
+    "CREATE INDEX IF NOT EXISTS idx_astar_journal_visible ON astar_articles(journal_issn) WHERE is_duplicate=0",
     "CREATE INDEX IF NOT EXISTS idx_astar_titlenorm ON astar_articles(title_normalized)",
+    "CREATE INDEX IF NOT EXISTS idx_astar_openalex_id ON astar_articles(openalex_id)",
     "CREATE INDEX IF NOT EXISTS idx_astar_cls_article ON astar_article_classifications(article_id)",
     "CREATE INDEX IF NOT EXISTS idx_prestige_issnp ON journal_prestige_lists(issn_print)",
     "CREATE INDEX IF NOT EXISTS idx_prestige_issno ON journal_prestige_lists(issn_online)",
@@ -251,8 +258,8 @@ INDEXES = [
 ]
 
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+def get_db(db_path=None):
+    conn = sqlite3.connect(db_path or DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=8000')
@@ -557,13 +564,15 @@ def reconstruct_abstract(inverted_index):
 
 
 from services.openalex_budget import (  # noqa: E402
-    BudgetState, MAX_RATE_LIMIT_RETRIES, RateLimited, raise_for_rate_limit)
+    BudgetState, MAX_RATE_LIMIT_RETRIES, RateLimited, raise_for_rate_limit,
+    openalex_headers)
 
 
 def _http_get_json(url, params=None, headers=None, retries=MAX_RATE_LIMIT_RETRIES):
     h = {'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'}
     if headers:
         h.update(headers)
+    h = openalex_headers(url, h)
     last = None
     for attempt in range(max(1, retries)):
         r = requests.get(url, params=params, headers=h, timeout=HTTP_TIMEOUT)
@@ -634,7 +643,7 @@ def fetch_openalex(issn, from_date, to_date, max_total=200):
            f'type:article')
     out, cursor, pages = [], '*', 0
     while cursor and len(out) < max_total:
-        params = {'filter': flt, 'per-page': 200, 'cursor': cursor, 'mailto': MAILTO}
+        params = {'filter': flt, 'per_page': 100, 'cursor': cursor, 'mailto': MAILTO}
         data = _http_get_json(OPENALEX_BASE, params=params)
         for w in data.get('results', []):
             out.append(_parse_openalex_work(w, issn))
@@ -663,9 +672,11 @@ def fetch_crossref(issn, from_date, to_date, rows=100):
                  or it.get('published-print') or {}).get('date-parts', [[None]])
         dp = parts[0] if parts else [None]
         y = dp[0] if len(dp) > 0 else None
-        mo = dp[1] if len(dp) > 1 else 1
-        da = dp[2] if len(dp) > 2 else 1
-        pub_date = f'{y}-{mo:02d}-{da:02d}' if y else None
+        # A year/month-only source does not establish an exact calendar day.
+        try:
+            pub_date = date(*dp[:3]).isoformat() if len(dp) >= 3 else None
+        except (TypeError, ValueError):
+            pub_date = None
         authors = [' '.join(filter(None, [a.get('given'), a.get('family')]))
                    for a in it.get('author', [])] if it.get('author') else []
         abstract = it.get('abstract')
@@ -680,6 +691,10 @@ def fetch_crossref(issn, from_date, to_date, rows=100):
             'abstract_status': 'available' if abstract else 'missing',
             'publication_date': pub_date,
             'publication_year': y,
+            '_archive_issue_year': (((it.get('published-print') or {}).get('date-parts') or [[None]])[0] or [None])[0],
+            '_archive_year_evidence': {'source_print_date_parts': ((it.get('published-print') or {}).get('date-parts') or [[]])[0],
+                                        'volume': it.get('volume'), 'issue': it.get('issue'),
+                                        'source_publication_date': pub_date},
             'journal_title': (it.get('container-title') or [None])[0],
             'journal_issn': issn,
             'publisher': it.get('publisher'),
@@ -699,13 +714,19 @@ def fetch_crossref(issn, from_date, to_date, rows=100):
 
 
 def fetch_recent_articles_for_journal(journal, from_date, to_date, per_journal_cap=200,
-                                      budget=None):
+                                      budget=None, complete=False, coverage=None, raw_dir=None):
     """对一个期刊（dict，含 issn_print/issn_online）抓最近文章。
     OpenAlex 优先，失败或 0 结果再试 Crossref。返回 (articles, source_used, error)。
 
     ``budget`` 是本次运行共享的 OpenAlex 预算状态。一旦当日预算耗尽，后续期刊
     直接跳过 OpenAlex 走 Crossref 兜底，不再每个期刊都花请求去重新发现这件事。
     """
+    if complete:
+        from services.astar_recent_collection import collect_recent
+        articles, source, error, counts = collect_recent(journal, from_date, to_date, budget, raw_dir)
+        if coverage is not None:
+            coverage.update(counts)
+        return articles, source, error
     issns = [i for i in [journal.get('issn_print'), journal.get('issn_online')] if i]
     if not issns:
         return [], None, 'no_issn'
@@ -782,7 +803,10 @@ METHOD_KEYWORDS = {
     'causal_inference': ['causal', 'instrumental variable', 'regression discontinuity', 'propensity score'],
     'difference_in_differences': ['difference-in-differences', 'difference in differences', 'diff-in-diff', 'did design'],
     'event_study': ['event study'],
-    'qualitative_interviews': ['interview', 'qualitative', 'grounded theory'],
+    # The generic terms are intentionally not used for the Interviews method
+    # tag.  See _interview_method_match below: a survey name, press interview,
+    # or qualitative non-interview design is not evidence of interview data.
+    'qualitative_interviews': [],
     'ethnography': ['ethnograph', 'participant observation'],
     'theory_paper': ['we theorize', 'conceptual model', 'theory development', 'a theory of', 'theoretical framework'],
     'review': ['literature review', 'systematic review', 'review of', 'we review'],
@@ -814,12 +838,17 @@ THEORY_KEYWORDS = {
     'JD_R': ['job demands-resources', 'job demands resources', 'jd-r', 'jdr model', 'demands and resources'],
     'EVLN': ['exit voice loyalty', 'exit, voice', 'evln'],
     'sensemaking': ['sensemaking', 'sense-making'],
-    'institutional_theory': ['institutional theory', 'institutional logic', 'legitimacy'],
+    'institutional_theory': ['institutional theory', 'neo-institutional theory',
+                             'neo institutional theory', 'institutional perspective'],
+    'institutional_logics': ['institutional logics', 'institutional logic perspective'],
     'social_exchange': ['social exchange'],
     'conservation_of_resources': ['conservation of resources', 'cor theory'],
     'job_design': ['job design', 'job characteristics', 'job crafting'],
-    'self_determination': ['self-determination', 'self determination theory', 'intrinsic motivation'],
-    'signaling': ['signaling theory', 'signalling theory', 'signal '],
+    'self_determination': ['self-determination theory', 'self determination theory',
+                           'self-determination perspective', 'self determination perspective'],
+    'signaling': ['signaling theory', 'signalling theory', 'signaling perspective',
+                  'signalling perspective', 'signaling framework', 'signalling framework',
+                  'signaling mechanism', 'signalling mechanism'],
     'transaction_cost': ['transaction cost'],
     'resource_based_view': ['resource-based view', 'resource based view', 'rbv'],
     'upper_echelons': ['upper echelons', 'ceo characteristics', 'tmt '],
@@ -873,6 +902,68 @@ def _match_tags(text, keyword_map):
     return hits
 
 
+def _contains_phrase(text, phrases):
+    """Match a phrase as words, so punctuation does not create a substring hit."""
+    text = str(text or '').lower()
+    return any(re.search(r'(?<![a-z0-9])' + re.escape(phrase.lower()) +
+                         r'(?![a-z0-9])', text) for phrase in phrases)
+
+
+def _interview_method_match(title, abstract):
+    """Require evidence that interviews are the study's data-collection method.
+
+    ``interview`` is deliberately not enough: National Health Interview Survey,
+    press/journalistic interviews, and qualitative case/ethnographic studies are
+    frequent and materially different research designs.
+    """
+    text = f'{title}\n{abstract}'.lower()
+    if re.search(r'\b(national|health|household|american community)\s+interview\s+survey\b', text):
+        return False
+    if re.search(r'\b(press|journalistic|media)\s+interview\b', text):
+        return False
+    method_phrases = (
+        'interview data', 'interview transcripts', 'interview transcript',
+        'semi-structured interviews', 'semi structured interviews',
+        'in-depth interviews', 'in depth interviews', 'conducted interviews',
+        'we interviewed', 'were interviewed', 'interview-based',
+        'interview based', 'qualitative interviews', 'research interviews',
+    )
+    return _contains_phrase(text, method_phrases)
+
+
+def _theory_tags(title, abstract, concept_text):
+    """Return conservative theory-use candidates.
+
+    These are still classifier candidates, never verified applications.  The
+    rules only remove known lexical traps; title/abstract metadata cannot prove
+    full-text theory use.
+    """
+    text = f'{title}\n{abstract}'.lower()
+    tags = []
+    for tag, keywords in THEORY_KEYWORDS.items():
+        if tag == 'signaling':
+            matched = _contains_phrase(text, keywords)
+        elif tag == 'institutional_theory':
+            matched = _contains_phrase(text, keywords)
+        elif tag == 'self_determination':
+            matched = _contains_phrase(text, keywords)
+        else:
+            matched = _contains_phrase(text, keywords)
+        if matched:
+            tags.append(tag)
+    # OpenAlex concept names may corroborate an exact named theory, but cannot
+    # promote generic concepts such as signal processing or intrinsic motivation.
+    concept = str(concept_text or '').lower()
+    if 'signaling theory' in concept or 'signalling theory' in concept:
+        if 'signaling' not in tags:
+            tags.append('signaling')
+    if 'self-determination theory' in concept and 'self_determination' not in tags:
+        tags.append('self_determination')
+    if 'institutional theory' in concept and 'institutional_theory' not in tags:
+        tags.append('institutional_theory')
+    return tags
+
+
 def classify_article(article):
     """基于 title + abstract + concepts 做规则分类与相关性评分。
     返回 classification dict（不写库）。"""
@@ -888,8 +979,10 @@ def classify_article(article):
 
     topics = _match_tags(text, TOPIC_KEYWORDS)
     methods = _match_tags(text, METHOD_KEYWORDS)
+    if _interview_method_match(title, abstract):
+        methods.append('qualitative_interviews')
     data_types = _match_tags(text, DATA_TYPE_KEYWORDS)
-    theories = _match_tags(text, THEORY_KEYWORDS)
+    theories = _theory_tags(title, abstract, concept_text)
 
     # broad_area：先按期刊学科，再用关键词增强
     area = article.get('_journal_discipline_area') or 'Other'
@@ -989,31 +1082,61 @@ def classify_article(article):
 #  入库（含去重）+ 分类持久化
 # ════════════════════════════════════════════════════════════════════════════
 def _find_existing(conn, art):
-    """去重：DOI → openalex_id → normalized title+journal+year。返回已存在 id 或 None。"""
+    """Match persistent IDs; anonymous metadata may match only within a journal."""
+    from services.astar_article_identity import canonical_doi, canonical_openalex_id
+    incoming_doi = canonical_doi(art.get('doi')) or art.get('doi')
     if art.get('doi'):
-        r = conn.execute('SELECT id FROM astar_articles WHERE doi=?', (art['doi'],)).fetchone()
+        r = conn.execute('SELECT id FROM astar_articles WHERE doi IN (?,?) ORDER BY id LIMIT 1',
+                         (art['doi'], incoming_doi)).fetchone()
         if r:
             return r['id']
     if art.get('openalex_id'):
-        r = conn.execute('SELECT id FROM astar_articles WHERE openalex_id=?', (art['openalex_id'],)).fetchone()
-        if r:
-            return r['id']
+        openalex_id = canonical_openalex_id(art['openalex_id'])
+        rows = conn.execute('''SELECT id,doi FROM astar_articles
+            WHERE openalex_id IN (?,?,?) ORDER BY id''',
+            (art['openalex_id'], openalex_id,
+             'https://openalex.org/' + openalex_id if openalex_id else None)).fetchall()
+        for row in rows:
+            existing_doi = canonical_doi(row['doi']) or row['doi']
+            if not (incoming_doi and existing_doi and incoming_doi != existing_doi):
+                return row['id']
+    # An unmatched supplied identifier must not overwrite a different work
+    # merely because its title/year happens to be the same.
+    if art.get('doi') or art.get('openalex_id'):
+        return None
     tn = normalize_title(art.get('title'))
-    if tn:
+    if tn and art.get('journal_issn'):
         r = conn.execute(
-            'SELECT id FROM astar_articles WHERE title_normalized=? AND publication_year IS ?',
-            (tn, art.get('publication_year'))).fetchone()
+            '''SELECT id FROM astar_articles
+               WHERE title_normalized=? AND publication_year IS ? AND journal_issn=?
+               AND (doi IS NULL OR doi='') AND (openalex_id IS NULL OR openalex_id='')''',
+            (tn, art.get('publication_year'), art['journal_issn'])).fetchone()
         if r:
             return r['id']
     return None
 
 
-def _persist_classification(conn, article_id, art):
+# 花钱买来的判定，不能被免费的规则法顶掉。雷达每天重抓最近 14 天，命中的每
+# 一篇都走 _upsert_article 的"更新"分支再走到这里；没有这道保护时，LLM 判过
+# 的行会被写回 rules，而规则法对同样的输入仍然判 uncertain，于是它又回到候选
+# 池，下一轮再花一次钱重判。日志里 29 次运行买了 4,326 条判定，库里只活下来
+# 764 条——八成的钱买的是随后就被删掉的工作。
+PAID_METHODS = ('llm',)
+
+
+def _persist_classification(conn, article_id, art, preserve_paid=True):
+    """用规则法写入分类。preserve_paid=False 才会覆盖 LLM 判定（见 PAID_METHODS）。"""
     art2 = dict(art)
     # 把期刊学科 area 传给分类器（用于 broad_area 兜底）
     cls = classify_article(art2)
     now = datetime.now().isoformat(timespec='seconds')
-    conn.execute("""
+    guard, guard_args = '', ()
+    if preserve_paid:
+        placeholders = ','.join(['?'] * len(PAID_METHODS))
+        guard = (' WHERE astar_article_classifications.classification_method '
+                 f'NOT IN ({placeholders})')
+        guard_args = PAID_METHODS
+    conn.execute(f"""
         INSERT INTO astar_article_classifications
           (article_id, broad_area, research_topic, theory_tags_json, method_tags_json,
            data_type_tags_json, context_tags_json, geo_context, sample_context,
@@ -1031,14 +1154,14 @@ def _persist_classification(conn, article_id, art):
           is_related_to_my_research=excluded.is_related_to_my_research,
           relevance_score=excluded.relevance_score, classification_method=excluded.classification_method,
           classification_status=excluded.classification_status,
-          classification_notes=excluded.classification_notes, classified_at=excluded.classified_at""",
+          classification_notes=excluded.classification_notes, classified_at=excluded.classified_at{guard}""",
         (article_id, cls['broad_area'], json.dumps(cls['research_topic']),
          json.dumps(cls['theory_tags']), json.dumps(cls['method_tags']),
          json.dumps(cls['data_type_tags']), json.dumps(cls['context_tags']),
          cls['geo_context'], cls['sample_context'], cls['ai_related_score'],
          cls['work_related_score'], cls['wfh_rto_related_score'], cls['ob_hr_related_score'],
          cls['is_related_to_my_research'], cls['relevance_score'], cls['classification_method'],
-         cls['classification_status'], cls['classification_notes'], now))
+         cls['classification_status'], cls['classification_notes'], now) + guard_args)
     return cls
 
 
@@ -1052,7 +1175,8 @@ def _upsert_article(conn, art, journal):
     art['_journal_discipline_area'] = journal.get('_area')
     existing_id = _find_existing(conn, art)
 
-    pub_month = None
+    # Crossref can deposit a known month without an exact publication day.
+    pub_month = art.get('publication_month')
     if art.get('publication_date') and len(art['publication_date']) >= 7:
         pub_month = art['publication_date'][:7]
 
@@ -1141,6 +1265,8 @@ def _record_affiliations_if_available(conn, article_id, art):
 
 
 def _record_source(conn, article_id, art):
+    from services.astar_archive_year_service import record_from_article
+    record_from_article(conn, article_id, art)
     now = datetime.now().isoformat(timespec='seconds')
     # INSERT OR IGNORE：配合 idx_src_uniq 唯一索引，重抓同一文章不再累积重复来源行
     conn.execute("""
@@ -1339,6 +1465,12 @@ def _run_update(update_mode, days, version='latest', single_journal=None, per_jo
     if not (from_date and to_date):
         from_date, to_date = _date_range(days)
 
+    complete_recent = update_mode in ('recent', 'daily_incremental', 'weekly_incremental') and single_journal is None
+    source_coverage = []
+    if complete_recent:
+        from pathlib import Path
+        raw_directory = Path(DB_PATH).resolve().parent / 'backups' / ('astar_recent_' + datetime.now().strftime('%Y%m%dT%H%M%S%f'))
+        raw_directory.mkdir(parents=True, exist_ok=False)
     counters = dict(journals_checked=0, journals_with_issn=0, journals_missing_issn=0,
                     articles_found=0, articles_inserted=0, articles_updated=0,
                     duplicates_skipped=0, failed_journals=0)
@@ -1359,8 +1491,17 @@ def _run_update(update_mode, days, version='latest', single_journal=None, per_jo
             continue
         counters['journals_with_issn'] += 1
 
-        arts, src_used, err = fetch_recent_articles_for_journal(
-            j, from_date, to_date, per_journal_cap, budget=budget)
+        counts = {}
+        if complete_recent:
+            arts, src_used, err = fetch_recent_articles_for_journal(
+                j, from_date, to_date, per_journal_cap, budget=budget,
+                complete=True, coverage=counts, raw_dir=raw_directory)
+            source_coverage.append({'journal_title': j['journal_title'], 'providers': counts, 'error': err})
+            if err and arts:
+                warnings.append(j['journal_title'] + ': partial provider coverage; see saved source report')
+        else:
+            arts, src_used, err = fetch_recent_articles_for_journal(
+                j, from_date, to_date, per_journal_cap, budget=budget)
         time.sleep(POLITE_DELAY)
         if err and not arts:
             if err != 'no_issn':
@@ -1398,6 +1539,19 @@ def _run_update(update_mode, days, version='latest', single_journal=None, per_jo
                   warnings=json.dumps(warnings[:50], ensure_ascii=False),
                   error_message=error_message, **counters)
     logrow.update(budget.as_dict())
+    if complete_recent:
+        all_sources_complete = (not counters['journals_missing_issn'] and
+            len(source_coverage) == counters['journals_checked'] and bool(source_coverage) and
+            all(set(row['providers']) == {'crossref', 'openalex'} and
+                all(value.get('status') == 'COMPLETE' for value in row['providers'].values())
+                for row in source_coverage))
+        logrow.update({'source_coverage': source_coverage, 'raw_response_directory': str(raw_directory),
+                       'all_source_queries_complete': all_sources_complete})
+        with (raw_directory / 'source_coverage.json').open('x', encoding='utf-8') as stream:
+            json.dump({'created_at': finished, 'from_date': from_date, 'to_date': to_date,
+                       'journals_checked': counters['journals_checked'],
+                       'all_source_queries_complete': all_sources_complete,
+                       'coverage': source_coverage}, stream, ensure_ascii=False, indent=2)
     conn.execute("""INSERT INTO astar_update_logs
         (started_at,finished_at,success,update_mode,abdc_version,journals_checked,
          journals_with_issn,journals_missing_issn,articles_found,articles_inserted,
@@ -1421,7 +1575,7 @@ def _area_from_discipline(disc):
         'Strategy, Management & Organisational Behaviour': 'OB / HR',
         'Transportation, Logistics & Supply Chains': 'Operations / Supply Chain',
         'Applied Economics': 'Economics', 'Econometrics': 'Economics',
-        'Economic Theory': 'Economics', 'Information Systems': 'Information Systems',
+        'Economic Theory': 'Economics', 'Economics (other)': 'Economics', 'Information Systems': 'Information Systems',
     }
     rev.update({
         'Tourism': 'Management / Strategy', 'Commercial Services': 'Management / Strategy',
@@ -1483,29 +1637,55 @@ def cleanup_journal_doi_pollution():
     return {'hidden': result, 'total_hidden': sum(result.values())}
 
 
-def deduplicate_articles():
-    """二次去重：按 normalized title+year 把重复行标记 is_duplicate=1（保留最早 id）。"""
-    conn = get_db()
-    rows = conn.execute("""
-        SELECT id, title_normalized, publication_year FROM astar_articles
-        WHERE is_duplicate=0 AND title_normalized != '' ORDER BY id""").fetchall()
-    seen = {}
-    dups = 0
-    for r in rows:
-        key = (r['title_normalized'], r['publication_year'])
-        if key in seen:
-            conn.execute('UPDATE astar_articles SET is_duplicate=1 WHERE id=?', (r['id'],))
-            dups += 1
-        else:
-            seen[key] = r['id']
-    conn.commit()
-    conn.close()
-    return {'duplicates_marked': dups}
+def deduplicate_articles(db_path=None, audit_path=None):
+    """Hide repeated persistent identifiers, preserving distinct same-title works."""
+    from services.astar_article_identity import duplicate_ids, canonical_doi, canonical_openalex_id
+    conn = get_db(db_path)
+    try:
+        # Spill canonical IDs to a temporary SQLite table. Only identifiers
+        # occurring more than once enter the Python identity graph; singleton
+        # papers cannot be hidden and must not consume a corpus-sized graph.
+        conn.execute('PRAGMA temp_store=FILE')
+        conn.create_function('astar_canonical_doi', 1, canonical_doi, deterministic=True)
+        conn.create_function('astar_canonical_oa', 1, canonical_openalex_id, deterministic=True)
+        conn.execute('''CREATE TEMP TABLE astar_identity_scan AS
+            SELECT id,astar_canonical_doi(doi) AS doi,
+                   astar_canonical_oa(openalex_id) AS openalex_id
+            FROM astar_articles WHERE is_duplicate=0''')
+        conn.execute('CREATE INDEX temp.astar_identity_doi ON astar_identity_scan(doi)')
+        conn.execute('CREATE INDEX temp.astar_identity_oa ON astar_identity_scan(openalex_id)')
+        rows = conn.execute('''SELECT id,doi,openalex_id FROM astar_identity_scan
+            WHERE doi IN (SELECT doi FROM astar_identity_scan WHERE doi IS NOT NULL
+                          GROUP BY doi HAVING COUNT(*)>1)
+               OR openalex_id IN (SELECT openalex_id FROM astar_identity_scan WHERE openalex_id IS NOT NULL
+                                  GROUP BY openalex_id HAVING COUNT(*)>1)
+            ORDER BY id''').fetchall()
+        conn.commit()
+        duplicates, conflicts = duplicate_ids(rows)
+        if audit_path is not None:
+            with open(audit_path, 'x', encoding='utf-8') as stream:
+                json.dump({'created_at': datetime.now().isoformat(),
+                           'duplicate_ids': duplicates, 'conflict_groups_retained': conflicts,
+                           'candidate_rows': [dict(row) for row in rows],
+                           'mutation': 'is_duplicate=1 only for listed later persistent-ID matches'}, stream, ensure_ascii=False, indent=2)
+        conn.executemany('UPDATE astar_articles SET is_duplicate=1 WHERE id=?',
+                         ((identifier,) for identifier in duplicates))
+        conn.commit()
+        return {'duplicates_marked': len(duplicates),
+                'identifier_conflict_groups_retained': conflicts,
+                'identity_graph_candidate_rows': len(rows),
+                'identity_staging': 'temporary_SQLite; singleton_rows_excluded_from_Python_graph',
+                'identity_basis': 'shared DOI or nonconflicting OpenAlex work ID'}
+    finally:
+        conn.close()
 
 
-def reclassify_all():
-    """对库内所有文章重跑分类。"""
-    conn = get_db()
+def reclassify_all(db_path=None, force=False):
+    """对库内所有文章重跑分类。
+
+    force=True 才会把 LLM 判定也覆盖回规则法——那等于丢掉已经付过钱的结果，
+    只在确认要重建整个分类基线时才用。"""
+    conn = get_db(db_path)
     ensure_astar_tables(conn)
     rows = conn.execute('SELECT * FROM astar_articles WHERE is_duplicate=0').fetchall()
     n = 0
@@ -1513,7 +1693,7 @@ def reclassify_all():
         art = dict(r)
         art['concepts'] = json.loads(art.get('concepts_json') or '[]')
         art['_journal_discipline_area'] = _journal_area_for_issn(conn, art.get('journal_issn'))
-        _persist_classification(conn, art['id'], art)
+        _persist_classification(conn, art['id'], art, preserve_paid=not force)
         n += 1
         if n % 200 == 0:
             conn.commit()
@@ -1643,6 +1823,8 @@ def _attach_classification(conn, d):
 def build_astar_articles_payload(params):
     conn = get_db()
     ensure_astar_tables(conn)
+    from services.astar_archive_year_service import year_expression, attach_years
+    archive_year_sql = year_expression(conn)
     where = ['a.is_duplicate=0']
     args = []
 
@@ -1658,6 +1840,13 @@ def build_astar_articles_payload(params):
         where.append('a.publication_date >= ?'); args.append(params['from_date'])
     if params.get('to_date'):
         where.append('a.publication_date <= ?'); args.append(params['to_date'])
+    if params.get('from_date') or params.get('to_date'):
+        from services.astar_publication_precision_service import date_expression
+        where.append(date_expression(conn) + ' IS NOT NULL')
+    if params.get('from_year'):
+        where.append(archive_year_sql + ' >= ?'); args.append(int(params['from_year']))
+    if params.get('to_year'):
+        where.append(archive_year_sql + ' <= ?'); args.append(int(params['to_year']))
     if params.get('journal'):
         where.append('a.journal_title LIKE ?'); args.append(f"%{params['journal']}%")
     if params.get('journal_issns'):
@@ -1711,6 +1900,7 @@ def build_astar_articles_payload(params):
         d['is_utd24'] = bool(r['is_utd24'])
         _attach_classification(conn, d)
         arts.append(d)
+    attach_years(conn, arts)
 
     lastlog = conn.execute('SELECT finished_at FROM astar_update_logs ORDER BY id DESC LIMIT 1').fetchone()
     conn.close()
@@ -1726,6 +1916,8 @@ def build_astar_article_detail(article_id):
         conn.close()
         return {'success': False, 'error': 'not found'}
     d = _article_row_to_dict(r)
+    from services.astar_archive_year_service import attach_years
+    attach_years(conn, [d])
     _attach_classification(conn, d)
     srcs = conn.execute('SELECT * FROM astar_article_sources WHERE article_id=?', (article_id,)).fetchall()
     d['source_records'] = [dict(s) for s in srcs]
@@ -2130,7 +2322,8 @@ def _openalex_source_stats(issn):
     无对应 source 返回 None。"""
     try:
         r = requests.get(f'https://api.openalex.org/sources/issn:{issn}',
-                         headers={'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'},
+                         headers=openalex_headers('https://api.openalex.org',
+                             {'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'}),
                          timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
             return None
@@ -2275,18 +2468,10 @@ def _anthropic_classify(title, abstract, concepts, model):
 
 
 def _deepseek_classify(title, abstract, concepts, model):
-    # OpenAI 兼容接口；response_format=json_object 保证只返回 JSON。
-    # v4-flash 关思考模式(等价旧 deepseek-chat：快、无 reasoning 开销)。
-    body = {'model': model, 'max_tokens': 700, 'temperature': 0.2,
-            'thinking': {'type': 'disabled'},
-            'response_format': {'type': 'json_object'},
-            'messages': [{'role': 'system', 'content': _LLM_SYS},
-                         {'role': 'user', 'content': _user_msg(title, abstract, concepts)}]}
-    r = requests.post(DEEPSEEK_URL, headers={
-        'Authorization': f"Bearer {os.environ['DEEPSEEK_API_KEY']}",
-        'Content-Type': 'application/json'}, json=body, timeout=60)
-    r.raise_for_status()
-    text = r.json()['choices'][0]['message']['content']
+    # 请求怎么发由 services/deepseek_client 统一负责(thinking 必须关掉等)；
+    # 这里只管问什么、怎么读答案。
+    text = deepseek_client.chat(_LLM_SYS, _user_msg(title, abstract, concepts),
+                                model=model, max_tokens=700, temperature=0.2, timeout=60)
     m = re.search(r'\{.*\}', text, re.DOTALL)
     return json.loads(m.group(0)) if m else None
 
@@ -2369,11 +2554,17 @@ def apply_classification_results(results, source='Claude会话'):
 
 
 def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=True,
-                          model=None, max_relevance=None, core_journals_only=False):
+                          model=None, max_relevance=None, core_journals_only=False,
+                          offpeak=None):
     """对规则法判不准的文章用 LLM 重判并打相关性分。自动选 provider：
     有 DEEPSEEK_API_KEY 走 DeepSeek（便宜），否则走 Anthropic。
     max_relevance：只处理规则分 < 该值的（找漏判用，如 35）；不传则按分从高到低（清误报用）。
-    core_journals_only：只扫用户核心 OB/IS 期刊（漏判最可能藏在这里）。"""
+    core_journals_only：只扫用户核心 OB/IS 期刊（漏判最可能藏在这里）。
+    offpeak：DeepSeek 计费时段策略，每篇之前检查一次（见 services/deepseek_offpeak）。
+      'wait' 撞上标准时段就睡到优惠时段——后台批量用，能把大批量的价钱砍一半；
+      'stop' 撞上就干净收工，返回里带 stopped_at_standard_rate；
+      None/'off' 不管时段——交互式调用的默认，让用户等 4 小时比多付一倍更糟。"""
+    mode = normalize_mode(offpeak)
     provider, mdl = _llm_provider()
     if not provider:
         return {'success': False, 'error': '未设置 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY，无法调用 LLM。'}
@@ -2385,8 +2576,18 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
                                       max_relevance, core_journals_only)
 
     done = fail = 0
-    now = datetime.now().isoformat(timespec='seconds')
+    waited = 0.0
+    stopped = False
+    if mode != 'off':
+        log.info('LLM 精修 offpeak=%s，当前 %s', mode, offpeak_describe())
     for r in rows:
+        if mode == 'wait':
+            waited += wait_for_offpeak()
+        elif mode == 'stop' and not is_offpeak():
+            stopped = True
+            log.info('进入标准时段，已判 %d 篇后收工（剩余候选留给下一轮）', done)
+            break
+        now = datetime.now().isoformat(timespec='seconds')
         try:
             concepts = [x.get('name') for x in json.loads(r['concepts_json'] or '[]')][:8]
             res = _llm_classify_one(r['title'], r['abstract'], concepts, provider, mdl)
@@ -2414,4 +2615,6 @@ def llm_classify_articles(limit=100, only_status='uncertain', require_abstract=T
     conn.commit()
     conn.close()
     return {'success': True, 'provider': provider, 'model': mdl,
-            'classified': done, 'failed': fail, 'candidates_in_scope': len(rows)}
+            'classified': done, 'failed': fail, 'candidates_in_scope': len(rows),
+            'offpeak': mode, 'waited_seconds': round(waited),
+            'stopped_at_standard_rate': stopped}

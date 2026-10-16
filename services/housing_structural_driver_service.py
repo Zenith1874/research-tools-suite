@@ -104,7 +104,7 @@ def _add_months(period, months):
 
 @lru_cache(maxsize=4)
 def load_national_structural_drivers(path=None):
-    """读取仓库内可审计的国家统计局年度驱动快照。"""
+    """Read the baseline and share canonical marriage bulletin revisions."""
     source_path = Path(path) if path else NATIONAL_DRIVER_PATH
     grouped = {}
     seen = set()
@@ -127,6 +127,18 @@ def load_national_structural_drivers(path=None):
             if not row['source_url']:
                 raise ValueError(f'国家结构驱动缺来源URL：{key[0]} {key[1]}')
             grouped.setdefault(key[0], []).append(row)
+    if source_path.resolve() == NATIONAL_DRIVER_PATH.resolve():
+        from services.china_demography_service import read_effective_demography_rows
+        marriages = {row['period']: row for row in grouped.get('national_marriages', [])}
+        start_period = min(marriages) if marriages else '2010'
+        canonical_rows, _ = read_effective_demography_rows()
+        for raw in canonical_rows:
+            if raw['indicator_code'] != 'CN_MARRIAGES' or raw['period'] < start_period:
+                continue
+            marriages[raw['period']] = {
+                **raw, 'indicator_code': 'national_marriages',
+            }
+        grouped['national_marriages'] = list(marriages.values())
     for rows in grouped.values():
         rows.sort(key=lambda item: item['period'])
     return grouped
@@ -235,7 +247,7 @@ def _apply_scenario_guardrails(driver, *, national_population_rows=None):
         values['optimistic'] = max(float(values['optimistic']), 0.0)
         if latest is not None:
             values['stress'] = min(float(values['stress']), float(latest))
-        notes.append('乐观档覆盖止跌，压力档覆盖最新降幅延续')
+        notes.append('乐观档覆盖止跌，压力档保留历史下行及最新变动边界')
     elif key == 'sales_area_growth':
         latest = driver.get('latest_growth')
         values['optimistic'] = max(float(values['optimistic']), 0.0)
@@ -444,7 +456,7 @@ def _national_marriage_rate_rows(grouped):
             'period': marriage['period'],
             'value': float(marriage['value']) / float(population['value']) * 1000.0,
             'unit': '‰', 'data_status': 'derived',
-            'source_name': '国家统计局登记对数与人口派生',
+            'source_name': f"{marriage.get('source_name') or '结婚登记来源'}与国家统计局人口派生",
             'source_url': marriage['source_url'],
             'parser_notes': '结婚登记总对数(万对) / 年末人口(万人) × 1000。',
         })
@@ -493,7 +505,8 @@ def build_structural_driver_snapshot(conn, city, price_period,
         conn, city, 'resident_population', 'national_population', price_year,
         'population_growth', '常住人口', grouped['national_population'])
     marriage = _growth_driver(
-        'marriage_growth', _national_marriage_rate_rows(grouped), 'national_common',
+        'marriage_growth', [row for row in _national_marriage_rate_rows(grouped)
+                            if _year(row['period']) <= price_year], 'national_common',
         '全国粗结婚率（派生）', 'national_crude_marriage_rate')
     for driver in (income, population, marriage):
         if driver:

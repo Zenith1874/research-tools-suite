@@ -15,14 +15,20 @@ from pathlib import Path
 
 from services.faculty_jobs_service import (
     _canonical_variant_school,
+    _current_entity_id,
+    _institution,
     _link_jobs_to_unique_school,
     _merge_duplicate_institutions,
     _merge_variant_school_entities,
+    _repair_country_slash_locations,
+    _repair_current_schools_on_retired_institutions,
     _recanonicalize_merged_schools,
+    _school,
     _school_name_quality,
     _strip_school_name_noise,
     ensure_faculty_jobs_tables,
 )
+from services.faculty_jobs_sources.base import SourceJob
 
 NOW = "2026-08-26T00:00:00Z"
 
@@ -336,6 +342,170 @@ class DistinctSchoolTests(ResolverBase):
         self.conn.commit()
         self.assertEqual(0, stats["merged"])
         self.assertEqual(2, len(self.current_school_names(1)))
+
+    def test_three_or_more_school_families_do_not_use_generic_label_as_a_bridge(self):
+        self.institution(1, "University of Virginia")
+        self.school(10, 1, "Darden School of Business")
+        self.school(11, 1, "Darden School of Business Administration")
+        self.school(12, 1, "McIntire School of Commerce")
+        self.school(13, 1, "School of Business")
+        self.conn.commit()
+
+        self.assertIsNone(_canonical_variant_school(self.conn, 1))
+        stats = _merge_variant_school_entities(self.conn)
+        self.conn.commit()
+
+        self.assertEqual(1, stats["merged"])
+        current = set(self.current_school_names(1))
+        self.assertEqual(3, len(current))
+        self.assertEqual(1, len([name for name in current if name.startswith("Darden School of Business")]))
+        self.assertIn("McIntire School of Commerce", current)
+        self.assertIn("School of Business", current)
+
+
+class ResolverSafetyTests(ResolverBase):
+    def source_job(self):
+        return SourceJob(
+            source="fixture", source_job_id="resolver-1", source_url="https://example.edu/job/1",
+            official_url="https://example.edu/job/1", title_raw="Assistant Professor of Finance",
+            institution_raw="Example University", school_raw="Former School of Business",
+            captured_at=NOW, extra={},
+        )
+
+    def test_null_country_institution_resolution_is_idempotent(self):
+        normalized = {
+            "institution_raw": "Example University",
+            "institution_entity_raw": "Example University",
+            "country_code": None,
+            "country": None,
+            "region_group": None,
+            "state_province": None,
+            "city": None,
+        }
+        first = _institution(self.conn, dict(normalized), self.source_job())
+        second = _institution(self.conn, dict(normalized), self.source_job())
+        self.conn.commit()
+        self.assertEqual(first, second)
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM institutions WHERE normalized_name=? AND is_current=1",
+            ("example university",),
+        ).fetchone()[0])
+
+    def test_retired_school_key_is_not_reactivated_or_overwritten(self):
+        self.institution(1, "Example University")
+        self.school(10, 1, "Former School of Business")
+        self.conn.execute(
+            "UPDATE business_schools SET is_current=0,merged_into_id=NULL WHERE id=10"
+        )
+        self.conn.commit()
+
+        result = _school(self.conn, 1, "Former School of Business", self.source_job())
+        self.conn.commit()
+
+        self.assertIsNone(result)
+        self.assertEqual((0, None), tuple(self.conn.execute(
+            "SELECT is_current,merged_into_id FROM business_schools WHERE id=10"
+        ).fetchone()))
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM entity_resolution_queue WHERE entity_type='business_school' AND entity_id=10"
+        ).fetchone()[0])
+
+    def test_school_resolver_refuses_a_retired_parent_without_survivor(self):
+        self.institution(1, "Retired Parent University")
+        self.conn.execute(
+            "UPDATE institutions SET is_current=0,merged_into_id=NULL WHERE id=1"
+        )
+        result = _school(self.conn, 1, "School of Business", self.source_job())
+        self.conn.commit()
+        self.assertIsNone(result)
+        self.assertEqual(0, self.conn.execute(
+            "SELECT COUNT(*) FROM business_schools WHERE institution_id=1 AND is_current=1"
+        ).fetchone()[0])
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM entity_resolution_queue "
+            "WHERE entity_type='institution' AND entity_id=1"
+        ).fetchone()[0])
+
+    def test_school_resolver_follows_an_explicit_current_parent_redirect(self):
+        self.institution(1, "Current Parent University")
+        self.institution(2, "Former Parent University")
+        self.conn.execute(
+            "UPDATE institutions SET is_current=0,merged_into_id=1 WHERE id=2"
+        )
+        school_id = _school(self.conn, 2, "School of Business", self.source_job())
+        self.conn.commit()
+        self.assertEqual(1, self.conn.execute(
+            "SELECT institution_id FROM business_schools WHERE id=?", (school_id,)
+        ).fetchone()[0])
+
+    def test_unused_current_school_under_retired_parent_is_retired_not_deleted(self):
+        self.institution(1, "Retired Parent University")
+        self.school(10, 1, "Orphan School of Business")
+        self.conn.execute(
+            "UPDATE institutions SET is_current=0,merged_into_id=NULL WHERE id=1"
+        )
+        stats = _repair_current_schools_on_retired_institutions(self.conn)
+        self.conn.commit()
+        self.assertEqual(1, stats["retired"])
+        self.assertEqual((0, None), tuple(self.conn.execute(
+            "SELECT is_current,merged_into_id FROM business_schools WHERE id=10"
+        ).fetchone()))
+
+    def test_country_slash_repair_does_not_force_an_institution_identity_collision(self):
+        self.institution(1, "VinUniversity", normalized="vinuniversity")
+        self.conn.execute(
+            "UPDATE institutions SET country='Vietnam',country_code='VN',is_current=0 WHERE id=1"
+        )
+        self.institution(2, "VinUniversity", normalized="vinuniversity")
+        self.conn.execute(
+            "UPDATE institutions SET city='Viet Nam / Hanoi' WHERE id=2"
+        )
+        stats = _repair_country_slash_locations(self.conn)
+        self.conn.commit()
+        self.assertEqual(1, stats["identity_conflicts_queued"])
+        self.assertEqual((None, "Hanoi"), tuple(self.conn.execute(
+            "SELECT country_code,city FROM institutions WHERE id=2"
+        ).fetchone()))
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM entity_resolution_queue "
+            "WHERE entity_id=2 AND match_basis='country_slash_identity_collision'"
+        ).fetchone()[0])
+
+    def test_retired_institution_key_is_released_without_reactivating_history(self):
+        self.institution(20, "Retired University", normalized="retired university")
+        self.conn.execute(
+            "UPDATE institutions SET is_current=0,merged_into_id=NULL WHERE id=20"
+        )
+        self.conn.commit()
+        normalized = {
+            "institution_raw": "Retired University",
+            "institution_entity_raw": "Retired University",
+            "country_code": None,
+            "country": None,
+            "region_group": None,
+            "state_province": None,
+            "city": None,
+        }
+
+        current_id = _institution(self.conn, normalized, self.source_job())
+        self.conn.commit()
+
+        self.assertNotEqual(20, current_id)
+        self.assertEqual((0, "retired university__retired_20"), tuple(self.conn.execute(
+            "SELECT is_current,normalized_name FROM institutions WHERE id=20"
+        ).fetchone()))
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM institutions WHERE id=? AND is_current=1", (current_id,)
+        ).fetchone()[0])
+
+    def test_redirect_cycle_is_treated_as_unresolved(self):
+        self.institution(1, "Cycle A")
+        self.institution(2, "Cycle B")
+        self.conn.execute("UPDATE institutions SET is_current=0,merged_into_id=2 WHERE id=1")
+        self.conn.execute("UPDATE institutions SET is_current=0,merged_into_id=1 WHERE id=2")
+        self.conn.commit()
+        self.assertIsNone(_current_entity_id(self.conn, "institutions", 1))
+        self.assertIsNone(_current_entity_id(self.conn, "institutions", 2))
 
 
 if __name__ == "__main__":

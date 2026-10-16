@@ -38,6 +38,9 @@ class InsideHigherEdAdapter(SourceAdapter):
     base_url = "https://careers.insidehighered.com/jobs/?keywords=assistant+professor+business"
     search_query = "assistant professor business"
     priority = 18
+    # This board exposes a working page parameter, so a second page is
+    # genuinely reachable.
+    paginates = True
     # The public result set currently spans 42 pages / roughly 838 matches.
     # Keep this bounded and require an explicit max_pages value greater than
     # one for a full pagination run; the normal scheduler remains one page.
@@ -45,6 +48,9 @@ class InsideHigherEdAdapter(SourceAdapter):
     page_delay = 0.35
     detail_budget = 12
     detail_delay = 0.35
+    # A class attribute so the counter exists even when _enrich_detail is
+    # called directly, as the fixture tests do; fetch() resets it per run.
+    _detail_requests = 0
 
     @classmethod
     def _page_url(cls, page):
@@ -64,6 +70,33 @@ class InsideHigherEdAdapter(SourceAdapter):
         if re.fullmatch(
             r"(?:the\s+)?(?:college|school|faculty)\s+of\s+business(?:\s+administration)?",
             text, re.I,
+        ):
+            return None
+        # The current board also emits organization/campus labels in the
+        # location slot.  These strings are not safe geographic evidence:
+        # the normalizer otherwise turns the final comma component or the
+        # words before ``Campus`` into a city.  Keep real place names such as
+        # ``University Park, PA`` and ``College Station, TX`` because neither
+        # has an organization-of shape nor an organization-qualified campus.
+        if re.fullmatch(r"BYU[-–—]Hawaii", text, re.I):
+            return None
+        if re.search(
+            r"\b(?:University|College|Institute|Polytechnic)\s+of\b",
+            text, re.I,
+        ):
+            return None
+        if re.search(
+            r"\b(?:University|College|Institute|Polytechnic)\b.*\bCampus$",
+            text, re.I,
+        ):
+            return None
+        # Some IHE cards place the employer in both the company and location
+        # slots.  A bare organization label is not geographic evidence.  Keep
+        # comma-delimited values such as ``College Station, TX`` and
+        # ``University Park, PA``; reject only the unqualified organization
+        # shape seen in the captured pilot cards.
+        if "," not in text and re.search(
+            r"\b(?:University|College|Institute|Polytechnic)$", text, re.I,
         ):
             return None
         return text
@@ -102,6 +135,17 @@ class InsideHigherEdAdapter(SourceAdapter):
         text = re.sub(r"\s+", " ", str(value or "")).strip(" ,:-")
         if not text:
             return None
+        # A possessive employer immediately followed by school/department
+        # prose can be clipped at the apostrophe by the listing matcher.  A
+        # terminal possessive is not part of the institution's official name.
+        possessive_base = re.sub(r"[’']s$", "", text, flags=re.I).strip(" ,:-")
+        if possessive_base != text and InsideHigherEdAdapter._credible_institution(possessive_base):
+            text = possessive_base
+        # Listing text can concatenate the first employer-adjacent field after
+        # a complete organization name (``NC State University Posting`` or
+        # ``Lebanese American University The Department ...``).  Remove only
+        # a terminal portal token, never words inside the organization.
+        text = re.sub(r"\s+(?:Posting|The|Logo)$", "", text, flags=re.I).strip(" ,:-")
         if location_hint:
             location = re.sub(r"\s+", " ", str(location_hint or "")).strip(" ,:-")
             if location and text.casefold().startswith(location.casefold() + " "):
@@ -113,6 +157,46 @@ class InsideHigherEdAdapter(SourceAdapter):
                 # when the remaining phrase is itself a credible employer.
                 if InsideHigherEdAdapter._credible_institution(tail):
                     text = tail
+            # Card excerpts often start the employer candidate at the final
+            # location component instead of after it: ``..., CT Quinnipiac
+            # University``.  Strip a leading two-letter region only when the
+            # remainder is independently credible.  This deliberately keeps
+            # the legitimate brand ``NC State University`` because the tail
+            # ``State University`` is too generic to be credible.
+            location_parts = [part.strip(" ()") for part in location.split(",") if part.strip()]
+            region = location_parts[-1] if location_parts else ""
+            prefixes = []
+            if re.fullmatch(r"[A-Z]{2}", region):
+                prefixes.append(region)
+            # A full state/country word is ambiguous with institution names
+            # (for example Georgia Institute of Technology), so remove it only
+            # together with an observed portal field label.
+            prefixes.extend(
+                f"{region} {label}"
+                for label in ("Salary", "Not Specified")
+                if region
+            )
+            for prefix in prefixes:
+                if text.casefold().startswith(prefix.casefold() + " "):
+                    tail = text[len(prefix):].strip(" ,:-")
+                    if InsideHigherEdAdapter._credible_institution(tail):
+                        text = tail
+                        break
+            # Some cards reverse ``city, state`` before the employer, e.g.
+            # ``Towson, Maryland`` becomes ``Maryland Towson University``.
+            # Strip the full state word only when the surviving employer also
+            # begins with the observed city.  This preserves legitimate names
+            # such as Georgia Institute of Technology in Atlanta, Georgia.
+            if len(location_parts) >= 2 and region:
+                city = location_parts[0]
+                if text.casefold().startswith(region.casefold() + " "):
+                    tail = text[len(region):].strip(" ,:-")
+                    if (
+                        city
+                        and tail.casefold().startswith(city.casefold() + " ")
+                        and InsideHigherEdAdapter._credible_institution(tail)
+                    ):
+                        text = tail
         # A detail employer can concatenate a department before the actual
         # university (``Health Sciences The Ohio State University``).
         the_positions = [match.start() for match in re.finditer(r"\bThe\s+", text)]
@@ -129,6 +213,21 @@ class InsideHigherEdAdapter(SourceAdapter):
             r"^(.+?\bUniversity)\s+(?:School|College|Faculty)\s+of\b.*$",
             r"\1", text, flags=re.I,
         ).strip(" ,:-")
+        # A listing excerpt may concatenate the opening words of a department
+        # sentence after a complete employer (``Illinois State University The
+        # Marketing Department``).  Trim only known academic-field sentence
+        # starts after a complete organization marker.
+        department_tail = re.match(
+            r"^(?P<institution>.+?\b(?:University|College|Institute|Polytechnic))\s+"
+            r"The\s+(?:Marketing|Management|Accounting|Finance|Economics|Business|"
+            r"Information\s+Systems|Operations)(?:\s+Department)?\b.*$",
+            text,
+            re.I,
+        )
+        if department_tail:
+            candidate = department_tail.group("institution").strip(" ,:-")
+            if InsideHigherEdAdapter._credible_institution(candidate):
+                text = candidate
         # Card templates can repeat a complete employer around a department
         # or location token.  Collapse exact token-level repetition before
         # trying to interpret the organization marker.
@@ -159,6 +258,15 @@ class InsideHigherEdAdapter(SourceAdapter):
             r"(?=[A-Z].*\b(?:University|College|Institute|Polytechnic)\b)",
             "", text, flags=re.I,
         ).strip(" ,:-")
+        # The BYU-Hawaii card duplicated the same location token on both sides
+        # of the employer: ``Hawaii Brigham Young University Hawaii``.  Remove
+        # only an exact first/last-token repetition when the remainder remains
+        # a credible organization.
+        words = text.split()
+        if len(words) >= 4 and words[0].casefold() == words[-1].casefold():
+            candidate = " ".join(words[1:])
+            if InsideHigherEdAdapter._credible_institution(candidate):
+                text = candidate
         return text or None
 
     @staticmethod
@@ -526,6 +634,7 @@ class InsideHigherEdAdapter(SourceAdapter):
 
     def _enrich_detail(self, job):
         try:
+            self._detail_requests += 1
             response = self.request(job.source_url)
             soup = BeautifulSoup(response.text, "html.parser")
             time.sleep(max(0.0, float(self.detail_delay)))
@@ -593,6 +702,7 @@ class InsideHigherEdAdapter(SourceAdapter):
         notes = []
         pages_fetched = 0
         cards_seen = 0
+        self._detail_requests = 0
         reported_total = None
         page_limit = max(1, min(50, int(self.max_pages)))
         limit_reached = False
@@ -634,7 +744,8 @@ class InsideHigherEdAdapter(SourceAdapter):
                 match = re.search(r"/job/(\d+)/", href)
                 if not match:
                     continue
-                location = self._usable_location(visible_text(card.select_one(".lister__meta-item--location")))
+                raw_location = visible_text(card.select_one(".lister__meta-item--location"))
+                location = self._usable_location(raw_location)
                 institution = None
                 for selector in (
                     '[itemprop="hiringOrganization"] [itemprop="name"]',
@@ -643,13 +754,13 @@ class InsideHigherEdAdapter(SourceAdapter):
                     '[class*="institution"]', '[class*="employer"]',
                 ):
                     candidate = visible_text(card.select_one(selector))
-                    if candidate and candidate != location:
+                    if candidate and candidate != raw_location:
                         institution = candidate
                         break
                 structured = self._structured_fields(card)
                 missing_institution = not institution
                 institution = institution or structured.get("institution") or self._institution_from_text(
-                    detail_excerpt(card), title, location)
+                    detail_excerpt(card), title, raw_location)
                 posted = structured.get("posted") or visible_text(card.select_one(
                     '[itemprop="datePosted"], .lister__meta-item--date, .job-posted-date'
                 ))
@@ -659,6 +770,14 @@ class InsideHigherEdAdapter(SourceAdapter):
                 salary = structured.get("salary") or visible_text(card.select_one(
                     '[itemprop="baseSalary"], .lister__meta-item--salary, .job-salary'
                 ))
+                extra = {"search_query": self.search_query}
+                if raw_location and location is None:
+                    # The source explicitly populated its location slot, but
+                    # the value was an organization/campus label rejected by
+                    # ``_usable_location``.  Do not let the generic normalizer
+                    # re-infer that same rejected label from ``Location:``
+                    # prose elsewhere in the card excerpt.
+                    extra["suppress_location_description"] = True
                 job = SourceJob(
                     source=self.name,
                     source_job_id=match.group(1),
@@ -671,7 +790,7 @@ class InsideHigherEdAdapter(SourceAdapter):
                     deadline_raw=deadline,
                     salary_raw=str(salary) if salary else None,
                     captured_at=now_utc(),
-                    extra={"search_query": self.search_query},
+                    extra=extra,
                 )
                 if detail_used < detail_budget and (missing_institution or not salary):
                     job = self._enrich_detail(job)
@@ -696,12 +815,32 @@ class InsideHigherEdAdapter(SourceAdapter):
                     "The reported search total exceeded parseable listing cards; missing cards were not "
                     "fabricated and remain outside the source-record set."
                 )
-        return AdapterResponse(unique_jobs, pages_fetched=pages_fetched, notes=notes)
+        # The reported total was parsed, written into a note, and then dropped:
+        # the structured fields stayed empty, so a three-page read of an
+        # 862-result search was recorded as coverage "Unknown" rather than as
+        # the incomplete read it plainly is. pages_fetched carries every
+        # request the adapter made; listing_pages is the pagination reach on
+        # its own, which is what "how much of the board did we see" needs.
+        complete = None if reported_total is None else len(unique_jobs) >= reported_total
+        return AdapterResponse(
+            unique_jobs,
+            pages_fetched=pages_fetched + self._detail_requests,
+            listing_pages=pages_fetched,
+            notes=notes,
+            reported_total=reported_total,
+            coverage_complete=complete,
+        )
 
 
-def parse_fixture(html):
+def parse_fixture(html, detail_budget=None):
     adapter = InsideHigherEdAdapter(max_pages=1)
     adapter.detail_delay = 0
+    if detail_budget is not None:
+        # Listing-only regression fixtures can explicitly disable detail
+        # requests.  Existing structured fixtures retain the default because
+        # they intentionally expose page-level JSON-LD to the mocked detail
+        # request as well.
+        adapter.detail_budget = max(0, int(detail_budget))
     from unittest.mock import patch
     with patch.object(adapter, "request") as request:
         request.return_value.text = html

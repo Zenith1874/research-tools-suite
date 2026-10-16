@@ -167,6 +167,70 @@ class FacultyJobSourceFixtureTests(unittest.TestCase):
             ),
         )
 
+    def test_inside_higher_ed_pilot_entity_boundaries(self):
+        """Run-544 card order must not leak location/chrome into entities."""
+        from services.faculty_jobs_sources.insidehighered import parse_fixture
+
+        jobs = parse_fixture(
+            self._read('inside_higher_ed_pilot_entity_regressions.html'),
+            detail_budget=0,
+        )
+        self.assertEqual(
+            {
+                '3457480': ('NC State University', 'Raleigh, NC'),
+                '3467729': ('Atlanta Metropolitan State College', None),
+                '3545316': ('Lebanese American University', 'Lebanon (LB)'),
+                '3537099': ('Fayetteville State University', 'Fayetteville, NC'),
+                '3545152': ('Quinnipiac University', 'Mount Carmel - Hamden, CT'),
+                '3541636': ('Miami University', 'Oxford, Ohio'),
+                '3544578': ('Dartmouth College', 'Hanover, NH'),
+            },
+            {
+                job.source_job_id: (job.institution_raw, job.location_raw)
+                for job in jobs
+            },
+        )
+
+    def test_inside_higher_ed_shadow_599_listing_boundaries(self):
+        """Current live card labels must not enter institution/location fields."""
+        from services.faculty_jobs_sources.insidehighered import parse_fixture
+
+        jobs = parse_fixture(
+            self._read('inside_higher_ed_shadow_599_regressions.html'),
+            detail_budget=0,
+        )
+        actual = {
+            job.source_job_id: (job.institution_raw, job.location_raw)
+            for job in jobs
+        }
+        self.assertEqual(
+            {
+                '3466773': ('University of Virginia', 'Charlottesville, VA'),
+                '3507076': ('Brigham Young University Hawaii', None),
+                '3514729': ('University of Tennessee', None),
+                '3521991': ('University of Tennessee', None),
+                '3524554': ('Sam Houston State University', None),
+                '3525668': ('Towson University', 'Towson, Maryland'),
+                '3529012': ('Illinois State University', 'Normal, Illinois'),
+                '3529055': ('Miami University', 'Oxford, Ohio'),
+                '3533177': ('The Ohio State University', 'Columbus Campus'),
+                '3534947': ('Miami University', 'Oxford, Ohio'),
+                '3537134': ('Miami University', 'Oxford, Ohio'),
+                '3539602': ('Miami University', 'Oxford, Ohio'),
+                '3539640': ('The University of Kansas', None),
+                '3542647': ('Florida State University', 'Tallahassee, FL'),
+            },
+            actual,
+        )
+        self.assertEqual('University Park, PA', InsideHigherEdAdapter._usable_location('University Park, PA'))
+        self.assertEqual('College Station, TX', InsideHigherEdAdapter._usable_location('College Station, TX'))
+        self.assertEqual(
+            'Georgia Institute of Technology',
+            InsideHigherEdAdapter._clean_institution_value(
+                'Georgia Institute of Technology', 'Atlanta, Georgia',
+            ),
+        )
+
     def test_inside_higher_ed_detail_jsonld_extracts_employer_and_fields(self):
         detail = '''
         <script type="application/ld+json">

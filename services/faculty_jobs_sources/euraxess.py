@@ -14,7 +14,8 @@ from bs4 import BeautifulSoup
 
 from services.faculty_jobs_normalizer import country_code_for
 
-from .base import AdapterResponse, SourceAdapter, SourceJob, dedupe_source_jobs, detail_excerpt, now_utc, visible_text
+from .base import (AdapterResponse, SourceAdapter, SourceJob, dedupe_source_jobs, detail_excerpt,
+                   now_utc, reported_result_total, visible_text)
 
 
 class EuraxessAdapter(SourceAdapter):
@@ -24,6 +25,10 @@ class EuraxessAdapter(SourceAdapter):
     base_url = "https://euraxess.ec.europa.eu/jobs/search"
     priority = 16
     max_items = 30
+    # Verified 2026-08-27 against the live board: the search exposes
+    # ?page=0..760 and page two returns ten ids that page one does not, so a
+    # second page is genuinely reachable rather than a re-read of the first.
+    paginates = True
     support_reason = "Broad European research source; business coverage is not complete."
 
     @staticmethod
@@ -54,9 +59,11 @@ class EuraxessAdapter(SourceAdapter):
         location = ", ".join(item for item in (city, country) if item)
         return location or country, host
 
-    def fetch(self):
-        response = self.request(self.base_url)
-        soup = BeautifulSoup(response.text, "html.parser")
+    def _page_url(self, page):
+        """The board numbers its search pages from zero."""
+        return self.base_url if page == 0 else f"{self.base_url}?page={page}"
+
+    def _parse_cards(self, soup, budget):
         jobs = []
         for card in soup.select("article.ecl-content-item"):
             anchor = next((a for a in card.find_all("a", href=True)
@@ -102,10 +109,40 @@ class EuraxessAdapter(SourceAdapter):
                 # if an individual record cannot be opened.
                 pass
             jobs.append(job)
-            if len(jobs) >= self.max_items:
+            if len(jobs) >= budget:
                 break
-        return AdapterResponse(dedupe_source_jobs(jobs), pages_fetched=1,
-                                notes=["EURAXESS search is a broad European research source; business coverage is not complete."])
+        return jobs
+
+    def fetch(self):
+        jobs = []
+        pages = 0
+        reported_total = None
+        notes = ["EURAXESS search is a broad European research source; "
+                 "business coverage is not complete."]
+        for page in range(self.max_pages):
+            response = self.request(self._page_url(page))
+            pages += 1
+            soup = BeautifulSoup(response.text, "html.parser")
+            if reported_total is None:
+                reported_total = reported_result_total(soup)
+            page_jobs = self._parse_cards(soup, self.max_items - len(jobs))
+            jobs.extend(page_jobs)
+            # An empty page is the end of the result set; stopping here keeps a
+            # changed layout from spending the whole page budget on nothing.
+            if not page_jobs or len(jobs) >= self.max_items:
+                break
+        unique = dedupe_source_jobs(jobs)
+        complete = None
+        if reported_total is not None:
+            complete = len(unique) >= reported_total
+            if not complete:
+                notes.append(
+                    f"Observed {len(unique)} of {reported_total} results the board reports "
+                    f"across {pages} page(s); the rest is reachable but was not read under "
+                    "the current page budget."
+                )
+        return AdapterResponse(unique, pages_fetched=pages, notes=notes,
+                               reported_total=reported_total, coverage_complete=complete)
 
 
 def parse_fixture(html):

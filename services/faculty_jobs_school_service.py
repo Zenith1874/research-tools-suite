@@ -9,6 +9,7 @@ import sqlite3
 from urllib.parse import urlparse
 
 from services.faculty_jobs_normalizer import country_code_for, normalize_name
+from services.faculty_jobs_query import default_market_where
 
 
 SCHOOL_TIERS = ("T1", "T2", "T3", "T4", "Unclassified")
@@ -38,10 +39,15 @@ def _json(value, default):
 def evidence_for_school(conn, school_id):
     rows = conn.execute("""
         SELECT id, evidence_type, value, source_name, source_url, source_date,
-               verified_at, confidence, notes
+               verified_at, confidence, notes, is_current, valid_from, valid_to
         FROM school_evidence WHERE school_id=? ORDER BY verified_at DESC, id DESC
     """, (school_id,)).fetchall()
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["current"] = bool(item.get("is_current", 1))
+        result.append(item)
+    return result
 
 
 ASTAR_FOOTPRINT_LABEL = "Observed A* Publication Footprint"
@@ -62,7 +68,8 @@ def astar_footprint_for_school(conn, school_id, evidence=None):
     """
     rows = evidence if evidence is not None else evidence_for_school(conn, school_id)
     row = next((item for item in rows
-                if item.get("evidence_type") in _ASTAR_EVIDENCE_TYPES), None)
+                if item.get("evidence_type") in _ASTAR_EVIDENCE_TYPES
+                and int(item.get("is_current", 1) or 0) == 1), None)
     if not row:
         return None
     try:
@@ -134,7 +141,9 @@ def classify_business_school(conn, school_id):
             "override": dict(override),
         }
 
-    verified = [item for item in evidence if _confidence(item.get("confidence")) > 0]
+    verified = [item for item in evidence
+                if int(item.get("is_current", 1) or 0) == 1
+                and _confidence(item.get("confidence")) > 0]
     types = {str(item.get("evidence_type") or "") for item in verified}
     # astar_publication_footprint is deliberately NOT in this set. It is shown
     # on its own as an Observed A* Publication Footprint with its coverage, and
@@ -203,11 +212,11 @@ def list_schools(db_path, query=None, limit=50, offset=0):
         # eligibility index; on the production catalogue this made the
         # explorer endpoint appear hung.  One aggregation is both clearer
         # and bounded by the number of accepted market jobs.
-        job_where = "j.derived_quality='accepted' AND j.faculty_market_eligible=1 AND j.business_scope IN ('business_school','business_discipline')"
+        job_where = default_market_where("j")
         job_stats_select = """
             j.school_id,
             COUNT(*) AS observed_jobs,
-            SUM(CASE WHEN j.status IN ('open','likely_open','closing_soon') THEN 1 ELSE 0 END) AS current_openings,
+            COUNT(*) AS current_openings,
             MAX(j.last_seen_at) AS jobs_last_seen
         """
         job_stats_args = []
@@ -267,7 +276,7 @@ def list_schools(db_path, query=None, limit=50, offset=0):
             SELECT bs.*, i.official_name AS university_name, i.city, i.country,
                    i.country_code, i.university_research_level,
                    js.current_openings, js.jobs_last_seen,
-                   CASE WHEN EXISTS (SELECT 1 FROM school_evidence se WHERE se.school_id=bs.id)
+                   CASE WHEN EXISTS (SELECT 1 FROM school_evidence se WHERE se.school_id=bs.id AND se.is_current=1)
                         THEN 'verified_school_evidence'
                         WHEN EXISTS (SELECT 1 FROM school_tier_overrides sto WHERE sto.school_id=bs.id)
                         THEN 'manual_school_override'
@@ -291,22 +300,28 @@ def school_detail(db_path, school_id):
     conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("""
+        row = conn.execute(f"""
             SELECT bs.*, i.official_name AS university_name, i.normalized_name AS university_normalized_name,
                    i.country, i.country_code, i.state_province, i.city, i.institution_url,
                    i.university_research_level, i.university_research_level_system,
                    i.research_memberships_json, i.carnegie_class, i.u15_member,
-                   (SELECT COUNT(*) FROM jobs j WHERE j.school_id=bs.id AND j.derived_quality='accepted' AND j.faculty_market_eligible=1 AND j.business_scope IN ('business_school','business_discipline') AND j.status IN ('open','likely_open','closing_soon')) AS current_openings
+                   (SELECT COUNT(*) FROM jobs j WHERE j.school_id=bs.id AND {default_market_where('j')}) AS current_openings
             FROM business_schools bs JOIN institutions i ON i.id=bs.institution_id
             WHERE bs.id=? AND bs.is_current=1 AND i.is_current=1
         """, (school_id,)).fetchone()
         if not row:
             return {"ok": False, "error": "school not found"}
         classification = classify_business_school(conn, school_id)
-        jobs = [dict(item) for item in conn.execute("""
-            SELECT id, title_raw, discipline_primary, country, city, deadline_date, status, official_url
-            FROM jobs WHERE school_id=? AND derived_quality='accepted' AND faculty_market_eligible=1 AND business_scope IN ('business_school','business_discipline') ORDER BY first_seen_at DESC LIMIT 100
+        jobs = [dict(item) for item in conn.execute(f"""
+            SELECT id, title_raw, discipline_primary, country, city, deadline_date,
+                   deadline_mode, last_seen_at, status, official_url
+            FROM jobs
+            WHERE school_id=? AND {default_market_where()}
+            ORDER BY first_seen_at DESC LIMIT 100
         """, (school_id,)).fetchall()]
+        from services.faculty_jobs_lifecycle import lifecycle_fields
+        for job in jobs:
+            job.update(lifecycle_fields(job))
         result = dict(row)
         if classification.get("manual_override"):
             evidence_status = "manual_school_override"

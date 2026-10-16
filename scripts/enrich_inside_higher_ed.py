@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from services.faculty_jobs_service import enrich_inside_higher_ed_details
+from services.faculty_jobs_service import FACULTY_DB_PATH, enrich_inside_higher_ed_details
+from services.faculty_jobs_write_guard import guarded_write, postflight, preflight
 
 
 def main(argv=None):
@@ -25,13 +26,16 @@ def main(argv=None):
     parser.add_argument('--include-known', action='store_true',
                         help='also revisit records that already have an institution entity')
     args = parser.parse_args(argv)
-    result = enrich_inside_higher_ed_details(
-        source_job_ids=args.source_job_ids,
-        max_records=max(0, min(1000, args.max_records)),
-        timeout=max(3, min(120, args.timeout)),
-        delay=max(0.25, args.delay),
-        include_known=args.include_known,
-    )
+    inventory = preflight(str(FACULTY_DB_PATH), "inside_higher_ed_detail_enrichment")
+    with guarded_write():
+        result = enrich_inside_higher_ed_details(
+            source_job_ids=args.source_job_ids,
+            max_records=max(0, min(1000, args.max_records)),
+            timeout=max(3, min(120, args.timeout)),
+            delay=max(0.25, args.delay),
+            include_known=args.include_known,
+        )
+    postflight(str(FACULTY_DB_PATH), inventory)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get('ok') else 1
 

@@ -1,0 +1,538 @@
+# -*- coding: utf-8 -*-
+"""Deep dives for catalog theories, batch 6 — the last empty disciplines.
+
+Accounting, International Business, and Entrepreneurship had no written analysis
+at all. These nine open them: three accounting theories that share a contracting
+premise, three internationalization accounts that disagree about how firms
+expand, and three entrepreneurship frameworks that disagree about whether
+opportunities are found or made.
+
+Schema helpers live in ``research_catalog_deep_dives``.
+"""
+
+from research_catalog_deep_dives import D, Debate, P, Pos
+
+THEORY_DIVES_B6 = dict([
+
+    # ------------------------------------------------- positive accounting theory
+    D('positive-accounting-theory',
+      era='Programme launched in 1978 and consolidated in 1986; dominant in empirical accounting research and contested since.',
+      era_zh='1978 年发起、1986 年集成的研究纲领，主导实证会计研究，此后持续受到争议。',
+      situation=[
+        P('Accounting research was largely normative: it argued about which measurement rules would be best. That produced prescriptions but no explanation of why firms actually make the accounting choices they do.',
+          '会计研究此前主要是规范性的：争论哪种计量规则最好。这产生了处方，却没有解释企业实际为何作出那样的会计选择。'),
+        P('The shift was to treat accounting choice as behaviour to be explained rather than prescribed, and to explain it with the incentives created by contracts the numbers enter into.',
+          '转向在于把会计选择当作有待解释的行为而非有待规定的行为，并用"这些数字所进入的契约"所创造的激励来解释它。'),
+      ],
+      argument=[
+        P('Three hypotheses organize the programme. Bonus plans give managers whose pay depends on reported earnings an incentive to shift earnings into the current period.',
+          '三个假说组织起该纲领。奖金计划使薪酬取决于报告盈余的管理者，有动机把盈余转入当期。'),
+        P('Debt covenants give firms close to violating them an incentive to choose income-increasing methods. Political cost gives large and visible firms an incentive to choose income-decreasing methods to avoid attention.',
+          '债务契约使接近违约的企业有动机选择增加利润的方法；政治成本则使规模大、曝光度高的企业有动机选择减少利润的方法以规避关注。'),
+        P('The unifying claim is that accounting numbers are not neutral descriptions but inputs to contracts, so the choice of method is an economic decision with consequences the manager can anticipate.',
+          '统一的主张是：会计数字不是中性描述，而是契约的输入；因此方法选择是一项经济决策，其后果管理者可以预期。'),
+      ],
+      development=[
+        P('Earnings management research grew directly out of it, shifting attention from the choice of accounting method to the exercise of discretion within a method.',
+          '盈余管理研究直接由此生长出来，把注意力从"会计方法的选择"转向"某一方法内部裁量权的行使"。'),
+      ],
+      debates=[
+        Debate('Is the programme scientific or an apology for practice?', '该纲领是科学研究还是为实践辩护？',
+               [Pos('Positive position',
+                    'Explaining what firms do is a legitimate scientific aim, and separating it from what they should do is a methodological virtue.',
+                    '解释企业实际做什么是正当的科学目标；把它与"企业应当做什么"分开是方法论上的优点。'),
+                Pos('Critical position',
+                    'The programme adopts the contracting frame uncritically, treats existing arrangements as given, and its predictions are loose enough to accommodate most results.',
+                    '该纲领不加批判地采纳契约框架、把既有安排视为给定，且其预测宽松到足以容纳多数结果。')],
+               'Long-running and unresolved; it is as much a dispute about the purpose of accounting research as about evidence.',
+               '长期未决；与其说是关于证据的争论，不如说是关于会计研究目的的争论。'),
+      ],
+      theoretical=[
+        P('The three hypotheses are directional but not quantitative, so almost any observed choice can be attributed to one of them after the fact.',
+          '三个假说只有方向而无量级，因此几乎任何观察到的选择都能事后归入其中之一。'),
+        P('Political cost is the least specified: it is invoked to explain income-decreasing choices by large firms without an independent measure of the political exposure it posits.',
+          '政治成本的界定最弱：它被用来解释大企业的减利选择，却没有对其所设定的政治曝光度作独立测量。'),
+      ],
+      empirical=[
+        P('Firm size proxies for political cost and also for a dozen other things, so a size coefficient supports the hypothesis only under an assumption the design cannot test.',
+          '企业规模既代理政治成本，也代理其他十几种因素；因此规模系数只有在设计无法检验的假定下才支持该假说。'),
+        P('Accounting choices are bundled and interdependent, and studying one in isolation misses offsetting choices elsewhere in the statements.',
+          '会计选择是成组且相互依赖的；孤立研究其中一项，会遗漏报表其他部分的抵消性选择。'),
+      ],
+      temporal=[
+        P('The bonus and covenant hypotheses assume contracts written on reported accounting numbers. As compensation moved toward equity and covenants toward market-based or non-financial triggers, the specific incentives the theory identifies apply to a shrinking share of the arrangements that matter.',
+          '奖金与契约假说假定契约建立在报告会计数字之上。当薪酬转向股权、契约转向基于市值或非财务的触发条件时，理论所指认的具体激励，只适用于日益缩小的一部分安排。'),
+        P('It was formulated when accounting discretion was the main lever available. Where reporting is more standardized and enforcement stronger, discretion shifts to real activities — timing of spending, sales, and investment — which the original hypotheses do not cover.',
+          '它成形于会计裁量是主要杠杆的时期。当报告更标准化、执行更严格时，裁量转向真实活动——支出、销售与投资的时点选择——而原有假说并不涵盖这些。'),
+      ],
+      today=[
+        P('State which hypothesis is being tested and what independent measure identifies the incentive. Size alone does not identify political cost.',
+          '应说明检验的是哪一个假说、以什么独立指标识别该激励。仅凭规模无法识别政治成本。'),
+        P('Consider real activities alongside accrual choices, since the discretion the theory is about has partly moved there.',
+          '应在应计选择之外一并考虑真实活动，因为理论所关注的裁量权已部分转移至此。'),
+      ]),
+
+    # ------------------------------------------------ earnings management theory
+    D('earnings-management-theory',
+      era='Defined and organized as a field from the late 1980s; real-activities manipulation recognized as the growing channel from the 2000s.',
+      era_zh='1980 年代末被界定并组织为一个研究领域，2000 年代起真实活动操控被认识为日益增长的渠道。',
+      situation=[
+        P('Accounting standards leave discretion by necessity: estimating a bad-debt provision or a useful life requires judgement that cannot be reduced to a rule.',
+          '会计准则必然留有裁量空间：估计坏账准备或使用寿命需要无法化约为规则的判断。'),
+        P('The research question is whether that discretion is used to convey private information or to obscure it, and the answer determines whether discretion in standards is a feature or a defect.',
+          '研究问题是：这种裁量被用来传递私人信息，还是用来掩盖信息。答案决定了准则中的裁量究竟是特性还是缺陷。'),
+      ],
+      argument=[
+        P('Two channels exist. Accrual management uses reporting discretion within a period; real earnings management changes actual operating decisions — cutting discretionary spending, offering discounts, overproducing — to hit a number.',
+          '存在两条渠道：应计管理在期内运用报告裁量；真实盈余管理则改变实际经营决策——削减可自由支配支出、提供折扣、过度生产——以达成某个数字。'),
+        P('They have different costs. Accrual management reverses in later periods and is detectable by auditors; real management does not reverse but destroys value, which makes it the more consequential of the two.',
+          '二者代价不同：应计管理在后续期间会转回、且可被审计发现；真实管理不会转回，却毁损价值——因此它是后果更严重的一种。'),
+        P('Incentives cluster around thresholds: avoiding a loss, meeting last year, and meeting analyst forecasts, which is why the distribution of reported earnings shows discontinuities at exactly those points.',
+          '激励集中在几个阈值附近：避免亏损、达到去年水平、达到分析师预测——这正是报告盈余分布恰在这些点上出现断裂的原因。'),
+      ],
+      development=[
+        P('Detection models based on discretionary accruals were developed, refined, and repeatedly shown to have low power, which is the central methodological problem of the field.',
+          '基于可操控性应计的检测模型被开发、改进，又被反复证明功效很低——这是该领域核心的方法学问题。'),
+      ],
+      debates=[
+        Debate('Is earnings management informative or opportunistic?', '盈余管理是传递信息还是机会主义？',
+               [Pos('Signalling position',
+                    'Managers use discretion to convey private information about persistent performance that the mechanical rules cannot express.',
+                    '管理者运用裁量传递关于持续性业绩的私人信息，而机械规则无法表达这些信息。'),
+                Pos('Opportunism position',
+                    'Discretion clusters exactly where personal and contractual incentives are strongest, which is hard to reconcile with an informational motive.',
+                    '裁量恰恰集中在个人与契约激励最强之处，这与信息传递动机难以调和。')],
+               'Both occur and the same measure cannot distinguish them, which limits what any single study can conclude.',
+               '两者都存在，而同一指标无法区分二者——这限制了任何单项研究所能得出的结论。'),
+      ],
+      theoretical=[
+        P('The construct is defined as the abnormal part of a normal process, so it exists only relative to a model of what accruals should be, and different models produce different amounts of it.',
+          '该构念被定义为正常过程中的"异常部分"，因此它只相对于"应计应当是多少"的模型而存在；不同模型产生不同的量。'),
+        P('Discretion used well and discretion used badly are the same behaviour at the level of the measure, and the normative label is supplied by the researcher.',
+          '在指标层面，"用得好的裁量"与"用得坏的裁量"是同一种行为；规范性的标签是研究者附加的。'),
+      ],
+      empirical=[
+        P('Discretionary accrual models have low power and are misspecified in predictable ways, particularly for firms with extreme growth or performance, which are exactly the firms of interest.',
+          '可操控性应计模型功效低，且以可预见的方式设定错误——尤其对增长或业绩极端的企业，而这恰恰是研究者关心的企业。'),
+        P('Threshold discontinuities are strong evidence in aggregate but cannot identify management at the firm level, where most of the literature wants to make claims.',
+          '阈值处的分布断裂在总体层面是有力证据，却无法在企业层面识别盈余管理——而文献的多数主张恰恰想在企业层面作出。'),
+      ],
+      temporal=[
+        P('Accrual-based detection was developed when accrual discretion was the dominant channel. Tighter standards and stronger enforcement pushed activity toward real management, so a study that measures only accruals may find declining earnings management where the behaviour has merely moved.',
+          '基于应计的检测发展于应计裁量占主导的时期。更严格的准则与执行把行为推向真实管理；因此只测量应计的研究，可能在行为只是转移了的情况下得出"盈余管理下降"的结论。'),
+        P('Machine-readable filings and text analysis made new detection channels available, but they also mean detection models are now trained on data that reporting firms can also analyse, which is an arms-race dynamic the original literature did not face.',
+          '机器可读的申报文件与文本分析带来了新的检测渠道，但也意味着检测模型所用的数据，报告企业同样可以分析——这是原初文献未曾面对的军备竞赛动态。'),
+      ],
+      today=[
+        P('Measure both channels or say which one the design can see. A null result on accruals is not evidence that earnings were not managed.',
+          '应同时测量两条渠道，或说明设计只能看到哪一条。应计上的零结果，不构成"盈余未被管理"的证据。'),
+        P('Report the accrual model used and its known misspecification for the sample, since the choice materially changes the estimated magnitude.',
+          '应报告所用的应计模型及其在本样本上的已知设定问题，因为这一选择会实质改变估计量级。'),
+      ]),
+
+    # ----------------------------------------------------- accounting conservatism
+    D('accounting-conservatism',
+      era='Formalized as asymmetric timeliness in 1997; its decline under fair-value standards debated since the 2000s.',
+      era_zh='1997 年被形式化为"非对称及时性"，2000 年代起围绕其在公允价值准则下的衰减展开争论。',
+      situation=[
+        P('Conservatism was an old accounting convention — anticipate no profit, provide for all losses — with a long practical history and no theoretical account of why it would be efficient.',
+          '稳健性是一条古老的会计惯例——不预计利润、预提一切损失——有长期实践史，却没有关于它为何高效的理论解释。'),
+        P('The contribution was to define it in a way that could be measured and to explain it as an equilibrium response to contracting and litigation incentives rather than as accounting timidity.',
+          '其贡献在于以可测量的方式界定它，并把它解释为对契约与诉讼激励的均衡回应，而非会计上的怯懦。'),
+      ],
+      argument=[
+        P('Conditional conservatism is asymmetric timeliness: bad news is incorporated into earnings faster than good news, which is measurable as a difference in how earnings respond to negative and positive returns.',
+          '条件稳健性即非对称及时性：坏消息比好消息更快进入盈余，这可以通过"盈余对负收益与正收益的反应差异"来测量。'),
+        P('It is explained by demand from parties with asymmetric payoffs. Lenders care more about downside than upside, so debt contracting creates demand for early loss recognition; litigation and regulatory exposure work in the same direction.',
+          '它由收益不对称各方的需求来解释：贷款人更关心下行而非上行，因此债务契约创造了对损失早确认的需求；诉讼与监管风险的作用方向相同。'),
+        P('Unconditional conservatism — persistently understating assets regardless of news — is a different thing and does not serve the same contracting function.',
+          '无条件稳健性——无论消息如何都持续低估资产——是另一回事，并不服务于同样的契约功能。'),
+      ],
+      development=[
+        P('Fair-value measurement moved standards toward symmetric recognition, which set up a continuing tension between standard setters and the contracting demand the theory identifies.',
+          '公允价值计量把准则推向对称确认，这在准则制定者与理论所指认的契约需求之间形成了持续张力。'),
+      ],
+      debates=[
+        Debate('Is conservatism desirable?', '稳健性是可取的吗？',
+               [Pos('Contracting position',
+                    'It serves a real demand from lenders and constrains managerial optimism, and removing it makes debt contracting harder.',
+                    '它服务于贷款人的真实需求、约束管理者的乐观倾向；取消它会使债务缔约更困难。'),
+                Pos('Neutrality position',
+                    'Financial reporting should be neutral, and systematic bias in either direction degrades the information content of the statements.',
+                    '财务报告应保持中立；任一方向的系统性偏差都会降低报表的信息含量。')],
+               'Standard setters have moved toward neutrality while the contracting evidence continues to show demand for conservatism, and the tension is unresolved.',
+               '准则制定者已转向中立，而契约方面的证据仍显示对稳健性的需求；这一张力尚未化解。'),
+      ],
+      theoretical=[
+        P('Conditional and unconditional conservatism have different causes and consequences but are frequently discussed together under one label.',
+          '条件稳健性与无条件稳健性成因与后果不同，却常被以同一个标签一并讨论。'),
+        P('The concept is defined relative to a benchmark of neutral recognition that standards themselves do not fully specify.',
+          '该概念是相对于"中立确认"这一基准定义的，而准则本身并未完全界定该基准。'),
+      ],
+      empirical=[
+        P('The standard measure regresses earnings on returns, which presumes market efficiency; any mispricing contaminates the conservatism estimate.',
+          '标准指标把盈余对收益率回归，这以市场有效为前提；任何错误定价都会污染稳健性估计。'),
+        P('Alternative measures of conservatism correlate weakly with each other, so conclusions depend substantially on which one a study uses.',
+          '不同的稳健性指标彼此相关很弱，因此结论在很大程度上取决于研究采用了哪一个。'),
+      ],
+      temporal=[
+        P('The asymmetric timeliness measure requires a market return to regress against, so it applies only to listed firms and cannot address private firms, where debt contracting demand is often strongest.',
+          '非对称及时性指标需要一个市场收益率作为回归对象，因此只适用于上市公司，无法处理债务缔约需求往往最强的非上市企业。'),
+        P('Fair-value and expected-loss standards changed the recognition timing the measure was designed to capture, so estimates from before and after those transitions are not comparable without adjustment.',
+          '公允价值与预期损失准则改变了该指标所要捕捉的确认时点，因此转换前后的估计未经调整不可比较。'),
+      ],
+      today=[
+        P('Report which measure is used and check the result against a second one. Divergence between measures is common and should be discussed rather than hidden.',
+          '应报告所用指标，并用另一个指标验证结果。指标之间的分歧很常见，应当讨论而非隐藏。'),
+        P('Separate conditional from unconditional conservatism explicitly; they answer different questions and only the first has the contracting explanation.',
+          '应明确区分条件与无条件稳健性；二者回答不同问题，且只有前者具备契约解释。'),
+      ]),
+
+    # ---------------------------------------------------------- eclectic paradigm
+    D('eclectic-paradigm',
+      era='Developed from 1977 and formalized in 1988; the organizing framework for international production for three decades.',
+      era_zh='1977 年起发展、1988 年形式化，三十年间是国际生产研究的组织性框架。',
+      situation=[
+        P('Explanations of foreign direct investment were fragmented: some emphasized firm advantages, some location factors, some the choice to internalize rather than license, and each explained part of the phenomenon.',
+          '对外直接投资的解释此前是碎片化的：有的强调企业优势，有的强调区位因素，有的强调"内部化而非许可"的选择，各自只解释了现象的一部分。'),
+        P('The paradigm was explicitly a synthesis rather than a new theory: it argued that all three conditions must hold together for foreign production to occur.',
+          '该范式明确是一种综合而非新理论：它主张只有三个条件同时成立，对外生产才会发生。'),
+      ],
+      argument=[
+        P('Ownership advantages explain why a firm can compete abroad despite the liability of foreignness. Location advantages explain why production happens there rather than at home. Internalization advantages explain why the firm does it itself rather than licensing.',
+          '所有权优势解释企业为何能在外国的不利条件下仍具竞争力；区位优势解释生产为何发生在那里而非本国；内部化优势解释企业为何自己做而不是许可他人。'),
+        P('The three are necessary jointly. With ownership but not internalization advantages, licensing dominates; with ownership and internalization but not location, the firm exports instead.',
+          '三者共同构成必要条件：有所有权优势而无内部化优势，则许可占优；有所有权与内部化优势而无区位优势，则企业选择出口。'),
+        P('The framework therefore predicts entry mode, not just whether to go abroad, which is what made it usable for both explanation and practice.',
+          '因此该框架预测的是进入模式，而不只是"是否走出去"——这正是它兼具解释力与实用性的原因。'),
+      ],
+      development=[
+        P('Institutions were added as a fourth consideration, and the framework was extended from efficiency-seeking investment to asset-seeking investment where the firm goes abroad to acquire advantages rather than to exploit them.',
+          '制度被作为第四项考量加入；框架也从"效率寻求型"投资扩展到"资产寻求型"投资——企业出海是为获取优势而非利用优势。'),
+      ],
+      debates=[
+        Debate('Is it a paradigm or a checklist?', '它是范式还是清单？',
+               [Pos('Framework position',
+                    'Synthesis is the contribution: it organizes partial explanations into a structure that says how they combine.',
+                    '综合本身就是贡献：它把局部解释组织为一个说明"如何组合"的结构。'),
+                Pos('Theory critique',
+                    'It identifies conditions without a mechanism generating them, so it classifies cases rather than predicting them and is difficult to falsify.',
+                    '它指出了条件却没有产生这些条件的机制，因而是在分类而非预测，难以证伪。')],
+               'Its author accepted the paradigm label deliberately; the critique stands and the framework is best used as an organizing device.',
+               '其作者刻意接受了"范式"这一标签；该批评成立，框架最好作为组织性工具使用。'),
+      ],
+      theoretical=[
+        P('The three advantages are defined partly in terms of each other, and ownership advantage in particular is inferred from the fact that the firm succeeded abroad.',
+          '三种优势部分是相互定义的；其中所有权优势尤其常常是从"企业在海外成功了"这一事实反推出来的。'),
+        P('It explains a firm decision at a point in time and says little about how advantages are built or lost.',
+          '它解释的是企业在某一时点的决策，对优势如何建立或丧失几乎没有说明。'),
+      ],
+      empirical=[
+        P('Ownership advantages are proxied by R&D and advertising intensity, which capture only the intangible assets these variables happen to measure.',
+          '所有权优势常以研发与广告强度代理，而这些变量只捕捉到恰好被它们测量的那部分无形资产。'),
+        P('Entry-mode studies observe chosen modes and rarely the alternatives considered, so the comparison the framework specifies is not the comparison being estimated.',
+          '进入模式研究观察到的是已选模式，很少观察到被考虑过的替代方案；因此框架所设定的比较，并非实际被估计的比较。'),
+      ],
+      temporal=[
+        P('The framework assumes production is located somewhere and that the firm chooses between exporting, licensing, and owning foreign assets. Digital services delivered from anywhere weaken the location logic, and platform arrangements are neither licensing nor ownership in the sense the framework distinguishes.',
+          '框架假定生产有明确所在地，企业在出口、许可与拥有海外资产之间选择。可从任何地方交付的数字服务削弱了区位逻辑，而平台安排在框架所区分的意义上既非许可也非所有。'),
+        P('It was formulated when internalization was costly and licensing risked losing control of technology. Where capability is delivered as a service with control retained through the interface, the internalization advantage the framework identifies applies less strongly.',
+          '它成形于内部化成本高、许可有失去技术控制之虞的时期。当能力以服务形式交付、且通过接口保留控制时，框架所指认的内部化优势的适用性随之下降。'),
+      ],
+      today=[
+        P('Use it to structure an entry-mode question and be explicit that the framework classifies rather than predicts.',
+          '可用它来组织进入模式问题，但应明确该框架是分类而非预测。'),
+        P('For digital and platform-mediated internationalization, state which of the three advantages still applies rather than assuming all three do.',
+          '研究数字化与平台中介的国际化时，应说明三种优势中哪些仍然适用，而不是假定三者皆成立。'),
+      ]),
+
+    # -------------------------------------------- uppsala internationalization model
+    D('uppsala-internationalization-model',
+      era='Published 1977; revised by its authors in 2009 to centre networks rather than psychic distance.',
+      era_zh='1977 年发表，2009 年由原作者修订，把网络而非心理距离置于核心。',
+      situation=[
+        P('Economic accounts of foreign investment treated expansion as a rational calculation given costs and returns, which implied firms would enter the most attractive markets first.',
+          '关于对外投资的经济学解释把扩张视为给定成本与回报下的理性计算，这意味着企业会先进入最有吸引力的市场。'),
+        P('Observation of Swedish firms showed something else: they expanded gradually, starting with nearby and familiar markets and increasing commitment as they learned, regardless of where the largest opportunity was.',
+          '对瑞典企业的观察却显示另一幅图景：它们渐进扩张，先进入邻近而熟悉的市场，随着学习增加投入——与最大机会在哪里无关。'),
+      ],
+      argument=[
+        P('The mechanism is experiential learning. Knowledge about a foreign market cannot be acquired except by operating in it, so commitment and knowledge increase together in a cycle.',
+          '其机制是经验性学习。关于外国市场的知识只能通过在该市场经营来获得，因此投入与知识在一个循环中共同增长。'),
+        P('Psychic distance — differences in language, culture, education, and business practice — determines the order of entry, because it determines how costly learning will be.',
+          '心理距离——语言、文化、教育与商业惯例上的差异——决定进入顺序，因为它决定学习成本的高低。'),
+        P('The establishment chain follows: no regular exports, then exports via agents, then a sales subsidiary, then production, each step raising commitment as uncertainty falls.',
+          '由此形成"设立链条"：无固定出口、经代理出口、设销售子公司、再到本地生产，每一步都在不确定性下降时提高投入。'),
+      ],
+      development=[
+        P('The 2009 revision replaced market uncertainty with outsidership as the central liability: what matters is not distance to a market but position in the relevant business network.',
+          '2009 年的修订以"局外性"取代市场不确定性作为核心不利条件：重要的不是与市场的距离，而是在相关商业网络中的位置。'),
+      ],
+      debates=[
+        Debate('Do born-global firms refute the model?', '天生全球化企业能证伪该模型吗？',
+               [Pos('Refutation position',
+                    'Firms that enter distant markets immediately and at scale contradict the incremental mechanism the model describes.',
+                    '一开始就大规模进入遥远市场的企业，与模型所描述的渐进机制相矛盾。'),
+                Pos('Scope position',
+                    'The mechanism is about learning, and founders who already possess international experience or network position have completed the learning before founding.',
+                    '该机制关乎学习；已具备国际经验或网络位置的创始人，在创业之前就完成了学习。')],
+               'Partly resolved by the network revision, which allows prior position to substitute for gradual accumulation.',
+               '网络修订部分化解了争论：既有网络位置可以替代渐进积累。'),
+      ],
+      theoretical=[
+        P('Psychic distance is measured between countries but experienced by individuals, and managers with relevant background do not face the distance the country-level index assigns.',
+          '心理距离在国家之间测量，却由个体体验；具备相关背景的管理者并不面对国家层面指数所赋予的那种距离。'),
+        P('The model describes a process and predicts sequence, which makes it hard to disconfirm with cross-sectional data on where firms ended up.',
+          '模型描述过程并预测顺序，因而难以用"企业最终落脚何处"的横截面数据加以证伪。'),
+      ],
+      empirical=[
+        P('Psychic distance indices are built from country characteristics and are symmetric, though the difficulty of entering is demonstrably asymmetric between country pairs.',
+          '心理距离指数由国家特征构建且是对称的，而国家对之间进入难度的不对称是有据可查的。'),
+        P('The original evidence is from a small number of firms in one country in one period, and generalization has been assumed more often than tested.',
+          '原始证据来自一个国家、一个时期的少数企业；推广更多是被假定而非被检验的。'),
+      ],
+      temporal=[
+        P('The establishment chain assumes market knowledge is expensive and acquired only through presence. Where market data, local partners, and distribution can be accessed remotely through platforms, the learning constraint that generates the gradual sequence is much weaker.',
+          '设立链条假定市场知识昂贵且只能通过在地存在获得。当市场数据、本地伙伴与分销可以经由平台远程获取时，产生渐进顺序的学习约束大为削弱。'),
+        P('The model was built for firms selling physical goods requiring local operations. Digital services can be delivered to a distant market without any establishment step, so the sequence it predicts has no occasion to occur.',
+          '模型针对的是销售实体商品、需要本地运营的企业。数字服务无需任何设立步骤即可交付至遥远市场，因此它所预测的顺序没有发生的机会。'),
+      ],
+      today=[
+        P('Use the 2009 network formulation rather than psychic distance for contemporary questions; outsidership travels better than country-level distance.',
+          '研究当代问题应采用 2009 年的网络表述而非心理距离；"局外性"比国家层面的距离更具迁移性。'),
+        P('If using a distance index, say what it measures and why it should bind for the firms in the sample, since managerial background frequently dissolves it.',
+          '若使用距离指数，应说明它测量什么、以及为何它对样本中的企业构成约束——因为管理者背景常常消解这种约束。'),
+      ]),
+
+    # ------------------------------------------------------ institution-based view
+    D('institution-based-view',
+      era='Articulated in the 2000s and consolidated in 2008 as a third leg alongside industry and resource-based explanations.',
+      era_zh='2000 年代提出，2008 年集成，被确立为与产业观、资源观并列的"第三条腿"。',
+      situation=[
+        P('Strategy explanations rested on industry structure and firm resources, both developed in mature economies with stable institutions that could be treated as a constant background.',
+          '战略解释建立在产业结构与企业资源之上，二者都发展于制度稳定、可被当作恒定背景的成熟经济体。'),
+        P('Research in emerging economies found those explanations incomplete: the same industry position and the same resources produced very different outcomes depending on the institutional environment.',
+          '新兴经济体的研究发现这些解释并不完整：同样的产业位置与资源，在不同制度环境下产生截然不同的结果。'),
+      ],
+      argument=[
+        P('Institutions are not background but a direct determinant of strategy. Formal rules and informal norms define what strategies are available and what they cost.',
+          '制度不是背景，而是战略的直接决定因素。正式规则与非正式规范界定了哪些战略可行、以及它们的代价。'),
+        P('The core proposition is interaction: strategy is the outcome of the dynamic interplay between institutions and organizations, so neither the institution nor the firm alone explains the choice.',
+          '核心命题是互动：战略是制度与组织动态相互作用的结果，因此单独的制度或单独的企业都不能解释该选择。'),
+        P('Where formal institutions are weak, informal norms and relationships substitute rather than disappear, which is why relationship-based strategies dominate in some settings.',
+          '当正式制度薄弱时，非正式规范与关系会替代而非消失——这正是关系型战略在某些情境中占主导的原因。'),
+      ],
+      development=[
+        P('It became the standard frame for emerging-economy strategy research and for questions about institutional distance in entry-mode and alliance choice.',
+          '它成为新兴经济体战略研究的标准框架，也用于进入模式与联盟选择中的制度距离问题。'),
+      ],
+      debates=[
+        Debate('Is it a distinct view or a contingency on the others?', '它是独立视角还是对其他视角的权变补充？',
+               [Pos('Third-leg position',
+                    'Institutions determine which resources are valuable and which industry positions are attainable, so they are prior rather than parallel.',
+                    '制度决定哪些资源有价值、哪些产业位置可达，因此它是前置的而非并列的。'),
+                Pos('Contingency critique',
+                    'It specifies conditions under which the other views apply, which is a moderator rather than an independent explanation.',
+                    '它规定了其他视角适用的条件，这是调节变量而非独立解释。')],
+               'Open, and the answer matters for whether institutional variables belong in the model as main effects or interactions.',
+               '未决，且答案决定了制度变量应作为主效应还是交互项进入模型。'),
+      ],
+      theoretical=[
+        P('Institutions are defined broadly enough to include regulation, culture, norms, and enforcement quality, which makes attributing an effect to institutions rather than to one of its components difficult.',
+          '制度的界定宽泛到涵盖监管、文化、规范与执行质量，因而难以把某个效应归于"制度"而非其中某一成分。'),
+        P('Informal institutions are theorized as substituting for formal ones, but the conditions under which substitution rather than reinforcement occurs are not specified.',
+          '非正式制度被设定为替代正式制度，但"何时是替代而非强化"的条件并未被界定。'),
+      ],
+      empirical=[
+        P('Institutional quality indices are highly correlated with income and with each other, so separating an institutional effect from a development effect requires variation that most samples lack.',
+          '制度质量指数与收入水平以及彼此高度相关，因此要把制度效应与发展水平效应分开，需要多数样本并不具备的变异。'),
+        P('Institutional distance is usually computed as a symmetric difference between country scores, though the cost of moving between two institutional environments is directional.',
+          '制度距离通常被算作两国得分的对称差异，然而在两种制度环境之间移动的成本是有方向性的。'),
+      ],
+      temporal=[
+        P('The framework was built when institutional variation was mainly cross-national and relatively stable within a country. Rapid regulatory change in data, competition, and platform governance makes institutions a within-country time-varying condition, which country-level indices cannot represent.',
+          '框架建立时，制度差异主要体现在国家之间且在一国之内相对稳定。数据、竞争与平台治理领域的快速监管变化，使制度成为一国之内随时间变化的条件，而国家层面指数无法表达这一点。'),
+        P('Platform rules now function as institutions for the firms operating on them, setting what is permitted and what it costs, and this private rule-making sits outside the formal-informal distinction the framework uses.',
+          '平台规则如今对在其上经营的企业发挥着制度功能，规定什么被允许、代价几何；这种私人规则制定落在框架所用的"正式—非正式"二分之外。'),
+      ],
+      today=[
+        P('Specify which institutional component the argument uses and measure that rather than a composite index.',
+          '应说明论证使用哪一个制度成分，并测量该成分而非合成指数。'),
+        P('For platform and digital settings, treat private rule-making as an institution and say so; the framework accommodates it but its standard measures do not.',
+          '在平台与数字情境中，应把私人规则制定视为制度并明确说明；框架能够容纳它，但其标准指标不能。'),
+      ]),
+
+    # -------------------------------------------------------- effectuation theory
+    D('effectuation-theory',
+      era='Published 2001 from think-aloud studies of expert entrepreneurs; widely adopted and methodologically contested since.',
+      era_zh='2001 年基于对资深创业者的出声思考研究提出，此后被广泛采纳，方法上持续受质疑。',
+      situation=[
+        P('Entrepreneurship was taught and studied through the planning model imported from strategy: identify an opportunity, analyse the market, write a plan, acquire resources, execute.',
+          '创业教学与研究此前沿用从战略引入的规划模型：识别机会、分析市场、撰写计划、获取资源、执行。'),
+        P('Studies of what expert entrepreneurs actually do under genuine uncertainty found they did not work that way, and the gap between the taught process and the observed one needed an account.',
+          '对资深创业者在真实不确定下实际做法的研究发现他们并非如此行事；被教授的流程与被观察到的流程之间的落差，需要一个解释。'),
+      ],
+      argument=[
+        P('Causal reasoning starts from a goal and selects means to reach it. Effectual reasoning starts from available means — who I am, what I know, whom I know — and asks what can be done with them.',
+          '因果推理从目标出发选择手段；效果推理则从既有手段出发——我是谁、我知道什么、我认识谁——追问用它们能做成什么。'),
+        P('Four principles follow: affordable loss rather than expected return, partnerships rather than competitive analysis, leveraging contingency rather than avoiding it, and controlling an unpredictable future rather than predicting a controllable one.',
+          '由此得出四条原则：以可承受损失代替预期收益、以伙伴关系代替竞争分析、把偶然当作资源而非规避、以控制不可预测的未来代替预测可控的未来。'),
+        P('The scope condition is genuine uncertainty. Where the distribution of outcomes is knowable, causal reasoning is appropriate, and the theory does not claim otherwise.',
+          '其适用条件是真正的不确定性。当结果分布可知时，因果推理是恰当的，理论并不主张相反。'),
+      ],
+      development=[
+        P('Measurement instruments were developed to make effectuation testable at scale, which brought the concept into survey research and also introduced the validity problems that follow.',
+          '为使效果推理可在大样本上检验，学界开发了测量工具；这把该概念带入问卷研究，也随之带来了效度问题。'),
+      ],
+      debates=[
+        Debate('Is effectuation a distinct logic or a description of resource constraint?', '效果推理是独立逻辑还是资源约束的描述？',
+               [Pos('Distinct-logic position',
+                    'Expert entrepreneurs use it even when resources are available, which means it is a reasoning mode rather than a response to scarcity.',
+                    '资深创业者在资源充足时同样使用它，说明它是一种推理模式而非对稀缺的回应。'),
+                Pos('Constraint critique',
+                    'Starting from available means is what anyone does when they cannot afford to plan, so the observed pattern may be scarcity rather than expertise.',
+                    '无力规划时任何人都会从既有手段出发；因此观察到的模式可能是稀缺而非专长。')],
+               'Open. The original evidence comes from experts with resources, which supports the first reading but on a small sample.',
+               '未决。原始证据来自有资源的资深创业者，支持前一种解读，但样本很小。'),
+      ],
+      theoretical=[
+        P('Effectuation and causation are presented as alternative logics but are frequently used together, and the theory does not specify when a person switches.',
+          '效果推理与因果推理被呈现为替代性逻辑，实际却常被同时使用，而理论未说明何时发生切换。'),
+        P('Success is not part of the theory: it describes how experts reason, not that reasoning this way produces better outcomes, and the two are often conflated in application.',
+          '成功并不属于该理论：它描述资深者如何推理，而非"这样推理会带来更好结果"；应用中二者常被混淆。'),
+      ],
+      empirical=[
+        P('The founding evidence is a small think-aloud study of expert entrepreneurs, and much subsequent work substitutes self-report scales for the protocol method that generated the theory.',
+          '奠基证据是对资深创业者的小样本出声思考研究，而后续大量工作以自评量表替代了产生该理论的口语报告法。'),
+        P('Survivorship is severe: effectual reasoning is studied among founders whose ventures continued long enough to be sampled.',
+          '存活偏差严重：效果推理是在"企业存续到足以被抽样"的创始人中被研究的。'),
+      ],
+      temporal=[
+        P('Affordable loss assumes the entrepreneur can bound downside exposure. Where a venture depends on platform access or a model provider that can change terms, the loss is no longer bounded by the founder own commitment, which weakens the principle the theory relies on.',
+          '可承受损失假定创业者能够界定下行敞口。当创业依赖平台准入或可能变更条款的模型供应商时，损失不再由创始人自身投入所限定，从而削弱了理论所依赖的原则。'),
+        P('The means the theory starts from — who I know, what I know — were largely fixed at founding. Where capability can be rented and networks assembled quickly, the starting-means constraint that motivates effectual reasoning is looser than when the theory was written.',
+          '理论出发点上的"手段"——我认识谁、我知道什么——在创业之初基本是固定的。当能力可以租用、网络可以快速搭建时，促成效果推理的"手段约束"比该理论写作之时宽松得多。'),
+      ],
+      today=[
+        P('State the uncertainty condition. Applying effectuation where outcomes are predictable tests it outside the scope its author specified.',
+          '应说明不确定性条件。在结果可预测的情境中应用效果推理，是在其作者所界定的范围之外检验它。'),
+        P('Do not treat it as a success prescription. The theory describes expert reasoning; whether it outperforms planning is a separate empirical question.',
+          '不应把它当作成功处方。理论描述的是资深者的推理方式；它是否优于规划，是另一个经验问题。'),
+      ]),
+
+    # --------------------------------------------------- entrepreneurial orientation
+    D('entrepreneurial-orientation',
+      era='Formalized in 1989 and extended in 1996; among the most measured constructs in entrepreneurship research.',
+      era_zh='1989 年形式化、1996 年扩展，是创业研究中被测量最多的构念之一。',
+      situation=[
+        P('Entrepreneurship research needed a firm-level construct. Studying individual founders could not explain why established firms differ persistently in how entrepreneurially they behave.',
+          '创业研究需要一个企业层面的构念。研究个体创始人无法解释：为何成熟企业在"行为上有多创业"这一点上持续存在差异。'),
+        P('The proposal was that entrepreneurship is a strategic posture a firm can hold — a way of making decisions that shows up across many choices rather than in a single founding act.',
+          '该理论主张创业是企业可以持有的一种战略姿态——一种体现在众多决策中、而非某一次创立行为中的决策方式。'),
+      ],
+      argument=[
+        P('Three dimensions define the posture: innovativeness, a tendency to support new ideas and experimentation; proactiveness, acting ahead of competitors on anticipated demand; and risk taking, committing resources to uncertain ventures.',
+          '三个维度界定这一姿态：创新性，支持新想法与试验的倾向；先动性，在预期需求上先于竞争者行动；风险承担，把资源投入结果不确定的项目。'),
+        P('Two further dimensions — competitive aggressiveness and autonomy — were added later, with the argument that they vary independently and need not covary with the original three.',
+          '后续又加入两个维度——竞争进取性与自主性——理由是它们独立变化，不必与原有三项共变。'),
+        P('Whether the dimensions form a single posture or vary independently is the central specification question, and it determines whether they should be summed.',
+          '这些维度构成单一姿态还是各自独立变化，是核心的设定问题，也决定了它们是否应当加总。'),
+      ],
+      development=[
+        P('The construct spread widely because a short survey instrument made it easy to include, which increased volume of research faster than it increased understanding.',
+          '该构念传播广泛，因为简短量表使其易于纳入研究；这使研究数量的增长快于理解的增长。'),
+      ],
+      debates=[
+        Debate('Should the dimensions be aggregated?', '各维度应当加总吗？',
+               [Pos('Unidimensional position',
+                    'The dimensions covary and represent a single strategic posture, so a composite is the appropriate measure.',
+                    '各维度共变，代表单一战略姿态，因此合成分是恰当的测量。'),
+                Pos('Multidimensional position',
+                    'They have different antecedents and different performance relations, and summing them averages away effects that point in opposite directions.',
+                    '它们前因不同、与绩效的关系也不同；加总会把方向相反的效应平均掉。')],
+               'Evidence favours treating them separately, but composite measures remain the majority in published work.',
+               '证据支持分开处理，但已发表研究中仍以合成指标为主。'),
+      ],
+      theoretical=[
+        P('The construct is defined as a posture but measured as reported behaviour, so it is unclear whether it captures disposition or a record of past action.',
+          '该构念被定义为"姿态"，却以自报行为来测量；因此不清楚它捕捉的是倾向，还是过往行动的记录。'),
+        P('Risk taking is treated as part of an entrepreneurial posture rather than as a separate choice, which builds a possibly negative performance driver into a construct expected to raise performance.',
+          '风险承担被当作创业姿态的组成部分而非独立选择，这把一个可能为负的绩效驱动因素内建进了一个被预期提升绩效的构念。'),
+      ],
+      empirical=[
+        P('The construct and firm performance are typically reported by the same executive in one survey, and successful firms describe themselves as more entrepreneurial.',
+          '该构念与企业绩效通常由同一位高管在一份问卷中报告，而成功的企业会把自己描述得更具创业性。'),
+        P('Meta-analytic evidence finds a positive but modest relation with performance that varies substantially by measure and context, which is what a construct measured this way would produce whether or not the posture matters.',
+          '元分析发现它与绩效呈正相关但幅度不大，且随指标与情境大幅波动——无论该姿态是否真的重要，这样测量出来的构念都会给出这种结果。'),
+      ],
+      temporal=[
+        P('Proactiveness was defined as acting ahead of competitors on anticipated demand, which assumed demand signals were slow and firms differed in their willingness to move first. Where demand signals are visible to everyone in near real time, being first is a capability question rather than a posture.',
+          '先动性被定义为在预期需求上先于竞争者行动，其假定是需求信号缓慢、而企业在"敢不敢先动"上存在差异。当需求信号对所有人近乎实时可见时，抢先是能力问题而非姿态问题。'),
+        P('Experimentation costs fell sharply. Innovativeness measured as willingness to try new things discriminates less between firms when trying is cheap for everyone.',
+          '试验成本大幅下降。当"尝试"对所有人都很便宜时，以"愿意尝试新事物"来测量的创新性，对企业之间的区分力随之下降。'),
+      ],
+      today=[
+        P('Report the dimensions separately and justify any composite. A single EO score is the weakest available specification.',
+          '应分维度报告并为任何合成加以论证。单一 EO 分数是最弱的设定。'),
+        P('Obtain performance from a source other than the executive rating the posture, since the same-source problem is this literature main limitation.',
+          '绩效应取自评定该姿态的高管之外的来源，因为同源问题是这一文献的主要局限。'),
+      ]),
+
+    # ------------------------------------------------ opportunity recognition theory
+    D('opportunity-recognition-theory',
+      era='Organized around a discovery-versus-creation debate from 2000; the debate remains the defining question of the field.',
+      era_zh='2000 年起围绕"发现 vs 创造"之争组织起来，该争论至今仍是该领域的定义性问题。',
+      situation=[
+        P('Entrepreneurship research needed to say what an entrepreneur acts on. Calling it an opportunity was intuitive but left open whether opportunities exist independently of the entrepreneur or are brought into being by acting.',
+          '创业研究需要说明创业者究竟在对什么行动。称之为"机会"很直观，却没有回答：机会是独立于创业者而存在，还是通过行动被带入存在。'),
+        P('The answer determines the research design. If opportunities exist objectively, the question is who notices them; if they are created, the question is how action constitutes them.',
+          '答案决定研究设计。若机会客观存在，问题是谁注意到了它；若机会是被创造的，问题就是行动如何构成了它。'),
+      ],
+      argument=[
+        P('The discovery view holds that opportunities arise from exogenous shocks — technology, regulation, demography — and exist whether or not anyone sees them. Alertness and prior knowledge determine who does.',
+          '发现观认为机会源自外生冲击——技术、监管、人口——无论是否有人看见都客观存在；警觉性与既有知识决定谁看见了它。'),
+        P('The creation view holds that opportunities do not pre-exist. They are formed through action, and the entrepreneur and the opportunity co-evolve, so asking who noticed first is the wrong question.',
+          '创造观认为机会并非先在。它们经由行动形成，创业者与机会共同演化，因此"谁先注意到"是错误的问题。'),
+        P('Prior knowledge is the mechanism both views share: what a person already knows determines what they can recognize or what they can construct, which is why the corridor of experience matters either way.',
+          '既有知识是两种观点共享的机制：一个人已知什么，决定了他能识别什么或能建构什么——因此无论哪种观点，经验通道都很重要。'),
+      ],
+      development=[
+        P('Later work treated the two as applying under different conditions rather than as competing accounts, with discovery fitting settings where the shock is identifiable and creation fitting genuine novelty.',
+          '后续研究把二者视为适用于不同条件而非相互竞争的解释：发现观适合冲击可辨识的情境，创造观适合真正的新颖性。'),
+      ],
+      debates=[
+        Debate('Do opportunities exist independently of entrepreneurs?', '机会独立于创业者而存在吗？',
+               [Pos('Discovery position',
+                    'Shocks create objective possibilities that some people see and others do not, which is an empirically tractable claim.',
+                    '冲击创造出客观可能性，有人看见有人看不见——这是经验上可处理的主张。'),
+                Pos('Creation position',
+                    'What counts as an opportunity is only knowable after action, so treating it as pre-existing imports hindsight into the research design.',
+                    '什么算机会只有在行动之后才可知；把它当作先在，等于把后见之明引入研究设计。')],
+               'The defining debate of the field and not resolved. Studies should state which position they adopt because it determines what counts as data.',
+               '该领域的定义性争论，尚未解决。研究应说明采取哪一立场，因为它决定了什么算作数据。'),
+      ],
+      theoretical=[
+        P('Opportunity is defined partly by its outcome, so a venture that succeeded is said to have pursued an opportunity and one that failed to have misjudged, which is not falsifiable.',
+          '机会部分由其结果定义：成功的创业被说成抓住了机会，失败的被说成判断有误——这是不可证伪的。'),
+        P('The two views imply different ontologies and cannot be tested against each other with a design that presumes one of them.',
+          '两种观点意味着不同的本体论，无法用一个已预设其中之一的设计来相互检验。'),
+      ],
+      empirical=[
+        P('Nearly all evidence comes from ventures that were founded, so opportunities that were recognized and not pursued, or pursued and abandoned early, are systematically absent.',
+          '几乎全部证据来自已成立的企业；因此"被识别却未追求"或"追求后早期放弃"的机会被系统性地排除在外。'),
+        P('Recognition is reconstructed retrospectively by founders who know how the venture turned out, which tidies a messy process into a moment of insight.',
+          '识别过程由已知结局的创始人回溯重构，把一个混乱的过程整理成"灵光一现"的时刻。'),
+      ],
+      temporal=[
+        P('The discovery view assumes information asymmetry about the shock: some people know something others do not. Where signals about technology and demand are broadly visible and searchable, asymmetry of awareness is a weaker differentiator than asymmetry of capability to act.',
+          '发现观假定关于冲击存在信息不对称：有人知道别人不知道的事。当关于技术与需求的信号广泛可见、可检索时，"知晓的不对称"作为区分因素弱于"行动能力的不对称"。'),
+        P('Creation-view mechanisms assumed action was costly enough that committing to one path foreclosed others. Cheap experimentation lets a founder pursue several formulations at once, which changes the co-evolution the view describes.',
+          '创造观的机制假定行动代价高到"选择一条路即排除其他"。低成本试验使创始人可以同时推进多种设想，从而改变了该观点所描述的共同演化过程。'),
+      ],
+      today=[
+        P('Declare the position. A design that samples on founded ventures and asks founders to recall recognition has adopted the discovery view implicitly whatever it says.',
+          '应明确立场。以已成立企业为样本、请创始人回忆识别过程的设计，无论如何声称，实际已隐含采纳了发现观。'),
+        P('Sample opportunities rather than ventures where the question allows it. What was not pursued is the missing half of this literature.',
+          '在问题允许时应对"机会"而非"企业"抽样。未被追求的那一半，正是这一文献缺失的部分。'),
+      ]),
+])

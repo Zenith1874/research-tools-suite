@@ -23,30 +23,111 @@ from urllib.parse import urlparse
 
 from services.faculty_job_fit_service import PROFILE_PATH, load_profile, save_profile, score_job
 from services.faculty_jobs_normalizer import (
+    APPOINTMENT_TYPES,
     COUNTRY_OPTIONS, DISCIPLINES, REGION_GROUPS, canonical_key, classify_business_scope,
+    clean_text,
     classify_faculty_market_role,
-    country_code_for, country_display, hiring_cycle, hiring_cycle_reason,
+    country_code_for, country_display, country_from_text, hiring_cycle, hiring_cycle_reason,
     STATE_PROVINCE_ALIASES,
-    fingerprint_fields, infer_visa, is_mergeable_official_url,
+    classify_visa, fingerprint_fields, infer_appointment, infer_visa,
+    is_mergeable_official_url,
     normalize_name, normalize_source_job, normalize_url, parse_deadline, parse_location,
 )
+from services.faculty_jobs_field_policy import plan_field_updates
+from services.faculty_jobs_lifecycle import effective_status_sql, lifecycle_fields
+from services import faculty_jobs_requirements as requirements
+from services import faculty_jobs_actions as career_actions
+from services.faculty_jobs_career_views import (
+    CAREER_VIEWS, PROXY_RULE, career_view_sql, ensure_career_schema, link_institution,
+)
+from services.faculty_jobs_scope import (
+    SCOPES, active_filter_definition, active_sql, catalogue_sql, scope_counts,
+)
+from services import faculty_jobs_market_cycle as market_cycle
+from services import faculty_jobs_snapshots
+from services import faculty_jobs_search
+from services import link_health
+from services import phd_pipeline
+from services import raw_archive
+from services.faculty_jobs_write_guard import (
+    FacultyJobsWriteGuardRequired, write_guard_active,
+)
+from services.faculty_jobs_query import (
+    DEFAULT_MARKET_FILTER_DEFINITION, DEFAULT_MARKET_SCOPES, DEFAULT_MARKET_STATUSES,
+    default_market_where,
+)
+from services.faculty_jobs_rank_mapper import map_rank
 from services.faculty_jobs_school_service import (
     add_evidence, compare_schools, list_schools, refresh_school_classification,
     list_institution_aliases, save_override, save_institution_alias, school_detail,
 )
-from services.faculty_jobs_sources import AdapterError, SourceJob, adapter_catalog
+from services.faculty_jobs_sources import (AdapterError, SourceJob, adapter_catalog,
+                                           reset_crawl_budgets)
 from services.faculty_jobs_sources.insidehighered import (
     IHE_SCHOOL_EVIDENCE_RULE_VERSION, InsideHigherEdAdapter,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FACULTY_DB_PATH = ROOT / "data" / "faculty_jobs.db"
+# Production keeps the repository-relative default.  An explicit environment
+# override is useful for read-only browser acceptance and isolated migrations;
+# it is never enabled implicitly by the service itself.
+FACULTY_DB_PATH = Path(os.environ.get(
+    "FACULTY_JOBS_DB_PATH", str(ROOT / "data" / "faculty_jobs.db")
+))
 FACULTY_CACHE_DIR = ROOT / "data" / "faculty_jobs_cache"
+
+# Listing pages read per source per run. Six of the twelve enabled boards
+# genuinely paginate, so a budget of 1 stopped them one page in and made the
+# market count a floor rather than a read of the board. Three is the smallest
+# budget that gets past that for every paginating source while staying inside
+# the per-origin crawl-delay spacing.
+#
+# The server and the source-coverage note must agree on this number: a note
+# saying "further pages were left unread" is only true relative to the budget
+# runs actually ran under, so both read it here rather than each parsing the
+# environment with its own default.
+DEFAULT_MAX_PAGES_PER_SOURCE = 3
+FACULTY_JOBS_SCHEMA_VERSION = 87
+
+# Stable source-record identities reviewed against the preserved AACSB
+# official-site captures.  The database decision ledger, not a derived jobs.id,
+# is authoritative.  jobs.id is local and can be reused in a fresh database;
+# source + source_job_id is the durable grain of the observation.
+_AACSB_REVIEWED_FALSE_POSITIVES = (
+    ("92253496ea68c11694a496dbee0c6384", "Dean of AAGBS", "non_vacancy_page"),
+    ("5373ed5deebfc333307cef6c5f9065fb", "About the Faculty of Business", "non_vacancy_page"),
+    ("5fffa2b863d52a239263d6dc0663b1aa", "Student life in the Faculty of Business", "non_vacancy_page"),
+    ("bc3bfa71ebacbdf84eae69deb19f19d0", "Contact the Faculty of Business", "non_vacancy_page"),
+    ("1dcfe51b587d7d28253167fcb9aba829", "Faculty of Business", "non_vacancy_page"),
+    ("1f6f4e3bc30a161d4eedc602ab55859f", "Auburn faculty news", "non_vacancy_page"),
+    ("0030b04922dc1873b5bacc35b9743839", "Bellarmine dean MBA journey", "non_vacancy_page"),
+    ("33e42322cb01a9cd046b3239c8e5d11d", "Bilkent dean profile", "non_vacancy_page"),
+    ("eeaab44d05b2ebd6011d78cd1cf860b5", "Bilkent executive-education profile", "non_vacancy_page"),
+    ("8e903b0a16052e5df9d80e216584ffdc", "Faculty & Staff", "generic_collection_page"),
+    ("8ca4d9440f94c6ca7408ba74751fe75c", "C. Dean Metropoulos institute", "non_vacancy_page"),
+    ("ce8282f4d518e482e5cc457160396d11", "Assistant Professor of English", "non_business_discipline"),
+    ("5b733b8dbd1bb1d484fb2aa383bc75da", "Occupational Therapy", "non_business_discipline"),
+    ("e9fbf2ccc7dd8694416d445cde434cb7", "Faculty and research", "generic_collection_page"),
+    ("99f0a2aeb9ca907b1215b4f465fafbd0", "faculty vacancies.", "generic_collection_page"),
+    ("cf0059aa2620128f2374f6f454c9055f", "Faculty Openings", "generic_collection_page"),
+)
+
+
+def max_pages_per_source():
+    """The configured per-source listing-page budget, clamped to at least one."""
+    try:
+        configured = int(os.environ.get("FACULTY_JOBS_MAX_PAGES_PER_SOURCE",
+                                        str(DEFAULT_MAX_PAGES_PER_SOURCE)))
+    except ValueError:
+        return DEFAULT_MAX_PAGES_PER_SOURCE
+    return max(1, configured)
+
+
 LOG = logging.getLogger(__name__)
 _FACULTY_UPDATE_LOCK = threading.Lock()
 
-ACTIVE_STATUSES = ("open", "likely_open", "closing_soon")
+ACTIVE_STATUSES = DEFAULT_MARKET_STATUSES
 APPLICATION_STATES = (
     "Saved", "Interested", "Preparing", "Applied", "Screening Interview",
     "Campus Interview", "Offer", "Rejected", "Withdrawn", "Closed",
@@ -192,6 +273,10 @@ def _ensure_aacsb_tables(conn):
         scan_rule_version TEXT,
         response_status INTEGER,
         reason TEXT,
+        seen_source_job_ids TEXT NOT NULL DEFAULT '[]',
+        reconciliation_complete INTEGER NOT NULL DEFAULT 0,
+        reconciliation_reason TEXT,
+        scan_run_id INTEGER,
         FOREIGN KEY(directory_school_id) REFERENCES aacsb_directory_schools(id)
     );
     CREATE TABLE IF NOT EXISTS aacsb_scan_runs (
@@ -212,16 +297,42 @@ def _ensure_aacsb_tables(conn):
         directory_results_observed INTEGER,
         non_accredited_results_excluded INTEGER,
         directory_observation_complete INTEGER NOT NULL DEFAULT 0,
+        directory_pagination_natural_end INTEGER NOT NULL DEFAULT 0,
+        directory_metadata_json TEXT NOT NULL DEFAULT '{}',
         error_count INTEGER NOT NULL DEFAULT 0,
         max_pages INTEGER,
         max_schools INTEGER,
         scan_websites INTEGER NOT NULL DEFAULT 0,
         error_summary TEXT
     );
+    CREATE TABLE IF NOT EXISTS aacsb_job_source_partitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        directory_school_id INTEGER NOT NULL,
+        source_id INTEGER NOT NULL,
+        source_job_id TEXT NOT NULL,
+        job_id INTEGER NOT NULL,
+        scan_run_id INTEGER,
+        source_url TEXT NOT NULL,
+        official_url TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        consecutive_missing_runs INTEGER NOT NULL DEFAULT 0,
+        last_scan_status TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(directory_school_id, source_id, source_job_id),
+        FOREIGN KEY(directory_school_id) REFERENCES aacsb_directory_schools(id),
+        FOREIGN KEY(source_id) REFERENCES sources(id),
+        FOREIGN KEY(job_id) REFERENCES jobs(id),
+        FOREIGN KEY(scan_run_id) REFERENCES aacsb_scan_runs(id)
+    );
     CREATE INDEX IF NOT EXISTS idx_aacsb_directory_country ON aacsb_directory_schools(country_code, active);
     CREATE INDEX IF NOT EXISTS idx_aacsb_directory_jobs ON aacsb_directory_schools(job_scan_status, active);
     CREATE INDEX IF NOT EXISTS idx_aacsb_directory_school ON aacsb_directory_schools(linked_business_school_id);
     CREATE INDEX IF NOT EXISTS idx_aacsb_scan_history_school ON aacsb_scan_history(directory_school_id, checked_at);
+    CREATE INDEX IF NOT EXISTS idx_aacsb_job_partitions_school ON aacsb_job_source_partitions(directory_school_id, active);
+    CREATE INDEX IF NOT EXISTS idx_aacsb_job_partitions_job ON aacsb_job_source_partitions(job_id, active);
     """)
     _ensure_column(conn, "aacsb_directory_schools", "candidates_seen", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "aacsb_directory_schools", "candidates_rejected", "INTEGER NOT NULL DEFAULT 0")
@@ -229,6 +340,10 @@ def _ensure_aacsb_tables(conn):
     _ensure_column(conn, "aacsb_scan_history", "candidates_seen", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "aacsb_scan_history", "candidates_rejected", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "aacsb_scan_history", "scan_rule_version", "TEXT")
+    _ensure_column(conn, "aacsb_scan_history", "seen_source_job_ids", "TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "aacsb_scan_history", "reconciliation_complete", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "aacsb_scan_history", "reconciliation_reason", "TEXT")
+    _ensure_column(conn, "aacsb_scan_history", "scan_run_id", "INTEGER")
     _ensure_column(conn, "aacsb_scan_runs", "candidates_seen", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "aacsb_scan_runs", "candidates_rejected", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "aacsb_scan_runs", "scan_rule_version", "TEXT")
@@ -236,6 +351,8 @@ def _ensure_aacsb_tables(conn):
     _ensure_column(conn, "aacsb_scan_runs", "directory_results_observed", "INTEGER")
     _ensure_column(conn, "aacsb_scan_runs", "non_accredited_results_excluded", "INTEGER")
     _ensure_column(conn, "aacsb_scan_runs", "directory_observation_complete", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "aacsb_scan_runs", "directory_pagination_natural_end", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "aacsb_scan_runs", "directory_metadata_json", "TEXT NOT NULL DEFAULT '{}'")
     # This source is deliberately opt-in: the regular daily job-board refresh
     # must not launch a thousand-school website reconnaissance run.
     timestamp = now_utc()
@@ -255,6 +372,46 @@ def _ensure_aacsb_tables(conn):
     ))
     _ensure_column(conn, "aacsb_directory_schools", "consecutive_missing_runs",
                    "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "ingestion_runs", "reported_total", "INTEGER")
+    _ensure_column(conn, "ingestion_runs", "coverage_complete", "INTEGER")
+    # pages_fetched counts every request an adapter made, detail-page
+    # enrichment included, so it overstates pagination reach. Historical rows
+    # stay NULL rather than being back-filled with a guess.
+    _ensure_column(conn, "ingestion_runs", "listing_pages", "INTEGER")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_detail_fetches (
+            source_id INTEGER NOT NULL,
+            source_job_id TEXT NOT NULL,
+            job_id INTEGER,
+            attempted_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            http_status INTEGER,
+            fields_found TEXT,
+            reason TEXT,
+            PRIMARY KEY (source_id, source_job_id),
+            FOREIGN KEY (source_id) REFERENCES sources(id),
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_job_detail_fetches_status "
+                 "ON job_detail_fetches(source_id,status)")
+    # How the appointment is worked (adjunct/visiting/postdoc/full_time).
+    # track_type does not answer this: adjunct advertisements rarely contain
+    # the word "non-tenure", so they were indistinguishable from continuing
+    # appointments in every market view.
+    _ensure_column(conn, "jobs", "appointment_type", "TEXT")
+    # A detail attempt records what the page carried (fields_observed) apart
+    # from what we wrote (fields_found): a page holding a value we already had
+    # is not a page that carried nothing. Unfinished attempts back off instead
+    # of being retried tightly on every run.
+    _ensure_column(conn, "job_detail_fetches", "fields_observed", "TEXT")
+    _ensure_column(conn, "job_detail_fetches", "attempt_count", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "job_detail_fetches", "last_attempt_at", "TEXT")
+    _ensure_column(conn, "job_detail_fetches", "next_retry_at", "TEXT")
+    # fields_found was carrying two meanings. fields_updated is what we wrote;
+    # fields_observed is what the page carried. A page holding a value we
+    # already had updates nothing and is still a page we read.
+    _ensure_column(conn, "job_detail_fetches", "fields_updated", "TEXT")
 
 def ensure_faculty_jobs_tables(db_path=None):
     """Create/migrate the domain database idempotently and quickly."""
@@ -311,9 +468,11 @@ def ensure_faculty_jobs_tables(db_path=None):
             carnegie_class TEXT,
             u15_member INTEGER,
             is_current INTEGER NOT NULL DEFAULT 1,
+            merged_into_id INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            UNIQUE(normalized_name, country_code)
+            UNIQUE(normalized_name, country_code),
+            FOREIGN KEY(merged_into_id) REFERENCES institutions(id)
         );
         CREATE TABLE IF NOT EXISTS business_schools (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -336,10 +495,13 @@ def ensure_faculty_jobs_tables(db_path=None):
             operations_strength TEXT,
             last_verified_at TEXT,
             is_current INTEGER NOT NULL DEFAULT 1,
+            aliases_json TEXT NOT NULL DEFAULT '[]',
+            merged_into_id INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             UNIQUE(institution_id, normalized_name),
-            FOREIGN KEY(institution_id) REFERENCES institutions(id)
+            FOREIGN KEY(institution_id) REFERENCES institutions(id),
+            FOREIGN KEY(merged_into_id) REFERENCES business_schools(id)
         );
         CREATE TABLE IF NOT EXISTS school_evidence (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -352,6 +514,9 @@ def ensure_faculty_jobs_tables(db_path=None):
             verified_at TEXT NOT NULL,
             confidence TEXT NOT NULL DEFAULT 'medium',
             notes TEXT,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            valid_from TEXT,
+            valid_to TEXT,
             FOREIGN KEY(school_id) REFERENCES business_schools(id)
         );
         CREATE TABLE IF NOT EXISTS school_tier_overrides (
@@ -432,6 +597,11 @@ def ensure_faculty_jobs_tables(db_path=None):
             fingerprint TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            -- Set when this posting is the same vacancy as another, carried by
+            -- a second board. Declared here as well as in migration 85, because
+            -- repairs that run earlier in the chain filter on it: a fresh
+            -- database needs the column before those repairs, not after them.
+            merged_into_job_id INTEGER REFERENCES jobs(id),
             FOREIGN KEY(institution_id) REFERENCES institutions(id),
             FOREIGN KEY(school_id) REFERENCES business_schools(id)
         );
@@ -461,6 +631,22 @@ def ensure_faculty_jobs_tables(db_path=None):
             structured_extraction TEXT NOT NULL DEFAULT '{}',
             first_seen TEXT NOT NULL,
             last_seen TEXT NOT NULL,
+            UNIQUE(source_id, source_job_id),
+            FOREIGN KEY(source_id) REFERENCES sources(id)
+        );
+        CREATE TABLE IF NOT EXISTS source_record_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            source_job_id TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK(decision IN ('false_positive','confirmed_job','review')),
+            reason_code TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            title_snapshot TEXT,
+            evidence_url TEXT,
+            decision_source TEXT NOT NULL DEFAULT 'manual_review',
+            decided_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1,
             UNIQUE(source_id, source_job_id),
             FOREIGN KEY(source_id) REFERENCES sources(id)
         );
@@ -562,6 +748,37 @@ def ensure_faculty_jobs_tables(db_path=None):
             applied_at TEXT NOT NULL,
             note TEXT
         );
+        CREATE TABLE IF NOT EXISTS entity_resolution_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK(entity_type IN ('institution','business_school')),
+            entity_id INTEGER,
+            raw_value TEXT NOT NULL,
+            normalized_value TEXT,
+            candidate_name TEXT,
+            proposed_survivor_id INTEGER,
+            old_name TEXT,
+            new_name TEXT,
+            match_basis TEXT,
+            confidence REAL,
+            conflicting_identity_json TEXT NOT NULL DEFAULT '{}',
+            impacted_jobs INTEGER NOT NULL DEFAULT 0,
+            impacted_schools INTEGER NOT NULL DEFAULT 0,
+            impacted_evidence INTEGER NOT NULL DEFAULT 0,
+            decision TEXT CHECK(decision IN ('approve','reject','defer')),
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','reviewed','excluded','resolved')),
+            reason TEXT NOT NULL,
+            source_url TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(entity_type, entity_id, raw_value)
+        );
+        CREATE TABLE IF NOT EXISTS faculty_job_policy_metadata (
+            policy_name TEXT PRIMARY KEY,
+            policy_version TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            settings_json TEXT NOT NULL DEFAULT '{}',
+            observed_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS job_scope_overrides (
             job_id INTEGER PRIMARY KEY,
             action TEXT NOT NULL CHECK(action IN ('include','exclude')),
@@ -606,6 +823,8 @@ def ensure_faculty_jobs_tables(db_path=None):
         CREATE INDEX IF NOT EXISTS idx_faculty_jobs_institution ON jobs(institution_id);
         CREATE INDEX IF NOT EXISTS idx_faculty_jobs_school ON jobs(school_id);
         CREATE INDEX IF NOT EXISTS idx_faculty_job_sources_source ON job_sources(source_id, active);
+        CREATE INDEX IF NOT EXISTS idx_source_record_decisions_current
+          ON source_record_decisions(source_id,decision,is_current);
         CREATE INDEX IF NOT EXISTS idx_faculty_provenance_job ON job_field_provenance(job_id, field_name);
         CREATE INDEX IF NOT EXISTS idx_faculty_history_observed ON job_status_history(observed_at);
         """)
@@ -629,7 +848,13 @@ def ensure_faculty_jobs_tables(db_path=None):
         _ensure_column(conn, "jobs", "hiring_cycle_reason", "TEXT")
         _ensure_column(conn, "jobs", "derived_quality", "TEXT NOT NULL DEFAULT 'accepted'")
         _ensure_column(conn, "institutions", "is_current", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "institutions", "merged_into_id", "INTEGER")
         _ensure_column(conn, "business_schools", "is_current", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "business_schools", "aliases_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "business_schools", "merged_into_id", "INTEGER")
+        _ensure_column(conn, "school_evidence", "is_current", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "school_evidence", "valid_from", "TEXT")
+        _ensure_column(conn, "school_evidence", "valid_to", "TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_faculty_jobs_business_scope ON jobs(business_scope)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_faculty_jobs_market_eligible ON jobs(faculty_market_eligible)")
         _ensure_column(conn, "job_sources", "consecutive_missing_runs", "INTEGER NOT NULL DEFAULT 0")
@@ -638,8 +863,20 @@ def ensure_faculty_jobs_tables(db_path=None):
         _ensure_column(conn, "possible_duplicates", "resolved_at", "TEXT")
         _ensure_column(conn, "possible_duplicates", "resolution_reason", "TEXT")
         _ensure_column(conn, "possible_duplicates", "merged_into_job_id", "INTEGER")
+        _ensure_column(conn, "entity_resolution_queue", "proposed_survivor_id", "INTEGER")
+        _ensure_column(conn, "entity_resolution_queue", "old_name", "TEXT")
+        _ensure_column(conn, "entity_resolution_queue", "new_name", "TEXT")
+        _ensure_column(conn, "entity_resolution_queue", "match_basis", "TEXT")
+        _ensure_column(conn, "entity_resolution_queue", "confidence", "REAL")
+        _ensure_column(conn, "entity_resolution_queue", "conflicting_identity_json", "TEXT NOT NULL DEFAULT '{}'")
+        _ensure_column(conn, "entity_resolution_queue", "impacted_jobs", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "entity_resolution_queue", "impacted_schools", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "entity_resolution_queue", "impacted_evidence", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "entity_resolution_queue", "decision", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_entity_resolution_queue_status ON entity_resolution_queue(status, updated_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_faculty_provenance_current ON job_field_provenance(job_id,field_name,is_current)")
         _sync_source_catalog(conn)
+        _seed_source_record_decisions(conn)
         _run_faculty_jobs_repair_if_needed(conn)
         if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=3").fetchone():
             _repair_duplicate_review_metadata(conn)
@@ -1309,6 +1546,468 @@ def ensure_faculty_jobs_tables(db_path=None):
                     "On-Campus Farmer School of Business' over 'Farmer School of Business'."
                 )),
             )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=59").fetchone():
+            # This is the second-round correctness migration. It is entirely
+            # source-record-first: replay bounded evidence, repair derived
+            # entity links, and retain every superseded row for audit.
+            replay_stats = _repair_source_entities_from_preserved_records(conn)
+            polluted_school_stats = _repair_known_school_labels(conn)
+            institution_stats = _merge_duplicate_institutions(conn)
+            variant_stats = _merge_variant_school_entities(conn)
+            partition_stats = _backfill_aacsb_job_partitions(conn)
+            boundary_stats = _repair_faculty_market_boundary(conn)
+            false_positive_stats = _quarantine_known_aacsb_false_positives(conn)
+            contamination_stats = _quarantine_unresolved_institutions(conn)
+            accreditation_stats = _refresh_aacsb_accreditation_state(conn)
+            institution_conflict_stats = _queue_institution_country_conflicts(conn)
+            link_stats = _link_jobs_to_unique_school(conn)
+            for row in conn.execute(
+                    "SELECT id FROM business_schools WHERE is_current=1").fetchall():
+                refresh_school_classification(conn, row["id"])
+
+            # Migration 54 already owns the expensive corpus-to-institution
+            # backfill. This migration deliberately reclassifies every current
+            # school from the current evidence ledger without rereading 136k
+            # A* articles, so fresh and already-linked databases take the same
+            # deterministic tier path and the repair remains bounded.
+            astar_note = (
+                "Reclassified all current schools from the preserved current A* evidence ledger; "
+                "the A* tier signal remains opt-in (FACULTY_ASTAR_TIER_SIGNAL=1) and the displayed "
+                "count remains an institution-level floor."
+            )
+            for row in conn.execute(
+                    "SELECT id FROM business_schools WHERE is_current=1").fetchall():
+                refresh_school_classification(conn, row["id"])
+            _store_faculty_policy_metadata(conn)
+            conn.execute("PRAGMA user_version=59")
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (59, now_utc(), (
+                    f"Second-round source/entity repair: source replay {replay_stats['changed']} changed, "
+                    f"canonical school labels {polluted_school_stats['changed']} changed/{polluted_school_stats['merged']} merged, "
+                    f"institutions {institution_stats['merged']} merged, school variants {variant_stats['merged']} merged, "
+                    f"AACSB job partitions {partition_stats['partitions']} backfilled ({partition_stats['unmapped']} unmapped), "
+                    f"market-boundary rows {boundary_stats['changed']} reclassified, known AACSB false-positive "
+                    f"jobs {false_positive_stats['jobs']} / links {false_positive_stats['links']} quarantined, "
+                    f"contaminated institutions {contamination_stats['retired']} retired and "
+                    f"{contamination_stats['quarantined_jobs']} jobs quarantined, AACSB state "
+                    f"{accreditation_stats['schools_changed']} school flags changed, and {link_stats['linked']} "
+                    f"unambiguous school links restored; {institution_conflict_stats['queued']} "
+                    f"same-name country conflicts queued for review. {astar_note}"
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=60").fetchone():
+            country_stats = _repair_country_evidence(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (60, now_utc(), (
+                    "Corrected country codes that were inferred rather than observed: "
+                    f"{country_stats['institutions_from_roster']} institutions realigned to the "
+                    f"AACSB roster, {country_stats['institutions_from_state']} to an unambiguous "
+                    f"US state code, {country_stats['jobs_from_state']} jobs to their own state "
+                    f"evidence and {country_stats['jobs_from_entity']} to their corrected "
+                    "institution. Root causes: 'New Mexico' matched the country Mexico, bare US "
+                    "state codes (CO, TN) were read as ISO country codes, and institutions with "
+                    "no country evidence were filled with US."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=61").fetchone():
+            contaminated = _retire_contaminated_institutions(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (61, now_utc(), (
+                    f"Retired {contaminated['retired']} institution rows whose name was posting "
+                    f"prose (AKADEUS equal-opportunity paragraphs, a POMS sentence fragment, an "
+                    f"Inside Higher Ed 'Not Specified' string) and detached "
+                    f"{contaminated['jobs_detached']} jobs from them. Rows are retired, not "
+                    "deleted; jobs are detached rather than reassigned because this database "
+                    "does not know which school they belong to. _institution() now refuses to "
+                    "create an entity from such text, so they cannot reappear on the next scrape."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=62").fetchone():
+            aliases_added = _seed_institution_aliases(conn)
+            relinked = _relink_jobs_from_title_tail(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (62, now_utc(), (
+                    f"Recorded {aliases_added} verified institution abbreviation(s) and "
+                    f"attached {relinked} job(s) whose school appeared only in the title. "
+                    "A title tail is used only when it resolves to an alias, a current "
+                    "institution or an AACSB roster row; an unresolved tail stays Unknown."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=63").fetchone():
+            region_stats = _clear_source_region_country_guesses(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (63, now_utc(), (
+                    f"Removed board-region country guesses: {region_stats['from_institution']} "
+                    f"job(s) now follow their institution's observed country and "
+                    f"{region_stats['cleared_to_unknown']} are Unknown. parse_location no "
+                    "longer treats a source's registered region as country evidence."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=64").fetchone():
+            decision_count = conn.execute("""
+                SELECT COUNT(*) FROM source_record_decisions d
+                JOIN sources s ON s.id=d.source_id
+                WHERE s.name='aacsb_official' AND d.decision='false_positive'
+                  AND d.is_current=1
+            """).fetchone()[0]
+            false_positive_stats = _quarantine_known_aacsb_false_positives(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (64, now_utc(), (
+                    f"Replaced local jobs.id false-positive policy with {decision_count} stable "
+                    "AACSB (source, source_job_id) decisions. Deactivated "
+                    f"{false_positive_stats['links']} active reviewed link(s) and quarantined "
+                    f"{false_positive_stats['quarantined']} otherwise unsupported job(s); source "
+                    "records, historical links, partitions, and repair evidence remain stored."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=65").fetchone():
+            school_graph_stats = _repair_current_schools_on_retired_institutions(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (65, now_utc(), (
+                    f"Repaired current-school/current-parent integrity: found {school_graph_stats['found']}, "
+                    f"reparented {school_graph_stats['reparented']}, merged {school_graph_stats['merged']}, "
+                    f"retired {school_graph_stats['retired']} unused evidence-free row(s), queued "
+                    f"{school_graph_stats['queued']} dependent row(s), and reparented "
+                    f"{school_graph_stats['jobs_reparented']} job link(s). _school() now refuses "
+                    "to create a current child beneath a retired parent without a current redirect."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=66").fetchone():
+            rank_stats = _repair_rank_mappings(conn)
+            slash_stats = _repair_country_slash_locations(conn)
+            boundary_stats = _repair_faculty_market_boundary(conn)
+            _store_faculty_policy_metadata(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (66, now_utc(), (
+                    f"Recomputed rank mappings for {rank_stats['rows']} rows ({rank_stats['changed']} "
+                    f"changed; {rank_stats['open_rank']} became Open Rank; "
+                    f"{rank_stats['lecturer_retained']} retained local lecturer labels), parsed "
+                    f"Country / City values on {slash_stats['jobs']} jobs and "
+                    f"{slash_stats['institutions']} current institutions "
+                    f"({slash_stats['identity_conflicts_queued']} country-identity conflict(s) "
+                    "queued rather than merged), and reclassified "
+                    f"{boundary_stats['changed']} role/scope rows. Academic leadership remains "
+                    "auditable under scope=all but is outside the default faculty market."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=67").fetchone():
+            from services.faculty_jobs_sources.aacsb import AACSB_SCAN_RULE_VERSION
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (67, now_utc(), (
+                    f"Activated AACSB official-site scan rule {AACSB_SCAN_RULE_VERSION}. Existing "
+                    "rows from older rules are intentionally stale and eligible for the bounded "
+                    "--scan-existing workflow; no historical scan is relabelled as complete."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=68").fetchone():
+            repaired_board_regions = _repair_board_default_region_leaks(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (68, now_utc(), (
+                    f"Moved {repaired_board_regions} job(s) with no posting-level country evidence "
+                    "from a job board's registered region to Other. The country remains Unknown; "
+                    "source records and field-level repair provenance are retained."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=69").fetchone():
+            location_stats = _repair_source_location_country_mismatches(conn)
+            identity_stats = _repair_known_country_partition_conflicts(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (69, now_utc(), (
+                    "Replayed preserved source locations after completing the US state table "
+                    "(Delaware, Hawaii, and Idaho): repaired "
+                    f"{location_stats['changed_jobs']} job(s) and "
+                    f"{location_stats['institution_links_repaired']} institution link(s). "
+                    f"Resolved {identity_stats['institution_partitions_merged']} empty or "
+                    "source-confirmed country partition(s), and corrected "
+                    f"{identity_stats['campus_jobs_repaired']} Chinese University of Hong Kong, "
+                    "Shenzhen job(s) to mainland China. Source records and superseded entities "
+                    "remain retained for audit."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=70").fetchone():
+            location_stats = _repair_source_location_country_mismatches(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (70, now_utc(), (
+                    "Replayed preserved source locations after stripping parenthetical work-mode "
+                    "suffixes before geographic comparison, recognizing 'Dist. Columbia', and "
+                    "retaining same-named city/state pairs such as New York, New York; repaired "
+                    f"{location_stats['changed_jobs']} job(s) and "
+                    f"{location_stats['institution_links_repaired']} institution link(s). "
+                    "The superseded v69 writes and source records remain in the audit trail."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=71").fetchone():
+            location_stats = _repair_source_location_country_mismatches(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (71, now_utc(), (
+                    "Replayed flattened 'Multiple Locations' cards without selecting one city or "
+                    "state from a multi-place list; repaired "
+                    f"{location_stats['changed_jobs']} job(s) and "
+                    f"{location_stats['institution_links_repaired']} institution link(s). "
+                    "The full raw location remains in source records."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=72").fetchone():
+            location_stats = _repair_source_location_country_mismatches(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (72, now_utc(), (
+                    "Refined 'Multiple Locations' normalization to retain a state when every "
+                    "visible location agrees and leave it Unknown only for mixed-state cards; "
+                    f"repaired {location_stats['changed_jobs']} job(s) and "
+                    f"{location_stats['institution_links_repaired']} institution link(s)."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=73").fetchone():
+            appointment_stats = _backfill_appointment_types(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (73, now_utc(), (
+                    f"Derived appointment_type for {appointment_stats['changed']} of "
+                    f"{appointment_stats['rows']} preserved rows "
+                    f"({appointment_stats.get('adjunct', 0)} adjunct, "
+                    f"{appointment_stats.get('visiting', 0)} visiting, "
+                    f"{appointment_stats.get('postdoc', 0)} postdoc, "
+                    f"{appointment_stats.get('full_time', 0)} full-time). track_type answers "
+                    "tenure/permanence and leaves adjunct advertisements unknown, so contingent "
+                    "and continuing appointments were indistinguishable in the market view. "
+                    "Titles are unchanged and no posting was removed."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=74").fetchone():
+            replay_stats = _repair_source_location_country_mismatches(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (74, now_utc(), (
+                    "Replayed preserved source locations after fixing a component filter that "
+                    "dropped the city from detail-page values shaped 'City, State, (US)'. The "
+                    "parenthetical-only component survived the filter, was selected as the "
+                    "rightmost city, and was then stripped to nothing -- but only when an "
+                    "institution name was supplied, because normalize_name(None) happened to "
+                    "remove it otherwise. Repaired "
+                    f"{replay_stats['changed_jobs']} job(s) and "
+                    f"{replay_stats['institution_links_repaired']} institution link(s)."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=75").fetchone():
+            city_stats = _repair_missing_city_from_source_records(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (75, now_utc(), (
+                    f"Recovered a city for {city_stats['changed']} of "
+                    f"{city_stats['candidates']} job row(s) whose stored city was NULL, "
+                    "re-deriving it from the preserved source location. Migration 74 replayed "
+                    "country evidence only and could not reach these rows. Bare state tokens "
+                    "were left Unknown rather than filled with an abbreviation."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=76").fetchone():
+            appointment_stats = _backfill_appointment_types(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (76, now_utc(), (
+                    "Re-derived appointment_type after adding the column to the job write "
+                    "whitelist. It existed on the table but not in _JOB_WRITE_COLUMNS, so every "
+                    "row ingested after the version 73 backfill stored NULL again regardless of "
+                    "what its title said; "
+                    f"{appointment_stats['changed']} of {appointment_stats['rows']} row(s) were "
+                    "filled from their retained titles. Titles are unchanged, no posting was "
+                    "removed, and source records, links, history and private application state "
+                    "are untouched."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=77").fetchone():
+            distinct_stats = resolve_explicitly_distinct_duplicates(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (77, now_utc(), (
+                    f"Reviewed {distinct_stats['considered']} open duplicate pair(s) and marked "
+                    f"{distinct_stats['marked_distinct']} as confirmed_distinct because both "
+                    "postings state a value for the same field and the values disagree "
+                    f"({distinct_stats['reasons']}). A 491-deep queue is a queue nobody reads; "
+                    "this removes only the pairs the records themselves settle. Nothing was "
+                    "merged -- merging still requires exact source identity or a canonical "
+                    "URL -- and every pair, its basis and its reason are retained so any "
+                    "decision can be reopened."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=78").fetchone():
+            backoff_stats = _backfill_detail_attempt_backoff(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (78, now_utc(), (
+                    f"Scheduled a retry for {backoff_stats['rows']} unfinished detail attempt(s) "
+                    "recorded before the backoff existed. They carried attempt_count=0 and no "
+                    "next_retry_at, so the queue read them as due immediately and would have "
+                    "re-asked a board for exactly the pages it had just refused. No attempt "
+                    "record was deleted and no posting was marked read."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=79").fetchone():
+            _ensure_column(conn, "jobs", "visa_pathways", "TEXT")
+            visa_stats = _rederive_visa_from_held_text(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (79, now_utc(), (
+                    f"Re-derived visa_status over the text already held: "
+                    f"{visa_stats['changed']} of {visa_stats['examined']} rows moved, "
+                    f"{visa_stats['evidence']} gained a quoted sentence. The classifier "
+                    "now separates a citizenship requirement from silence -- both used to "
+                    "read 'unknown', so a posting that excludes the reader sorted with the "
+                    "ones that never mentioned the subject. Coverage stays near zero until "
+                    "detail pages are read: re-deriving cannot invent text nobody captured."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=80").fetchone():
+            raw_archive.ensure_tables(conn)
+            # The archive starts now. Nothing before this date has a stored
+            # page, and a later reader must be able to see that boundary
+            # rather than infer the archive reaches back as far as the jobs.
+            started = now_utc()
+            conn.execute(
+                "INSERT OR REPLACE INTO faculty_job_policy_metadata "
+                "(policy_name,policy_version,fingerprint,settings_json,observed_at) "
+                "VALUES ('raw_source_archive','raw_archive_v1_20260902',?,?,?)",
+                (hashlib.sha256(started.encode("utf-8")).hexdigest(),
+                 json.dumps({"available_since": started, "codec": "gzip",
+                             "addressing": "sha256-of-uncompressed",
+                             "root": "data/faculty_jobs/raw",
+                             "covers": ["listing", "detail"],
+                             "note": ("Observations before available_since have no stored "
+                                      "page; no re-parse is possible for them.")},
+                            ensure_ascii=False, sort_keys=True),
+                 started))
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (80, started, (
+                    "Content-addressed raw source archive. Bytes live under "
+                    "data/faculty_jobs/raw as gzip, addressed by SHA-256 of the "
+                    "uncompressed content, so an unchanged page costs one file and "
+                    "many observations. Kept out of this database because the write "
+                    "guard backs the whole file up before every crawl. "
+                    f"raw_archive_available_since={started}: earlier jobs have no "
+                    "stored page and no re-parse is possible for them."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=81").fetchone():
+            _ensure_column(conn, "jobs", "expected_start_year", "INTEGER")
+            _ensure_column(conn, "jobs", "market_cycle_start_year", "INTEGER")
+            faculty_jobs_snapshots.ensure_tables(conn)
+            cycle_stats = _rederive_market_cycles(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (81, now_utc(), (
+                    f"Market cycle recomputed for {cycle_stats['examined']} jobs; "
+                    f"{cycle_stats['changed']} labels corrected, "
+                    f"{cycle_stats['known']} now carry a cycle. The previous value "
+                    "combined the year we first saw a posting with the last two digits "
+                    "of its start year, producing labels such as 2026-24 and splitting "
+                    "one Fall-2027 market across buckets by crawl date. A cycle is now "
+                    "the academic year recruiting ran in, derived from the stated start "
+                    "only; a posting with no stated start is unknown rather than being "
+                    "filed under the current cycle. Snapshot tables added: they are an "
+                    "analytics materialisation, and jobs / job_status_history / "
+                    "ingestion_runs remain the source of truth."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=82").fetchone():
+            phd_pipeline.ensure_tables(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (82, now_utc(), (
+                    "PhD programme panel: a registry of pages a person located, plus "
+                    "page snapshots and per-person observations kept in four separate "
+                    "layers (enrolled / near-graduation window / explicit job-market "
+                    "candidate / observed placement). Not a crawler: five of twelve "
+                    "hand-guessed programme URLs 404'd in the audit and none of the "
+                    "seven reachable pages published an expected graduation year. "
+                    "Systematic capture begins with the 2026-27 cycle; schools replace "
+                    "these pages each autumn and earlier cycles cannot be recovered."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=83").fetchone():
+            link_health.ensure_tables(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (83, now_utc(), (
+                    "Link health: whether each posting's stored URL still opens. "
+                    "Nothing had ever checked, so a board could reorganise its "
+                    "files or fall over and the site kept handing out addresses "
+                    "that went nowhere. States are kept apart because only one of "
+                    "them is about a posting: 404/410 is `gone`, 5xx is "
+                    "`server_error` about the publisher's site, 401/403/429 is "
+                    "`blocked`, and a transport failure is `unreachable`. "
+                    "poms.org returned 502 on its root, its listing page and all "
+                    "113 of our stored links at once -- reading that as 113 "
+                    "withdrawn postings would have been badly wrong, so a host "
+                    "whose links all fail the same way is rolled up as one fact "
+                    "about the host. A link check never changes a job's status."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=84").fetchone():
+            faculty_jobs_search.ensure_tables(conn)
+            indexed = faculty_jobs_search.rebuild(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (84, now_utc(), (
+                    f"Full-text search: an FTS5 index over {indexed} postings' "
+                    "title, body, department and discipline. There were 4MB of "
+                    "posting text with no way to search it but a LIKE scan of "
+                    "every row. External-content, so `jobs` keeps the text and "
+                    "the index points at it rather than holding a copy that "
+                    "could drift. A keyword hit finds rows worth reading; it is "
+                    "not a claim about a posting -- a match on `sponsorship` may "
+                    "be an offer or a refusal, and `visa_status` remains the "
+                    "derived answer."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=85").fetchone():
+            _ensure_column(conn, "jobs", "merged_into_job_id",
+                           "INTEGER REFERENCES jobs(id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_faculty_jobs_merged_into "
+                         "ON jobs(merged_into_job_id)")
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (85, now_utc(), (
+                    "Cross-source duplicates: a column recording that one row is "
+                    "the same vacancy as another. Schools syndicate a posting to "
+                    "several boards, and the canonical key is built from the "
+                    "application URL and a text fingerprint, so each board's copy "
+                    "became its own row -- which is part of why the coverage "
+                    "matrix reported 97-100% of postings as single-sourced, a "
+                    "number that read as a fact about the market. The absorbed "
+                    "row is kept and pointed at the survivor rather than deleted: "
+                    "it is still something a board published, a merge is a claim "
+                    "that can be wrong, and clearing this column undoes one. The "
+                    "scope contract stops counting a row that has it set."
+                )),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=86").fetchone():
+            ensure_career_schema(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (86, now_utc(), "Add Carnegie catalogue and exact institution links. Explicit local-file import only; no read-time or network backfill."),
+            )
+        if not conn.execute("SELECT 1 FROM faculty_job_migrations WHERE version=87").fetchone():
+            requirements.ensure_schema(conn)
+            conn.execute(
+                "INSERT INTO faculty_job_migrations (version,applied_at,note) VALUES (?,?,?)",
+                (87, now_utc(), "Append-only public posting requirement evidence and action queues. No source, job, or private-state rewrite; explicit staged imports only."),
+            )
+        conn.execute(f"PRAGMA user_version={FACULTY_JOBS_SCHEMA_VERSION}")
         _seed_source_coverage_history_if_empty(conn)
         conn.commit()
     finally:
@@ -1336,12 +2035,65 @@ def _sync_source_catalog(conn):
                 adapter.support_reason, timestamp, timestamp))
 
 
+def _seed_source_record_decisions(conn):
+    """Seed reviewed decisions at the stable source-record grain.
+
+    ``INSERT OR IGNORE`` is intentional: a later explicit review can replace a
+    seed without the next schema check silently overwriting that decision.
+    """
+    source = conn.execute(
+        "SELECT id FROM sources WHERE name='aacsb_official'"
+    ).fetchone()
+    if not source:
+        return 0
+    source_id = int(source["id"])
+    reasons = {
+        "non_vacancy_page": (
+            "Reviewed preserved page is informational, profile, or news content "
+            "rather than an individual faculty vacancy."
+        ),
+        "generic_collection_page": (
+            "Reviewed page is a generic faculty collection/navigation page, not "
+            "an individual vacancy."
+        ),
+        "non_business_discipline": (
+            "Reviewed vacancy is outside the business-school faculty market."
+        ),
+    }
+    inserted = 0
+    stamp = now_utc()
+    for source_job_id, title_snapshot, reason_code in _AACSB_REVIEWED_FALSE_POSITIVES:
+        source_record = conn.execute(
+            "SELECT source_url FROM source_job_records WHERE source_id=? AND source_job_id=?",
+            (source_id, source_job_id),
+        ).fetchone()
+        before = conn.total_changes
+        conn.execute("""
+            INSERT OR IGNORE INTO source_record_decisions
+              (source_id,source_job_id,decision,reason_code,reason,title_snapshot,
+               evidence_url,decision_source,decided_at,updated_at,is_current)
+            VALUES (?,?,?,?,?,?,?,?,?,?,1)
+        """, (
+            source_id, source_job_id, "false_positive", reason_code,
+            reasons[reason_code], title_snapshot,
+            source_record["source_url"] if source_record else None,
+            "reviewed_seed_2026-08-27", stamp, stamp,
+        ))
+        inserted += int(conn.total_changes > before)
+    return inserted
+
+
 def _record_source_coverage_history(conn, scope="business", notes=None):
     enabled = [row[0] for row in conn.execute("SELECT name FROM sources WHERE enabled=1 ORDER BY priority,name")]
     successful = [row[0] for row in conn.execute("SELECT name FROM sources WHERE last_status='ok' ORDER BY priority,name")]
     total_jobs = conn.execute("SELECT COUNT(DISTINCT job_id) FROM job_sources WHERE active=1").fetchone()[0]
-    business_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE derived_quality='accepted' AND faculty_market_eligible=1 AND business_scope IN ('business_school','business_discipline')").fetchone()[0]
-    explicit_jobs = conn.execute("SELECT COUNT(*) FROM jobs WHERE derived_quality='accepted' AND faculty_market_eligible=1 AND business_scope='business_school'").fetchone()[0]
+    business_jobs = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE " + default_market_where()
+    ).fetchone()[0]
+    explicit_jobs = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE " + default_market_where()
+        + " AND business_scope='business_school'"
+    ).fetchone()[0]
     conn.execute("""
         INSERT INTO source_coverage_history
           (observed_at,enabled_sources_json,successful_sources_json,scope,jobs_observed,business_jobs_observed,explicit_school_jobs,notes)
@@ -1387,6 +2139,37 @@ _INSTITUTION_CANONICAL_ALIASES = {
     "worcester polytechnic institute": "Worcester Polytechnic Institute",
 }
 _UNKNOWN_INSTITUTIONS = {"", "unknown", "unknown institution", "not provided", "n/a"}
+# The longest legitimate institution name observed in this corpus is 96
+# characters; the 99th percentile is 78. Everything longer has been page body
+# text -- EEO paragraphs and application instructions -- captured as a name.
+_MAX_INSTITUTION_NAME_LENGTH = 110
+# Phrases that identify posting prose rather than an institution. Creating an
+# entity from these invents a school that does not exist, which is worse than
+# leaving the job without an institution and sending it to review.
+_IMPLAUSIBLE_INSTITUTION_RE = re.compile(
+    r"\bnot\s+specified\b"
+    r"|\bdoes\s+not\s+discriminate\b"
+    r"|\bcommitted\s+to\s+fostering\b"
+    r"|\bequal\s+opportunity\b"
+    r"|\baffirmative\s+action\b"
+    r"|\bin\s+accordance\s+with\b"
+    r"|\bapplication\s+procedure\b"
+    r"|\bencouraged\s+to\s+apply\b"
+    r"|\bunderrepresented\s+groups\b"
+    # "Management. University" is a sentence fragment; a real name never ends
+    # with a bare organisation word directly after a full stop. "St. John's
+    # University" is unaffected because its period is not in that position.
+    r"|\.\s+(?:university|college|school|institute)\s*$",
+    re.I,
+)
+
+
+def _is_plausible_institution_name(value):
+    """False when the text is posting prose rather than an institution name."""
+    text = (value or "").strip()
+    if not text or len(text) > _MAX_INSTITUTION_NAME_LENGTH:
+        return False
+    return not _IMPLAUSIBLE_INSTITUTION_RE.search(text)
 _SCHOOL_PREFIX_WORDS = {
     "management", "finance", "marketing", "accounting", "operations", "strategy",
     "business", "analytics", "information", "organizational", "organization",
@@ -1413,6 +2196,132 @@ def _canonical_institution_name(value):
         raw = possessive.group(1).strip()
     raw = re.sub(r"^The\s+", "", raw, flags=re.I)
     return _INSTITUTION_CANONICAL_ALIASES.get(normalize_name(raw), raw)
+
+
+def _current_entity_id(conn, table, entity_id):
+    """Follow an explicit merge redirect without reviving retired rows."""
+    if entity_id is None or table not in {"institutions", "business_schools"}:
+        return None
+    seen = set()
+    current = int(entity_id)
+    while current not in seen:
+        seen.add(current)
+        row = conn.execute(
+            f"SELECT id,is_current,merged_into_id FROM {table} WHERE id=?",
+            (current,),
+        ).fetchone()
+        if not row:
+            return None
+        if int(row["is_current"] or 0) == 1:
+            return int(row["id"])
+        target = row["merged_into_id"]
+        if target is None:
+            return None
+        current = int(target)
+    # A redirect cycle is a quality failure, not a reason to pick an arbitrary
+    # row as canonical.
+    return None
+
+
+def _entity_resolution_queue(conn, entity_type, entity_id, raw_value, reason,
+                             candidate_name=None, source_url=None,
+                             proposed_survivor_id=None, match_basis=None,
+                             confidence=None, conflicting_identity=None):
+    """Record an unresolved entity without inventing a canonical identity.
+
+    The queue is deliberately a review artifact, not a second resolver.  It
+    stores enough context for an approve/reject/defer decision to be reversible
+    later: the old/new names, proposed survivor when one exists, identity
+    conflicts, and the number of dependent rows affected by a decision.
+    """
+    if entity_type not in {"institution", "business_school"}:
+        raise ValueError(f"unsupported entity type: {entity_type}")
+    stamp = now_utc()
+    table = "institutions" if entity_type == "institution" else "business_schools"
+    row = None
+    if entity_id is not None:
+        row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (entity_id,)).fetchone()
+    old_name = str((row["official_name"] if row else None) or raw_value or "")
+    proposed_name = candidate_name
+    if proposed_name is None and proposed_survivor_id is not None:
+        survivor = conn.execute(
+            f"SELECT official_name FROM {table} WHERE id=?", (proposed_survivor_id,)
+        ).fetchone()
+        proposed_name = survivor["official_name"] if survivor else None
+    identity = {}
+    if row:
+        for key in (
+            "country", "country_code", "state_province", "city", "ror",
+            "openalex_institution_id", "institution_id", "website",
+        ):
+            if key in row.keys() and row[key] not in (None, ""):
+                identity[key] = row[key]
+    if conflicting_identity:
+        if isinstance(conflicting_identity, str):
+            try:
+                conflicting_identity = json.loads(conflicting_identity)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                conflicting_identity = {"detail": conflicting_identity}
+        if isinstance(conflicting_identity, dict):
+            identity.update(conflicting_identity)
+    if match_basis is None:
+        lowered = str(reason or "").casefold()
+        match_basis = (
+            "conflicting_country_identity" if "country" in lowered
+            else "retired_entity_without_survivor" if "retired" in lowered
+            else "manual_review"
+        )
+    impacts = {"jobs": 0, "schools": 0, "evidence": 0}
+    if entity_id is not None:
+        if entity_type == "institution":
+            impacts["jobs"] = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE institution_id=?", (entity_id,)
+            ).fetchone()[0]
+            impacts["schools"] = conn.execute(
+                "SELECT COUNT(*) FROM business_schools WHERE institution_id=?", (entity_id,)
+            ).fetchone()[0]
+            impacts["evidence"] = conn.execute(
+                "SELECT COUNT(*) FROM school_evidence se JOIN business_schools bs ON bs.id=se.school_id WHERE bs.institution_id=?",
+                (entity_id,),
+            ).fetchone()[0]
+        else:
+            impacts["jobs"] = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE school_id=?", (entity_id,)
+            ).fetchone()[0]
+            impacts["schools"] = 1
+            impacts["evidence"] = conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=?", (entity_id,)
+            ).fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO entity_resolution_queue
+          (entity_type,entity_id,raw_value,normalized_value,candidate_name,
+           proposed_survivor_id,old_name,new_name,match_basis,confidence,
+           conflicting_identity_json,impacted_jobs,impacted_schools,impacted_evidence,
+           decision,status,reason,source_url,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,'pending',?,?,?,?)
+        ON CONFLICT(entity_type,entity_id,raw_value) DO UPDATE SET
+          normalized_value=excluded.normalized_value,
+          candidate_name=COALESCE(excluded.candidate_name,entity_resolution_queue.candidate_name),
+          proposed_survivor_id=COALESCE(excluded.proposed_survivor_id,entity_resolution_queue.proposed_survivor_id),
+          old_name=COALESCE(excluded.old_name,entity_resolution_queue.old_name),
+          new_name=COALESCE(excluded.new_name,entity_resolution_queue.new_name),
+          match_basis=COALESCE(excluded.match_basis,entity_resolution_queue.match_basis),
+          confidence=COALESCE(excluded.confidence,entity_resolution_queue.confidence),
+          conflicting_identity_json=CASE WHEN excluded.conflicting_identity_json!='{}' THEN excluded.conflicting_identity_json ELSE entity_resolution_queue.conflicting_identity_json END,
+          impacted_jobs=excluded.impacted_jobs,impacted_schools=excluded.impacted_schools,
+          impacted_evidence=excluded.impacted_evidence,
+          reason=excluded.reason, source_url=COALESCE(excluded.source_url,entity_resolution_queue.source_url),
+          updated_at=excluded.updated_at
+        """,
+        (
+            entity_type, entity_id, str(raw_value or ""), normalize_name(raw_value),
+            candidate_name, proposed_survivor_id, old_name, proposed_name, match_basis,
+            confidence, json.dumps(identity, ensure_ascii=False, sort_keys=True),
+            impacts["jobs"], impacts["schools"], impacts["evidence"],
+            reason[:2000], source_url, stamp, stamp,
+        ),
+    )
 
 
 def _clean_derived_school_label(value):
@@ -1476,6 +2385,26 @@ def _extract_school_name(raw_school, description, institution=None):
         match = matches[-1]
         candidate = match.group("anchor").strip(" ,;:-")
         prefix = text[max(0, match.start() - 80):match.start()]
+        # If the institution is repeated immediately before the school, keep
+        # only text after that explicit employer.  The remaining comma- or
+        # dash-delimited tail can contain the named unit (for example
+        # ``University of Tennessee, Knoxville, Haslam College of Business``).
+        if institution:
+            institution_matches = list(re.finditer(
+                re.escape(str(institution).strip()),
+                prefix,
+                re.I,
+            ))
+            if institution_matches:
+                prefix = prefix[institution_matches[-1].end():].lstrip(" ,;:-")
+        prefix = re.split(r"[,;]|\s[-–—]\s", prefix)[-1]
+        # A parenthesized role/discipline qualifier immediately before the
+        # school anchor belongs to the job title, not the school name (for
+        # example ``Business Administration (Real Estate) College of Business
+        # Administration``).  Preserve the raw excerpt, but do not absorb the
+        # parenthetical's capitalized words into the entity label.
+        if prefix.rstrip().endswith(")"):
+            prefix = ""
         prefix_words = re.findall(r"[A-Z][\w&'’.-]*", prefix)
         # Preserve short proper names such as Darla Moore or Collins, but do
         # not absorb title/discipline words immediately before the anchor.
@@ -1484,6 +2413,8 @@ def _extract_school_name(raw_school, description, institution=None):
             if word.casefold() in _SCHOOL_PREFIX_WORDS or word.casefold() in {
                 "lecturer", "professor", "assistant", "associate", "in", "and", "for",
                 "temp", "temporary", "year", "term", "five", "full", "time",
+                "department", "position", "overviewthe", "save", "view", "details",
+                "tenure-track", "track", "campus", "location", "requisition",
             }:
                 break
             proper_prefix.insert(0, word)
@@ -1496,7 +2427,7 @@ def _extract_school_name(raw_school, description, institution=None):
             proper_prefix = proper_prefix[the_positions[-1] + 1:]
         if proper_prefix:
             candidate = " ".join(proper_prefix + candidate.split())
-        return candidate
+        return _clean_derived_school_label(candidate)
     business_school_matches = list(re.finditer(
         r"(?P<anchor>(?:[A-Z][\w&'’.-]+\s+)?(?:Business|Management|Commerce)\s+School)",
         text,
@@ -1580,9 +2511,149 @@ def _prepare_entity_fields(normalized):
     return normalized
 
 
+_TITLE_INSTITUTION_TAIL_RE = re.compile(r"\bat\s+(?P<tail>[^,;:]{2,60})\s*$", re.I)
+
+
+def _institution_from_title_tail(conn, title):
+    """Resolve a trailing "... at X" in a title, but only against known entities.
+
+    Some boards put the school in the title and leave the institution field
+    empty: "Management of Information Systems Professor (open rank) at NovaSBE".
+    The tail is only accepted when it already resolves to something this
+    database knows -- an audited alias, a current institution, or an AACSB
+    roster row. An unresolved tail is discarded, so this can never invent a
+    school; it only recovers one that was already on file.
+
+    Deliberately narrow: of the 30 titles carrying this pattern, 29 already have
+    an institution from their source. This exists to stop the last one being
+    shown as Unknown when the entity is present in the same database.
+    """
+    match = _TITLE_INSTITUTION_TAIL_RE.search(clean_text(title) or "")
+    if not match:
+        return None
+    tail = match.group("tail").strip(" .-")
+    if not tail or not _is_plausible_institution_name(tail):
+        return None
+    key = normalize_name(tail)
+    if not key:
+        return None
+
+    alias = conn.execute(
+        "SELECT canonical_name FROM institution_aliases WHERE alias_normalized=?",
+        (key,)).fetchone()
+    if alias:
+        return alias["canonical_name"]
+    existing = conn.execute(
+        "SELECT official_name FROM institutions WHERE normalized_name=? AND is_current=1 "
+        "ORDER BY id LIMIT 1", (key,)).fetchone()
+    if existing:
+        return existing["official_name"]
+    roster = conn.execute(
+        "SELECT institution_name FROM aacsb_directory_schools "
+        "WHERE active=1 AND (LOWER(institution_name)=? OR LOWER(school_name)=?) LIMIT 1",
+        (tail.casefold(), tail.casefold())).fetchone()
+    if roster:
+        return roster["institution_name"]
+    return None
+
+
+# Verified abbreviation -> canonical institution. Each entry names the evidence
+# that establishes it, because an alias is an identity claim: getting one wrong
+# attaches a school's jobs and publication record to a different university.
+_SEED_INSTITUTION_ALIASES = (
+    {
+        "alias": "NovaSBE",
+        "canonical_name": "Universidade Nova de Lisboa",
+        "reason": (
+            "NovaSBE is the published short form of Nova School of Business and Economics, "
+            "the business school of Universidade Nova de Lisboa. AACSB lists that school "
+            "under this institution in Carcavelos, Portugal, and the source posting URL "
+            "slug is 'at-novasbe'."
+        ),
+        "source_url": "https://www.aacsb.edu/accredited",
+    },
+)
+
+
+def _seed_institution_aliases(conn):
+    """Record verified abbreviations so title-embedded schools resolve."""
+    added = 0
+    for entry in _SEED_INSTITUTION_ALIASES:
+        key = normalize_name(entry["alias"])
+        if not key:
+            continue
+        if conn.execute("SELECT 1 FROM institution_aliases WHERE alias_normalized=?",
+                        (key,)).fetchone():
+            continue
+        # Only record an alias whose target this database actually holds.
+        target = conn.execute(
+            "SELECT official_name FROM institutions WHERE normalized_name=? AND is_current=1 "
+            "ORDER BY id LIMIT 1", (normalize_name(entry["canonical_name"]),)).fetchone()
+        if not target:
+            continue
+        conn.execute("""
+            INSERT INTO institution_aliases
+              (alias_normalized,canonical_name,reason,source_url,created_at,updated_at)
+            VALUES (?,?,?,?,?,?)
+        """, (key, target["official_name"], entry["reason"], entry.get("source_url"),
+              now_utc(), now_utc()))
+        added += 1
+    return added
+
+
+def _relink_jobs_from_title_tail(conn):
+    """Attach an institution to jobs whose school was only ever in the title.
+
+    Runs after the alias seed so a newly recorded abbreviation takes effect on
+    records already stored. Only jobs with no institution are considered, and
+    only tails that resolve to a known entity are used.
+    """
+    relinked = 0
+    for row in conn.execute(
+        "SELECT id, title_raw FROM jobs WHERE institution_id IS NULL"
+    ).fetchall():
+        name = _institution_from_title_tail(conn, row["title_raw"])
+        if not name:
+            continue
+        target = conn.execute(
+            "SELECT id, country, country_code, region_group, city, state_province "
+            "FROM institutions WHERE normalized_name=? AND is_current=1 ORDER BY id LIMIT 1",
+            (normalize_name(name),)).fetchone()
+        if not target:
+            continue
+        conn.execute(
+            "UPDATE jobs SET institution_id=?, updated_at=? WHERE id=?",
+            (target["id"], now_utc(), row["id"]))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), "job_institution_from_title_tail", row["id"], "NULL",
+              str(target["id"]),
+              f"The source left the institution empty; the title names {name!r}, which "
+              "resolves to an institution already held in this database."))
+        relinked += 1
+    return relinked
+
+
 def _institution(conn, normalized, source_job):
     raw = normalized.get("institution_entity_raw") or normalized["institution_raw"]
     if normalize_name(raw) in _UNKNOWN_INSTITUTIONS:
+        return None
+    if not _is_plausible_institution_name(raw) or normalize_name(raw) in _UNKNOWN_INSTITUTIONS:
+        # Some boards leave the institution field empty and put the school in
+        # the title instead. Recover it only when it resolves to an entity this
+        # database already holds; an unresolved tail stays Unknown.
+        recovered = _institution_from_title_tail(conn, normalized.get("title_raw"))
+        if recovered:
+            raw = recovered
+    if not _is_plausible_institution_name(raw):
+        # Leave the job without an institution rather than minting an entity
+        # from page prose. It stays in the audit catalogue and is reviewable;
+        # a fabricated school would silently pollute the directory, the country
+        # filter and every count derived from institutions.
+        LOG.warning("refusing implausible institution name (%s chars): %r",
+                    len(str(raw or "")), str(raw or "")[:120])
         return None
     canonical = _canonical_institution_name(raw)
     manual = conn.execute(
@@ -1593,26 +2664,29 @@ def _institution(conn, normalized, source_job):
         canonical = manual["canonical_name"]
     key = normalize_name(canonical)
     code = normalized.get("country_code")
-    row = conn.execute("SELECT * FROM institutions WHERE normalized_name=? AND country_code IS ?", (key, code)).fetchone()
-    if (row is None or (not code and not row["country_code"])) and not code:
-        # Reuse a previously evidenced country for the same normalized
-        # institution when the current public card supplies only a city. The
-        # majority-country ordering protects against a single polluted legacy
-        # alias (for example ``Augusta University`` tagged as Indonesia).
+    # Retired rows are audit records. Reuse an explicit current survivor, but
+    # never turn a retired institution back into a current one on re-ingest.
+    row = conn.execute(
+        "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS ? "
+        "AND is_current=1 ORDER BY id LIMIT 1", (key, code),
+    ).fetchone()
+    if row is None and not code:
+        # Source cards without a country must reuse the existing NULL-country
+        # row. The previous resolver skipped it and inserted a duplicate on
+        # every replay.
         row = conn.execute(
-            """
-            SELECT i.*
-            FROM institutions i
-            WHERE i.normalized_name=? AND i.country_code IS NOT NULL
-            ORDER BY (
-                SELECT COUNT(*) FROM institutions i2
-                WHERE i2.normalized_name=i.normalized_name
-                  AND i2.country_code=i.country_code
-            ) DESC, i.is_current DESC, i.id ASC
-            LIMIT 1
-            """,
-            (key,),
+            "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS NULL "
+            "AND is_current=1 ORDER BY id LIMIT 1", (key,),
         ).fetchone()
+    if row is None and not code:
+        # One current country-evidenced row is safe to reuse. Conflicting
+        # countries remain separate rather than being guessed together.
+        candidates = conn.execute(
+            "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS NOT NULL "
+            "AND is_current=1 ORDER BY id", (key,),
+        ).fetchall()
+        if len(candidates) == 1:
+            row = candidates[0]
     timestamp = now_utc()
     if row:
         if not normalized.get("country_code") and row["country_code"]:
@@ -1624,22 +2698,78 @@ def _institution(conn, normalized, source_job):
         source_raw = normalized.get("source_institution_raw") or raw
         if source_raw not in aliases and source_raw != row["official_name"]:
             aliases.append(source_raw)
+        extra = source_job.extra if isinstance(source_job.extra, dict) else {}
         conn.execute("""
             UPDATE institutions SET aliases_json=?, institution_url=COALESCE(?, institution_url),
               country=COALESCE(?,country), region_group=COALESCE(?,region_group),
-              state_province=COALESCE(?,state_province), city=COALESCE(?,city), is_current=1, updated_at=? WHERE id=?
-        """, (json.dumps(aliases[:50], ensure_ascii=False), source_job.extra.get("institution_url"),
+              state_province=COALESCE(?,state_province), city=COALESCE(?,city), updated_at=? WHERE id=?
+        """, (json.dumps(aliases[:50], ensure_ascii=False), extra.get("institution_url"),
               normalized.get("country"), normalized.get("region_group"), normalized.get("state_province"),
               normalized.get("city"), timestamp, row["id"]))
+        link_institution(conn, row["id"])
         return row["id"]
+    # Retired rows are immutable history, but the legacy schema keeps the
+    # normalized key unique across current and historical rows. If a new
+    # explicit source observation establishes the same identity, release the
+    # old key by suffixing only the retired row and create a fresh current row;
+    # never reactivate it in place.
+    retired_rows = conn.execute(
+        "SELECT id FROM institutions WHERE normalized_name=? AND country_code IS ? "
+        "AND is_current=0 ORDER BY id", (key, code),
+    ).fetchall()
+    for retired in retired_rows:
+        retired_key = f"{key}__retired_{retired['id']}"
+        conn.execute(
+            "UPDATE institutions SET normalized_name=?,updated_at=? WHERE id=?",
+            (retired_key, timestamp, retired["id"]),
+        )
+        conn.execute(
+            """INSERT INTO faculty_job_repair_audit
+               (observed_at,action,old_value,new_value,reason)
+               VALUES (?,?,?,?,?)""",
+            (timestamp, "institution_retired_key_released", str(retired["id"]), retired_key,
+             "An explicit current source observation matched a retired institution key; the historical row stayed retired and its unique key was moved aside."),
+        )
+    extra = source_job.extra if isinstance(source_job.extra, dict) else {}
     cur = conn.execute("""
         INSERT INTO institutions
           (official_name,normalized_name,aliases_json,country,country_code,region_group,state_province,city,institution_url,created_at,updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)
     """, (canonical, key, json.dumps([raw] if raw != canonical else [], ensure_ascii=False), normalized.get("country"), code,
           normalized.get("region_group"), normalized.get("state_province"), normalized.get("city"),
-          source_job.extra.get("institution_url"), timestamp, timestamp))
+          extra.get("institution_url"), timestamp, timestamp))
+    link_institution(conn, cur.lastrowid)
     return cur.lastrowid
+
+
+def _resolved_posting_school_name(source_job, school_raw, institution_name):
+    """Resolve a school without letting IHE card prose create an entity label.
+
+    Most sources expose either a dedicated school field or short employer text,
+    so the shared resolver may inspect the retained description as a fallback.
+    Inside Higher Ed listing cards are different: a department phrase can sit
+    immediately before the real school and the generic prefix collector can
+    absorb words such as ``Economics`` or ``DFBE``.  IHE already has a bounded
+    home-unit parser with collaborator/cross-appointment guards; use that parser
+    exclusively for its prose and accept a raw value only when the observation
+    records the current evidence-rule version.
+    """
+    if getattr(source_job, "source", None) != "inside_higher_ed":
+        return _extract_school_name(
+            school_raw, source_job.description_excerpt, institution_name)
+
+    extra = source_job.extra if isinstance(source_job.extra, dict) else {}
+    bounded = InsideHigherEdAdapter._detail_school(
+        source_job.description_excerpt or "")
+    if bounded:
+        return _extract_school_name(bounded, "", institution_name)
+    if (
+        school_raw
+        and extra.get("school_evidence_rule_version")
+        == IHE_SCHOOL_EVIDENCE_RULE_VERSION
+    ):
+        return _extract_school_name(school_raw, "", institution_name)
+    return None
 
 
 def _school(conn, institution_id, school_raw, source_job):
@@ -1658,10 +2788,31 @@ def _school(conn, institution_id, school_raw, source_job):
         return None
     if detail_extra.get("detail_schema") and not detail_extra.get("detail_school_found"):
         return None
-    institution = conn.execute("SELECT official_name FROM institutions WHERE id=?", (institution_id,)).fetchone()
-    name = _extract_school_name(
+    institution = conn.execute(
+        "SELECT id,official_name,is_current,merged_into_id FROM institutions WHERE id=?",
+        (institution_id,),
+    ).fetchone()
+    if not institution:
+        return None
+    if int(institution["is_current"] or 0) != 1:
+        target_id = _current_entity_id(conn, "institutions", institution_id)
+        if target_id is None:
+            _entity_resolution_queue(
+                conn, "institution", institution_id, institution["official_name"],
+                "Retired parent institution has no current merge survivor; school resolver refused to create a current child beneath it.",
+                source_url=detail_extra.get("school_url") or source_job.source_url,
+            )
+            return None
+        institution_id = target_id
+        institution = conn.execute(
+            "SELECT id,official_name,is_current,merged_into_id FROM institutions WHERE id=?",
+            (institution_id,),
+        ).fetchone()
+        if not institution or int(institution["is_current"] or 0) != 1:
+            return None
+    name = _resolved_posting_school_name(
+        source_job,
         school_raw,
-        source_job.description_excerpt,
         institution["official_name"] if institution else None,
     )
     if not name:
@@ -1680,28 +2831,42 @@ def _school(conn, institution_id, school_raw, source_job):
         # migration has run, the official target row exists and normal
         # ingestion can use it directly.
         legacy = conn.execute(
-            "SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=?",
+            "SELECT id,is_current,merged_into_id FROM business_schools WHERE institution_id=? AND normalized_name=?",
             (institution_id, normalize_name("Faculty of Business")),
         ).fetchone()
         target = conn.execute(
-            "SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=?",
+            "SELECT id,is_current,merged_into_id FROM business_schools WHERE institution_id=? AND normalized_name=? AND is_current=1",
             (institution_id, normalize_name("Leeds University Business School")),
         ).fetchone()
-        if legacy and not target:
+        if legacy and int(legacy["is_current"] or 0) == 1 and not target:
             timestamp = now_utc()
             conn.execute(
-                "UPDATE business_schools SET website=COALESCE(?,website), is_current=1, updated_at=? WHERE id=?",
+                "UPDATE business_schools SET website=COALESCE(?,website), updated_at=? WHERE id=?",
                 (source_job.extra.get("school_url"), timestamp, legacy["id"]),
             )
             return legacy["id"]
         name = "Leeds University Business School"
     normalized_name = normalize_name(name)
-    row = conn.execute("SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=?", (institution_id, normalized_name)).fetchone()
+    row = conn.execute(
+        "SELECT id,is_current,merged_into_id FROM business_schools "
+        "WHERE institution_id=? AND normalized_name=? ORDER BY is_current DESC,id LIMIT 1",
+        (institution_id, normalized_name),
+    ).fetchone()
     timestamp = now_utc()
     if row:
-        conn.execute("UPDATE business_schools SET website=COALESCE(?,website), is_current=1, updated_at=? WHERE id=?",
-                     (source_job.extra.get("school_url"), timestamp, row["id"]))
-        return row["id"]
+        if int(row["is_current"] or 0) == 1:
+            conn.execute("UPDATE business_schools SET website=COALESCE(?,website), updated_at=? WHERE id=?",
+                         (source_job.extra.get("school_url"), timestamp, row["id"]))
+            return row["id"]
+        target_id = _current_entity_id(conn, "business_schools", row["id"])
+        if target_id is not None:
+            return target_id
+        _entity_resolution_queue(
+            conn, "business_school", row["id"], name,
+            "Retired school key has no current merge survivor; resolver refused reactivation.",
+            source_url=source_job.extra.get("school_url"),
+        )
+        return None
     cur = conn.execute("""
         INSERT INTO business_schools
           (institution_id,official_name,normalized_name,website,created_at,updated_at)
@@ -1714,7 +2879,11 @@ _CITY_STATES = {"singapore", "luxembourg", "monaco", "hong kong", "macau", "maca
 _CITY_LABEL_PREFIX_RE = re.compile(r"^\s*(?:work\s+)?locations?\s*[:\-]?\s+", re.I)
 # A city value carrying a colon, a digit or a form label is a parser leak, not a
 # place: "Work Locations: Number of offers: 1", "Mekelweg 5", "Princetonlaan 8a".
-_IMPLAUSIBLE_CITY_RE = re.compile(r"\d|:|\bnumber\s+of\b|\boffers?\b|\bapply\b|\bdeadline\b", re.I)
+_IMPLAUSIBLE_CITY_RE = re.compile(
+    r"\d|:|\bnumber\s+of\b|\boffers?\b|\bapply\b|\bdeadline\b|"
+    r"^located\s+within\b|\b(?:college|school|faculty|department)\s+of\b",
+    re.I,
+)
 
 
 def _plausible_city(value):
@@ -1730,6 +2899,401 @@ def _plausible_city(value):
     if text.casefold() not in _CITY_STATES and country_code_for(text):
         return None
     return text
+
+
+# US state codes that are not also a Canadian province code. A posting whose
+# state is one of these is in the United States; that is derived from the state
+# evidence, not guessed. PE and NL are excluded because they are Prince Edward
+# Island and Newfoundland as well as Peru and the Netherlands.
+_CANADIAN_PROVINCE_CODES = frozenset(
+    {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"})
+
+
+def _unambiguous_us_state_codes():
+    codes = {str(value).upper() for value in STATE_PROVINCE_ALIASES.values()}
+    return frozenset(code for code in codes if code not in _CANADIAN_PROVINCE_CODES)
+
+
+def _retire_contaminated_institutions(conn):
+    """Retire institution rows whose name is posting prose, not a school.
+
+    These were minted from AKADEUS EEO paragraphs, a POMS sentence fragment and
+    an Inside Higher Ed "Not Specified" string. The rows are retired, never
+    deleted, and their jobs are detached rather than reassigned: this database
+    does not know which school those postings belong to, and inventing one
+    would be the same mistake that created the rows. A detached job keeps every
+    source record and stays in the audit catalogue for review.
+    """
+    stats = {"retired": 0, "jobs_detached": 0}
+    for row in conn.execute(
+        "SELECT id, official_name FROM institutions WHERE is_current=1"
+    ).fetchall():
+        if _is_plausible_institution_name(row["official_name"]):
+            continue
+        jobs = conn.execute(
+            "SELECT id FROM jobs WHERE institution_id=?", (row["id"],)).fetchall()
+        for job in jobs:
+            conn.execute(
+                "UPDATE jobs SET institution_id=NULL, school_id=NULL, updated_at=? WHERE id=?",
+                (now_utc(), job["id"]))
+            conn.execute("""
+                INSERT INTO faculty_job_repair_audit
+                  (observed_at,action,job_id,old_value,new_value,reason)
+                VALUES (?,?,?,?,?,?)
+            """, (now_utc(), "detach_job_from_contaminated_institution", job["id"],
+                  str(row["id"]), "NULL",
+                  "The linked institution name was posting prose, not a school. The job is "
+                  "detached for review rather than reassigned to a guessed institution."))
+            stats["jobs_detached"] += 1
+        conn.execute(
+            "UPDATE institutions SET is_current=0, updated_at=? WHERE id=?",
+            (now_utc(), row["id"]))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), "retire_contaminated_institution", None, str(row["id"]),
+              "is_current=0",
+              f"Institution name is posting prose rather than a school: "
+              f"{str(row['official_name'])[:160]!r}"))
+        stats["retired"] += 1
+    return stats
+
+
+def _repair_current_schools_on_retired_institutions(conn):
+    """Restore the invariant that every current school has a current parent.
+
+    A school can be reparented only through an explicit institution redirect.
+    Otherwise an unused, evidence-free derived row is retired in place.  Any
+    dependent job, current evidence, AACSB roster link, or manual tier override
+    makes the row review-only instead of triggering an inferred reassignment.
+    """
+    rows = conn.execute("""
+        SELECT bs.*,i.official_name AS parent_name,i.merged_into_id AS parent_redirect
+        FROM business_schools bs
+        JOIN institutions i ON i.id=bs.institution_id
+        WHERE bs.is_current=1 AND i.is_current=0
+        ORDER BY bs.id
+    """).fetchall()
+    stats = {"found": len(rows), "reparented": 0, "merged": 0,
+             "retired": 0, "queued": 0, "jobs_reparented": 0}
+    for school in rows:
+        old_parent_id = int(school["institution_id"])
+        target_parent_id = _current_entity_id(conn, "institutions", old_parent_id)
+        dependencies = {
+            "jobs": conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE school_id=?", (school["id"],)
+            ).fetchone()[0],
+            "current_evidence": conn.execute(
+                "SELECT COUNT(*) FROM school_evidence WHERE school_id=? AND is_current=1",
+                (school["id"],),
+            ).fetchone()[0],
+            "active_roster": conn.execute(
+                "SELECT COUNT(*) FROM aacsb_directory_schools "
+                "WHERE linked_business_school_id=? AND active=1", (school["id"],)
+            ).fetchone()[0],
+            "tier_override": conn.execute(
+                "SELECT COUNT(*) FROM school_tier_overrides WHERE school_id=?",
+                (school["id"],),
+            ).fetchone()[0],
+        }
+        if target_parent_id is not None:
+            twin = conn.execute(
+                "SELECT id,is_current,merged_into_id FROM business_schools "
+                "WHERE institution_id=? AND normalized_name=? ORDER BY is_current DESC,id LIMIT 1",
+                (target_parent_id, school["normalized_name"]),
+            ).fetchone()
+            target_school_id = (
+                _current_entity_id(conn, "business_schools", twin["id"])
+                if twin else None
+            )
+            if twin and target_school_id is None:
+                _entity_resolution_queue(
+                    conn, "business_school", school["id"], school["official_name"],
+                    "Current school has a retired parent, but the redirected parent already contains an unresolved retired school key.",
+                    conflicting_identity={"old_parent_id": old_parent_id,
+                                          "target_parent_id": target_parent_id,
+                                          "dependencies": dependencies},
+                )
+                stats["queued"] += 1
+                continue
+            changed_jobs = conn.execute(
+                "UPDATE jobs SET institution_id=?,updated_at=? "
+                "WHERE school_id=? AND institution_id=?",
+                (target_parent_id, now_utc(), school["id"], old_parent_id),
+            ).rowcount
+            stats["jobs_reparented"] += max(0, int(changed_jobs or 0))
+            if target_school_id is not None:
+                stats["merged"] += _merge_school_entity(
+                    conn, int(school["id"]), int(target_school_id),
+                    "School parent institution was retired with an explicit redirect; merged the same normalized school into the current parent without deleting history.",
+                )
+                continue
+            conn.execute(
+                "UPDATE business_schools SET institution_id=?,updated_at=? WHERE id=?",
+                (target_parent_id, now_utc(), school["id"]),
+            )
+            conn.execute("""
+                INSERT INTO faculty_job_repair_audit
+                  (observed_at,action,old_value,new_value,reason)
+                VALUES (?,?,?,?,?)
+            """, (
+                now_utc(), "reparent_school_to_current_institution",
+                json.dumps({"school_id": school["id"], "institution_id": old_parent_id}, ensure_ascii=False),
+                json.dumps({"school_id": school["id"], "institution_id": target_parent_id}, ensure_ascii=False),
+                "The retired institution had an explicit current merge survivor; no identity was inferred.",
+            ))
+            stats["reparented"] += 1
+            continue
+
+        if any(int(value or 0) for value in dependencies.values()):
+            _entity_resolution_queue(
+                conn, "business_school", school["id"], school["official_name"],
+                "Current school has a retired parent with no current survivor and has dependent evidence or state; automatic retirement was refused.",
+                conflicting_identity={"retired_parent_id": old_parent_id,
+                                      "retired_parent_name": school["parent_name"],
+                                      "dependencies": dependencies},
+            )
+            stats["queued"] += 1
+            continue
+
+        conn.execute(
+            "UPDATE business_schools SET is_current=0,merged_into_id=NULL,updated_at=? WHERE id=?",
+            (now_utc(), school["id"]),
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,old_value,new_value,reason)
+            VALUES (?,?,?,?,?)
+        """, (
+            now_utc(), "retire_school_with_retired_parent",
+            json.dumps({"school_id": school["id"], "institution_id": old_parent_id,
+                        "is_current": 1}, ensure_ascii=False),
+            json.dumps({"school_id": school["id"], "institution_id": old_parent_id,
+                        "is_current": 0}, ensure_ascii=False),
+            "Unused derived school had no job, current evidence, active AACSB roster link, or manual override, and its retired parent had no current survivor. The row is retained as history.",
+        ))
+        stats["retired"] += 1
+    return stats
+
+
+def _clear_source_region_country_guesses(conn):
+    """Drop countries that came only from the board's registered region.
+
+    A source's region says where the job board is, not where the job is. AIS is
+    registered as United States, so a Portuguese posting it carried was stamped
+    US, which hides it from a Portugal filter and surfaces it under the wrong
+    country. Where the linked institution has an observed country the job adopts
+    it; otherwise the country becomes Unknown, which is the honest value.
+    """
+    stats = {"from_institution": 0, "cleared_to_unknown": 0}
+    for row in conn.execute("""
+        SELECT j.id, j.country_code, i.country AS inst_country,
+               i.country_code AS inst_code, i.region_group AS inst_region
+        FROM jobs j LEFT JOIN institutions i ON i.id=j.institution_id
+        WHERE j.location_evidence='source_region_country'
+    """).fetchall():
+        if row["inst_code"]:
+            conn.execute(
+                "UPDATE jobs SET country=?, country_code=?, region_group=?, "
+                "location_evidence='institution_entity', updated_at=? WHERE id=?",
+                (row["inst_country"], row["inst_code"], row["inst_region"],
+                 now_utc(), row["id"]))
+            new_value = row["inst_code"]
+            stats["from_institution"] += 1
+        else:
+            conn.execute(
+                "UPDATE jobs SET country=NULL, country_code=NULL, "
+                "location_evidence='source_region_only_unknown_country', updated_at=? "
+                "WHERE id=?", (now_utc(), row["id"]))
+            new_value = "NULL"
+            stats["cleared_to_unknown"] += 1
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), "clear_source_region_country_guess", row["id"],
+              str(row["country_code"]), str(new_value),
+              "The country came from the job board's registered region, not from the "
+              "posting. It now follows the linked institution, or is Unknown."))
+    return stats
+
+
+def _repair_board_default_region_leaks(conn):
+    """Remove board-registration regions from jobs with unknown locations.
+
+    Migration 63 correctly cleared the country derived from a source's region,
+    but the normalizer still left the same board default in ``region_group``.
+    That made the regional KPI claim four extra US jobs even though the US
+    country filter correctly excluded them.  Preserve Unknown at country grain
+    and use the honest catch-all region until posting-level evidence arrives.
+    """
+    rows = conn.execute("""
+        SELECT id,region_group FROM jobs
+        WHERE location_evidence='source_region_only_unknown_country'
+          AND (
+            COALESCE(country_code,'')!='' OR COALESCE(country,'')!=''
+            OR COALESCE(region_group,'Other')!='Other'
+          )
+        ORDER BY id
+    """).fetchall()
+    timestamp = now_utc()
+    for row in rows:
+        conn.execute("""
+            UPDATE jobs
+            SET country=NULL,country_code=NULL,region_group='Other',updated_at=?
+            WHERE id=?
+        """, (timestamp, row["id"]))
+        _record_derived_repair_provenance(
+            conn, row["id"], "region_group", "Other",
+            "A source board's registered region is not posting-level location evidence.",
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (
+            timestamp, "clear_board_default_region", row["id"],
+            str(row["region_group"]), "Other",
+            "The job has no posting-level country evidence; the board's registered "
+            "region cannot place it in a regional market KPI.",
+        ))
+    return len(rows)
+
+
+def _repair_country_evidence(conn):
+    """Correct country codes that were inferred rather than observed.
+
+    Three defects produced wrong countries, all visible in the country filter:
+
+    * "New Mexico" ends in "Mexico", so Albuquerque postings were recorded as
+      Mexican.
+    * A bare US state code was accepted as an ISO country code, putting
+      University of Denver in Colombia and Knoxville in Tunisia.
+    * Institutions with no country evidence were filled with US, so several
+      Latin American schools claimed to be American.
+
+    Only evidence-backed corrections are applied. The AACSB roster is
+    authoritative for an accredited school's country; an unambiguous US state
+    code is authoritative for the United States. Where neither is available the
+    value is cleared to Unknown rather than replaced with another guess.
+    """
+    us_states = _unambiguous_us_state_codes()
+    stats = {"institutions_from_roster": 0, "institutions_from_state": 0,
+             "institutions_merged_after_correction": 0,
+             "jobs_from_state": 0, "jobs_from_entity": 0}
+
+    def set_institution_country(institution_id, code, reason, action, old_value):
+        """Apply a corrected country, merging when it reveals a duplicate.
+
+        ``(normalized_name, country_code)`` is unique, so a row whose country
+        was wrong can collide with the correctly-coded row for the same school
+        once it is fixed. That collision is the duplicate itself: the two rows
+        were only distinct because one carried an invented country, so the
+        corrected row is merged into the existing one rather than rejected.
+        """
+        display = country_display(code)
+        twin = conn.execute(
+            "SELECT id FROM institutions WHERE normalized_name=("
+            "  SELECT normalized_name FROM institutions WHERE id=?) "
+            "AND country_code=? AND id!=? ORDER BY is_current DESC, id LIMIT 1",
+            (institution_id, code.upper(), institution_id)).fetchone()
+        if twin:
+            merged = _merge_institution_entity(
+                conn, institution_id, int(twin["id"]),
+                f"{reason} Correcting the country revealed the row was a duplicate of the "
+                "correctly-coded institution.")
+            stats["institutions_merged_after_correction"] += merged
+            return
+        conn.execute(
+            "UPDATE institutions SET country=?, country_code=?, region_group=?, updated_at=? "
+            "WHERE id=?",
+            (display, code.upper(), REGION_GROUPS.get(display, "Other"), now_utc(),
+             institution_id))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), action, None, str(old_value), code.upper(), reason))
+
+    # 1. The AACSB roster is the authority for an accredited school's country.
+    for row in conn.execute("""
+        SELECT i.id, i.country_code, i.country, a.country AS roster_country
+        FROM institutions i
+        JOIN aacsb_directory_schools a
+          ON LOWER(a.institution_name)=LOWER(i.official_name)
+        WHERE i.is_current=1 AND a.active=1
+          AND a.country IS NOT NULL AND a.country!=''
+    """).fetchall():
+        expected = country_from_text(row["roster_country"])
+        if not expected or (row["country_code"] or "").upper() == expected.upper():
+            continue
+        set_institution_country(
+            row["id"], expected, action="institution_country_from_aacsb_roster",
+            old_value=row["country_code"],
+            reason=(f"AACSB roster records this accredited school in "
+                    f"{row['roster_country']}; the stored code disagreed."))
+        stats["institutions_from_roster"] += 1
+
+    # 2. An unambiguous US state code settles the country.
+    for row in conn.execute(
+        "SELECT id, country_code, state_province FROM institutions "
+        "WHERE is_current=1 AND state_province IS NOT NULL AND state_province!=''"
+    ).fetchall():
+        state = str(row["state_province"]).upper()
+        if state not in us_states or (row["country_code"] or "").upper() == "US":
+            continue
+        set_institution_country(
+            row["id"], "US", action="institution_country_from_state",
+            old_value=row["country_code"],
+            reason=(f"State/province '{state}' is a United States code; the stored country "
+                    "disagreed and was inferred rather than observed."))
+        stats["institutions_from_state"] += 1
+
+    # 3. A job whose own state evidence contradicts its country follows the state.
+    for row in conn.execute(
+        "SELECT id, country_code, state_province FROM jobs "
+        "WHERE state_province IS NOT NULL AND state_province!=''"
+    ).fetchall():
+        state = str(row["state_province"]).upper()
+        if state not in us_states or (row["country_code"] or "").upper() == "US":
+            continue
+        conn.execute(
+            "UPDATE jobs SET country='United States', country_code='US', "
+            "region_group='United States', updated_at=? WHERE id=?", (now_utc(), row["id"]))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), "job_country_from_state", row["id"],
+              str(row["country_code"]), "US",
+              f"Posting state '{state}' is a United States code; the stored country was "
+              "inferred from a name containing a country word."))
+        stats["jobs_from_state"] += 1
+
+    # 4. A job whose country came from its institution follows the corrected one.
+    for row in conn.execute("""
+        SELECT j.id, j.country_code, i.country, i.country_code AS institution_code,
+               i.region_group
+        FROM jobs j JOIN institutions i ON i.id=j.institution_id
+        WHERE j.location_evidence IN ('institution_entity','aacsb_roster','institution_text')
+          AND i.country_code IS NOT NULL AND i.country_code!=''
+    """).fetchall():
+        if (row["country_code"] or "").upper() == (row["institution_code"] or "").upper():
+            continue
+        conn.execute(
+            "UPDATE jobs SET country=?, country_code=?, region_group=?, updated_at=? WHERE id=?",
+            (row["country"], row["institution_code"], row["region_group"], now_utc(), row["id"]))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), "job_country_from_corrected_institution", row["id"],
+              str(row["country_code"]), str(row["institution_code"]),
+              "The posting carried no country of its own; it follows the corrected "
+              "institution country."))
+        stats["jobs_from_entity"] += 1
+    return stats
 
 
 def _repair_institution_city_labels(conn):
@@ -1902,45 +3466,109 @@ def _school_name_quality(name, institution_name=None):
 
 
 def _canonical_variant_school(conn, institution_id):
-    """Pick the canonical entity when an institution's schools are one school.
+    """Pick a canonical row only when one connected school component exists.
 
-    Duplicate rows accumulate as name variants of the same unit -- "A. B.
-    Freeman School of Business" beside "Freeman School of Business", or a
-    posting's programme text prepended as in "Full-time Fully On-Campus Farmer
-    School of Business". When every name contains, or is contained by, another,
-    they are the same school and the fullest name wins.
-
-    Returns None when the names are genuinely distinct, so a university with two
-    real business schools is never collapsed. This links a job to an existing
-    entity; it does not merge the duplicate rows, which stay for review.
+    Pairwise containment is intentionally treated as a graph, not as a
+    requirement that every name be related to every other name. This lets two
+    independent families such as Darden and McIntire coexist while still
+    collapsing aliases within each family during the merge pass.
     """
-    schools = conn.execute(
-        "SELECT id, official_name FROM business_schools "
-        "WHERE institution_id=? AND is_current=1", (institution_id,)).fetchall()
+    components = _school_variant_components(conn, institution_id)
+    if len(components) != 1 or len(components[0]) < 2:
+        return None
     institution = conn.execute(
         "SELECT official_name FROM institutions WHERE id=?", (institution_id,)).fetchone()
     institution_name = institution["official_name"] if institution else None
-    # Compare the cleaned names. Two rows for one school can each carry a
-    # different leaked prefix -- "Chain Transformation. University Stockholm
-    # School of Economics" beside "House Innovation. University Stockholm School
-    # of Economics" -- and neither raw name contains the other, so a raw
-    # comparison called them separate schools.
-    keys = {row["id"]: _school_name_key(
-        _strip_school_name_noise(row["official_name"], institution_name)[0])
-        for row in schools}
-    if len(keys) < 2 or not all(keys.values()):
-        return None
-    # Compare pairs of rows, not pairs of strings. Two rows whose cleaned names
-    # are *identical* are the clearest case of one school, but a value-based
-    # "left != right" test discarded exactly those.
-    items = list(keys.items())
-    for left_id, left in items:
-        if not any(right_id != left_id and (left == right or left in right or right in left)
-                   for right_id, right in items):
-            return None
-    best = min(schools, key=lambda row: (
-        _school_name_quality(row["official_name"], institution_name), row["id"]))
-    return best
+    return min(
+        components[0],
+        key=lambda row: (_school_row_quality(conn, row, institution_name), row["id"]),
+    )
+
+
+_GENERIC_SCHOOL_TOKENS = {
+    "school", "college", "faculty", "business", "management", "commerce",
+    "of", "and", "the", "for", "in", "administration",
+}
+
+
+def _school_variant_edge(left, right, institution_name=None, allow_generic=False):
+    """Return whether two current labels are conservative school aliases."""
+    left_key = _school_name_key(
+        _strip_school_name_noise(left["official_name"], institution_name)[0])
+    right_key = _school_name_key(
+        _strip_school_name_noise(right["official_name"], institution_name)[0])
+    if not left_key or not right_key:
+        return False
+    if left_key == right_key:
+        return True
+    shorter, longer = sorted((left_key, right_key), key=len)
+    if shorter not in longer:
+        return False
+    # Generic labels such as "School of Business" are not an anchor for a
+    # named school. Require at least one distinctive token in the shorter
+    # label before accepting containment.
+    distinctive = [token for token in shorter.split() if token not in _GENERIC_SCHOOL_TOKENS]
+    # A generic label can be safely absorbed only when it is the sole
+    # unlabeled counterpart under an institution. In a three-or-more-school
+    # institution it is intentionally left unmerged so it cannot become a
+    # bridge that collapses Darden/McIntire-style distinct families.
+    return bool(distinctive) or bool(allow_generic and not distinctive)
+
+
+def _school_variant_components(conn, institution_id):
+    """Return connected components of current school rows for an institution."""
+    schools = conn.execute(
+        "SELECT id,official_name,website,aliases_json,is_current FROM business_schools "
+        "WHERE institution_id=? AND is_current=1 ORDER BY id", (institution_id,)).fetchall()
+    if not schools:
+        return []
+    institution = conn.execute(
+        "SELECT official_name FROM institutions WHERE id=?", (institution_id,)).fetchone()
+    institution_name = institution["official_name"] if institution else None
+    parent = {int(row["id"]): int(row["id"]) for row in schools}
+
+    def find(value):
+        root = value
+        while parent[root] != root:
+            root = parent[root]
+        while parent[value] != value:
+            next_value = parent[value]
+            parent[value] = root
+            value = next_value
+        return root
+
+    def union(left, right):
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for index, left in enumerate(schools):
+        for right in schools[index + 1:]:
+            same_site = bool(
+                left["website"] and right["website"]
+                and normalize_url(left["website"]) == normalize_url(right["website"])
+            )
+            if same_site or _school_variant_edge(
+                    left, right, institution_name, allow_generic=len(schools) == 2):
+                union(int(left["id"]), int(right["id"]))
+    groups = defaultdict(list)
+    for row in schools:
+        groups[find(int(row["id"]))].append(row)
+    return list(groups.values())
+
+
+def _school_row_quality(conn, row, institution_name=None):
+    """Rank a school row using evidence authority before label length."""
+    authoritative = conn.execute("""
+        SELECT COUNT(*) FROM school_evidence
+        WHERE school_id=? AND is_current=1
+          AND evidence_type IN ('official_business_school_page','AACSB','EQUIS','AMBA')
+    """, (row["id"],)).fetchone()[0]
+    return (
+        -int(authoritative or 0),
+        -int(bool(row["website"])),
+        _school_name_quality(row["official_name"], institution_name),
+    )
 
 
 def _merge_school_entity(conn, old_id, target_id, reason):
@@ -1952,27 +3580,73 @@ def _merge_school_entity(conn, old_id, target_id, reason):
     """
     if old_id == target_id:
         return 0
+    old = conn.execute("SELECT * FROM business_schools WHERE id=?", (old_id,)).fetchone()
+    target = conn.execute("SELECT * FROM business_schools WHERE id=?", (target_id,)).fetchone()
+    if not old or not target or int(target["is_current"] or 0) != 1:
+        return 0
+    # Preserve the source row and its evidence ledger. Evidence is copied to
+    # the survivor so current classification still works, while the original
+    # row is marked historical rather than deleted.
+    target_columns = _table_columns(conn, "school_evidence")
+    evidence_rows = conn.execute(
+        "SELECT * FROM school_evidence WHERE school_id=?", (old_id,)).fetchall()
+    for evidence in evidence_rows:
+        duplicate = conn.execute(
+            "SELECT id FROM school_evidence WHERE school_id=? AND evidence_type=? "
+            "AND COALESCE(value,'')=COALESCE(?, '') AND COALESCE(source_url,'')=COALESCE(?, '') "
+            "AND is_current=1 LIMIT 1",
+            (target_id, evidence["evidence_type"], evidence["value"], evidence["source_url"]),
+        ).fetchone()
+        if duplicate:
+            continue
+        columns = [
+            "school_id", "evidence_type", "value", "source_name", "source_url",
+            "source_date", "verified_at", "confidence", "notes",
+        ]
+        # The copied ledger row belongs to the survivor. The original row is
+        # retained below as historical evidence, so copying its old school_id
+        # here would leave the survivor without the evidence needed for
+        # classification and would create two historical rows instead.
+        values = [target_id] + [evidence[column] for column in columns[1:]]
+        if "is_current" in target_columns:
+            columns.extend(["is_current", "valid_from", "valid_to"])
+            values.extend([1, evidence["valid_from"] or evidence["verified_at"], None])
+        placeholders = ",".join("?" for _ in columns)
+        conn.execute(
+            f"INSERT INTO school_evidence ({','.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+    if "is_current" in target_columns:
+        conn.execute(
+            "UPDATE school_evidence SET is_current=0, valid_to=COALESCE(valid_to,?) "
+            "WHERE school_id=?", (now_utc(), old_id),
+        )
+    aliases = _json_aliases(target["aliases_json"] if "aliases_json" in target.keys() else "[]")
+    for value in [old["official_name"], *_json_aliases(old["aliases_json"] if "aliases_json" in old.keys() else "[]")]:
+        if value and value != target["official_name"] and value not in aliases:
+            aliases.append(value)
+    conn.execute(
+        "UPDATE business_schools SET aliases_json=?,updated_at=? WHERE id=?",
+        (json.dumps(aliases[:80], ensure_ascii=False), now_utc(), target_id),
+    )
     conn.execute("UPDATE jobs SET school_id=? WHERE school_id=?", (target_id, old_id))
-    conn.execute("UPDATE school_evidence SET school_id=? WHERE school_id=?", (target_id, old_id))
     override = conn.execute(
         "SELECT 1 FROM school_tier_overrides WHERE school_id=?", (old_id,)).fetchone()
     target_override = conn.execute(
         "SELECT 1 FROM school_tier_overrides WHERE school_id=?", (target_id,)).fetchone()
     if override and not target_override:
-        conn.execute("UPDATE school_tier_overrides SET school_id=? WHERE school_id=?",
-                     (target_id, old_id))
+        conn.execute("""
+            INSERT OR IGNORE INTO school_tier_overrides
+              (school_id,tier,reason,source_url,created_at,updated_at)
+            SELECT ?,tier,reason,source_url,created_at,updated_at
+            FROM school_tier_overrides WHERE school_id=?
+        """, (target_id, old_id))
     conn.execute("UPDATE aacsb_directory_schools SET linked_business_school_id=? "
                  "WHERE linked_business_school_id=?", (target_id, old_id))
-    conn.execute("UPDATE business_schools SET is_current=0, updated_at=? WHERE id=?",
-                 (now_utc(), old_id))
-    # Repointing can bring an identical evidence row alongside one the target
-    # already had; collapse exact duplicates so the ledger does not double up.
-    conn.execute("""
-        DELETE FROM school_evidence WHERE id NOT IN (
-            SELECT MIN(id) FROM school_evidence WHERE school_id=?
-            GROUP BY evidence_type, COALESCE(value,''), COALESCE(source_url,'')
-        ) AND school_id=?
-    """, (target_id, target_id))
+    conn.execute(
+        "UPDATE business_schools SET is_current=0, merged_into_id=?, updated_at=? WHERE id=?",
+        (target_id, now_utc(), old_id),
+    )
     conn.execute("""
         INSERT INTO faculty_job_repair_audit (observed_at,action,job_id,old_value,new_value,reason)
         VALUES (?,?,?,?,?,?)
@@ -2011,7 +3685,12 @@ def _merge_institution_entity(conn, old_id, target_id, reason):
         return 0
     old = conn.execute("SELECT * FROM institutions WHERE id=?", (old_id,)).fetchone()
     target = conn.execute("SELECT * FROM institutions WHERE id=?", (target_id,)).fetchone()
-    if not old or not target:
+    if not old or not target or int(old["is_current"] or 0) != 1 or int(target["is_current"] or 0) != 1:
+        return 0
+    # Only a current row can be retired by this operation. A historical row
+    # whose redirect resolves to the target is already merged; a redirect
+    # cycle or dangling redirect is a quality failure and must remain queued.
+    if _current_entity_id(conn, "institutions", old_id) != int(old_id):
         return 0
 
     aliases = _json_aliases(target["aliases_json"])
@@ -2031,27 +3710,35 @@ def _merge_institution_entity(conn, old_id, target_id, reason):
     for school in conn.execute(
             "SELECT id, normalized_name, is_current FROM business_schools WHERE institution_id=?",
             (old_id,)).fetchall():
-        # (institution_id, normalized_name) is unique, so a twin has to be found
-        # whether or not it is current -- moving onto a retired twin would fail
-        # the constraint.
+        # (institution_id, normalized_name) is unique, so a twin has to be
+        # found whether or not it is current. A retired twin is not revived;
+        # its key is moved aside so the current source row can become the
+        # survivor without losing the historical row.
         twin = conn.execute(
             "SELECT id, is_current FROM business_schools WHERE institution_id=? "
             "AND normalized_name=? ORDER BY is_current DESC LIMIT 1",
             (target_id, school["normalized_name"])).fetchone()
         if twin:
-            if school["is_current"] and not twin["is_current"]:
-                # The incoming row is the live one; keep the school represented.
-                conn.execute("UPDATE business_schools SET is_current=1, updated_at=? WHERE id=?",
-                             (now_utc(), twin["id"]))
-            _merge_school_entity(conn, int(school["id"]), int(twin["id"]),
-                                 "Same school name under a merged duplicate institution row.")
+            if int(twin["is_current"] or 0) == 1:
+                _merge_school_entity(conn, int(school["id"]), int(twin["id"]),
+                                     "Same school name under a merged duplicate institution row.")
+            else:
+                retired_key = f"{school['normalized_name']}__retired_{twin['id']}"
+                conn.execute(
+                    "UPDATE business_schools SET normalized_name=?,updated_at=? WHERE id=?",
+                    (retired_key, now_utc(), twin["id"]),
+                )
+                conn.execute(
+                    "UPDATE business_schools SET institution_id=?,updated_at=? WHERE id=?",
+                    (target_id, now_utc(), school["id"]),
+                )
         else:
             conn.execute("UPDATE business_schools SET institution_id=?, updated_at=? WHERE id=?",
                          (target_id, now_utc(), school["id"]))
 
     conn.execute("UPDATE jobs SET institution_id=? WHERE institution_id=?", (target_id, old_id))
-    conn.execute("UPDATE institutions SET is_current=0, updated_at=? WHERE id=?",
-                 (now_utc(), old_id))
+    conn.execute("UPDATE institutions SET is_current=0, merged_into_id=?, updated_at=? WHERE id=?",
+                 (target_id, now_utc(), old_id))
     conn.execute("""
         INSERT INTO faculty_job_repair_audit (observed_at,action,job_id,old_value,new_value,reason)
         VALUES (?,?,?,?,?,?)
@@ -2119,7 +3806,7 @@ def _recanonicalize_merged_schools(conn):
         target = min(rows, key=lambda row: (
             _school_name_quality(row["official_name"], institution_name), row["id"]))
         if not target["is_current"]:
-            conn.execute("UPDATE business_schools SET is_current=1, updated_at=? WHERE id=?",
+            conn.execute("UPDATE business_schools SET is_current=1, merged_into_id=NULL, updated_at=? WHERE id=?",
                          (now_utc(), target["id"]))
             recanonicalized += 1
             conn.execute("""
@@ -2148,6 +3835,7 @@ def _merge_duplicate_institutions(conn):
     put one school's jobs and publication record under another's name.
     """
     merged = 0
+    groups_considered = 0
     groups = conn.execute("""
         SELECT normalized_name FROM institutions
         WHERE is_current=1 AND normalized_name IS NOT NULL AND normalized_name!=''
@@ -2155,7 +3843,7 @@ def _merge_duplicate_institutions(conn):
     """).fetchall()
     for group in groups:
         rows = conn.execute("""
-            SELECT i.id,
+            SELECT i.id,i.country_code,
                    (SELECT COUNT(*) FROM jobs j WHERE j.institution_id=i.id) AS job_count,
                    (CASE WHEN i.city IS NOT NULL AND i.city!='' THEN 1 ELSE 0 END
                     + CASE WHEN i.state_province IS NOT NULL AND i.state_province!='' THEN 1 ELSE 0 END
@@ -2165,13 +3853,79 @@ def _merge_duplicate_institutions(conn):
         """, (group["normalized_name"],)).fetchall()
         if len(rows) < 2:
             continue
-        target = rows[0]
-        for row in rows[1:]:
-            merged += _merge_institution_entity(
-                conn, row["id"], target["id"],
-                f"Duplicate institution row with the identical normalized name "
-                f"'{group['normalized_name']}'; the row carrying the most jobs survives.")
-    return {"merged": merged, "groups": len(groups)}
+        country_codes = {row["country_code"] for row in rows if row["country_code"]}
+        # Exact spelling is not enough to merge two real universities in
+        # different countries. A single NULL-country row may be absorbed by a
+        # uniquely identified country row; multiple country identities stay in
+        # separate review groups.
+        partitions = []
+        for code in sorted(country_codes):
+            partitions.append([row for row in rows if row["country_code"] == code])
+        null_rows = [row for row in rows if not row["country_code"]]
+        if len(country_codes) == 1 and null_rows:
+            partitions[0].extend(null_rows)
+        elif null_rows:
+            partitions.append(null_rows)
+        for partition in partitions:
+            if len(partition) < 2:
+                continue
+            groups_considered += 1
+            target = partition[0]
+            for row in partition[1:]:
+                merged += _merge_institution_entity(
+                    conn, row["id"], target["id"],
+                    f"Duplicate institution row with the identical normalized name "
+                    f"'{group['normalized_name']}' and compatible country identity; "
+                    "the row carrying the most jobs survives.")
+        if len(country_codes) > 1:
+            for row in rows:
+                _entity_resolution_queue(
+                    conn, "institution", row["id"], group["normalized_name"],
+                    "Identical normalized institution names have conflicting current country codes; automatic merge refused.",
+                )
+    return {"merged": merged, "groups": groups_considered}
+
+
+def _queue_institution_country_conflicts(conn):
+    """Queue same-name institutions whose observed country identities conflict.
+
+    Country is part of the available identity, so these rows are deliberately
+    not merged. The queue makes the unresolved conflict visible to review and
+    prevents a later maintenance pass from treating the duplicate names as an
+    accidental clean-up opportunity.
+    """
+    queued = 0
+    groups = conn.execute("""
+        SELECT normalized_name
+        FROM institutions
+        WHERE is_current=1 AND normalized_name IS NOT NULL AND normalized_name!=''
+        GROUP BY normalized_name
+        HAVING COUNT(DISTINCT COALESCE(country_code,''))>1
+    """).fetchall()
+    for group in groups:
+        rows = conn.execute(
+            "SELECT * FROM institutions "
+            "WHERE is_current=1 AND normalized_name=? ORDER BY id",
+            (group["normalized_name"],),
+        ).fetchall()
+        for row in rows:
+            conflicting_rows = []
+            for other in rows:
+                if other["id"] == row["id"]:
+                    continue
+                conflicting_rows.append({
+                    key: other[key] for key in (
+                        "id", "official_name", "country", "country_code", "state_province",
+                        "city", "ror", "openalex_institution_id", "website",
+                    ) if key in other.keys() and other[key] not in (None, "")
+                })
+            _entity_resolution_queue(
+                conn, "institution", row["id"], row["official_name"],
+                "Same normalized institution name has conflicting current country identities; automatic merge is refused until country/source evidence is reviewed.",
+                conflicting_identity={"conflicting_rows": conflicting_rows},
+            )
+            queued += 1
+    return {"groups": len(groups), "queued": queued}
 
 
 def _merge_variant_school_entities(conn):
@@ -2179,9 +3933,9 @@ def _merge_variant_school_entities(conn):
 
     Duplicates accumulate because different sources spell the same unit
     differently, and because a posting's programme text sometimes lands in the
-    school name. Only groups where every name contains or is contained by
-    another are merged; an institution with two genuinely separate schools --
-    Virginia's Darden and McIntire -- is left untouched.
+    school name. Connected components are merged independently; an institution
+    with two or more genuinely separate school families -- Virginia's Darden
+    and McIntire are the key example -- is left split.
     """
     merged = skipped = 0
     groups = conn.execute("""
@@ -2190,22 +3944,300 @@ def _merge_variant_school_entities(conn):
         GROUP BY institution_id HAVING COUNT(*) > 1
     """).fetchall()
     for group in groups:
-        target = _canonical_variant_school(conn, group["institution_id"])
-        if target is None:
+        components = _school_variant_components(conn, group["institution_id"])
+        if len(components) > 1:
             skipped += 1
-            continue
-        others = conn.execute(
-            "SELECT id, official_name FROM business_schools "
-            "WHERE institution_id=? AND is_current=1 AND id!=?",
-            (group["institution_id"], target["id"])).fetchall()
-        for row in others:
-            merged += _merge_school_entity(
-                conn, row["id"], target["id"],
-                f"Name variant of the same school: '{row['official_name']}' merged into "
-                f"'{target['official_name']}'. Every name in this institution's group "
-                f"contains or is contained by another, so they are one unit.")
+        institution = conn.execute(
+            "SELECT official_name FROM institutions WHERE id=?",
+            (group["institution_id"],),
+        ).fetchone()
+        institution_name = institution["official_name"] if institution else None
+        for component in components:
+            if len(component) < 2:
+                continue
+            target = min(
+                component,
+                key=lambda row: (_school_row_quality(conn, row, institution_name), row["id"]),
+            )
+            for row in component:
+                if row["id"] == target["id"]:
+                    continue
+                merged += _merge_school_entity(
+                    conn, row["id"], target["id"],
+                    f"Name variant of the same connected school component: '{row['official_name']}' "
+                    f"merged into '{target['official_name']}'. Other components under the "
+                    "institution remain separate.")
     return {"merged": merged, "groups_skipped_as_distinct": skipped,
             "groups_considered": len(groups)}
+
+
+_KNOWN_POLLUTED_SCHOOL_LABELS = {
+    "Tenure Track Faculty-Carlos Alvarez College of Business": "Carlos Alvarez College of Business",
+    "Full-time Fully On-Campus Farmer School of Business": "Farmer School of Business",
+    "Chain Transformation. University Stockholm School of Economics": "Stockholm School of Economics",
+}
+
+
+def _repair_known_school_labels(conn):
+    """Canonicalize observed polluted labels using explicit name evidence."""
+    changed = merged = 0
+    for old_name, canonical_name in _KNOWN_POLLUTED_SCHOOL_LABELS.items():
+        rows = conn.execute(
+            "SELECT bs.*,i.official_name AS institution_name FROM business_schools bs "
+            "JOIN institutions i ON i.id=bs.institution_id "
+            "WHERE bs.official_name=? AND bs.is_current=1 ORDER BY bs.id",
+            (old_name,),
+        ).fetchall()
+        for row in rows:
+            target = conn.execute(
+                "SELECT * FROM business_schools WHERE institution_id=? AND normalized_name=? "
+                "AND is_current=1 AND id!=? LIMIT 1",
+                (row["institution_id"], normalize_name(canonical_name), row["id"]),
+            ).fetchone()
+            if target:
+                merged += _merge_school_entity(
+                    conn, row["id"], target["id"],
+                    f"Official/canonical school label repair: '{old_name}' -> '{canonical_name}'.",
+                )
+                continue
+            # A previous migration may have retired the desired row. Keep that
+            # historical row intact while freeing its unique key for the
+            # current canonical survivor; do not reactivate the retired row.
+            retired = conn.execute(
+                "SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=? "
+                "AND is_current=0 LIMIT 1",
+                (row["institution_id"], normalize_name(canonical_name)),
+            ).fetchone()
+            if retired:
+                conn.execute(
+                    "UPDATE business_schools SET normalized_name=?,updated_at=? WHERE id=?",
+                    (f"{normalize_name(canonical_name)}__retired_{retired['id']}", now_utc(), retired["id"]),
+                )
+            aliases = _json_aliases(row["aliases_json"])
+            if old_name not in aliases:
+                aliases.append(old_name)
+            conn.execute(
+                "UPDATE business_schools SET official_name=?,normalized_name=?,aliases_json=?,updated_at=? WHERE id=?",
+                (canonical_name, normalize_name(canonical_name),
+                 json.dumps(aliases[:80], ensure_ascii=False), now_utc(), row["id"]),
+            )
+            conn.execute(
+                "INSERT INTO faculty_job_repair_audit "
+                "(observed_at,action,job_id,old_value,new_value,reason) VALUES (?,?,?,?,?,?)",
+                (now_utc(), "canonical_school_label_repair", None, old_name, canonical_name,
+                 "The observed label contained a bounded listing/navigation prefix; the raw source record and original school row remain auditable."),
+            )
+            changed += 1
+    return {"changed": changed, "merged": merged}
+
+
+def _repair_source_entities_from_preserved_records(conn):
+    """Replay institution fields recoverable from saved source excerpts."""
+    rows = conn.execute("""
+        SELECT js.*,s.name AS source_name,s.region AS source_region,
+               sjr.source_url AS record_source_url,sjr.official_url AS record_official_url,
+               sjr.short_excerpt,sjr.structured_extraction,
+               sjr.first_seen AS record_first_seen,sjr.last_seen AS record_last_seen
+        FROM job_sources js JOIN sources s ON s.id=js.source_id
+        JOIN source_job_records sjr
+          ON sjr.source_id=js.source_id AND sjr.source_job_id=js.source_job_id
+        WHERE s.name IN ('inside_higher_ed','poms','akadeus')
+        ORDER BY js.source_id,js.source_job_id
+    """).fetchall()
+    changed = quarantined = 0
+    for row in rows:
+        record = {
+            "source_url": row["record_source_url"] or row["source_url"],
+            "official_url": row["record_official_url"] or row["official_url"],
+            "short_excerpt": row["short_excerpt"],
+            "structured_extraction": row["structured_extraction"],
+            "first_seen": row["record_first_seen"] or row["first_seen"],
+            "last_seen": row["record_last_seen"] or row["last_seen"],
+        }
+        try:
+            old_extraction = json.loads(row["structured_extraction"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            old_extraction = {}
+        old_institution = str(old_extraction.get("institution_raw") or "").strip()
+        # IHE excerpts are rich narrative pages, not a stable employer field.
+        # The generic text extractor previously promoted department, school and
+        # even sentence fragments (for example ``College of Arts and Sciences``)
+        # into new institutions. Only the one observed, explicitly labelled
+        # contaminated IHE value is eligible for this bounded replay; POMS and
+        # AKADEUS have source-specific employer labels handled below.
+        if row["source_name"] == "inside_higher_ed" and not (
+            normalize_name(old_institution) == normalize_name("Ohio Not Specified Miami University")
+            and re.search(r"\bNot\s+Specified\s+Miami\s+University\b", record["short_excerpt"] or "", re.I)
+        ):
+            continue
+        source_job = _repair_source_job(conn, row, record)
+        new_institution = str(source_job.institution_raw or "").strip()
+        if not new_institution or normalize_name(new_institution) == normalize_name(old_institution):
+            continue
+        # The source-specific recovery functions only return explicit employer
+        # phrases. Keep a defensive quality gate so a malformed excerpt cannot
+        # become an entity merely because it differs from the old value.
+        if normalize_name(new_institution) in _UNKNOWN_INSTITUTIONS or len(new_institution) > 180:
+            continue
+        savepoint = "source_entity_replay"
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            normalized = _prepare_entity_fields(
+                normalize_source_job(source_job, row["source_region"])
+            )
+            institution_id = _institution(conn, normalized, source_job)
+            school_id = _school(conn, institution_id, normalized.get("school_raw"), source_job)
+            first_seen = record["first_seen"] or source_job.captured_at or now_utc()
+            last_seen = record["last_seen"] or source_job.captured_at or now_utc()
+            # Reuse the source identity's existing job link. _upsert_job keeps
+            # source records/provenance and private application state intact.
+            _upsert_job(conn, row["source_id"], source_job, normalized, last_seen)
+            conn.execute(
+                "INSERT INTO faculty_job_repair_audit "
+                "(observed_at,action,job_id,source_id,source_job_id,old_value,new_value,reason) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (now_utc(), "source_entity_replay", row["job_id"], row["source_id"],
+                 row["source_job_id"], json.dumps({"institution_raw": old_institution}, ensure_ascii=False),
+                 json.dumps({"institution_raw": new_institution, "institution_id": institution_id,
+                             "school_id": school_id}, ensure_ascii=False),
+                 "Replayed an explicit employer label from the preserved bounded source excerpt; raw source identity was not deleted."),
+            )
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            changed += 1
+        except Exception as exc:  # pragma: no cover - defensive migration guard
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            quarantined += 1
+            LOG.warning("preserved source institution replay failed source_job_id=%s error=%s",
+                        row["source_job_id"], _safe_error(exc))
+    return {"changed": changed, "quarantined": quarantined}
+
+
+_CONTAMINATED_INSTITUTION_EXACT = {
+    "College of Busines", "Miami University Police", "Ohio Not Specified Miami University",
+    "Management. University", "Technology Management. University", "Business Analytics. University",
+}
+
+
+def _looks_like_contaminated_institution(row):
+    name = str(row["official_name"] or "")
+    normalized = normalize_name(name)
+    if name in _CONTAMINATED_INSTITUTION_EXACT:
+        return True
+    if len(name) > 180 and "akadeus" in normalized:
+        return True
+    if "personal data protection policy" in normalized or "previously viewed" in normalized:
+        return True
+    return False
+
+
+def _quarantine_unresolved_institutions(conn):
+    """Exclude unresolved contaminated entities while retaining source rows."""
+    queued = quarantined_jobs = retired = 0
+    rows = conn.execute(
+        "SELECT * FROM institutions WHERE is_current=1 ORDER BY id"
+    ).fetchall()
+    for institution in rows:
+        if not _looks_like_contaminated_institution(institution):
+            continue
+        linked_jobs = conn.execute(
+            "SELECT id,school_id,status,derived_quality,business_scope,faculty_market_eligible "
+            "FROM jobs WHERE institution_id=?", (institution["id"],)
+        ).fetchall()
+        reason = (
+            "Institution label remains contaminated after source-excerpt replay; no defensible "
+            "canonical employer was available. Jobs are excluded from the default market and "
+            "source records remain preserved for manual review."
+        )
+        _entity_resolution_queue(
+            conn, "institution", institution["id"], institution["official_name"], reason,
+        )
+        queued += 1
+        for job in linked_jobs:
+            old_value = {
+                "institution_id": institution["id"], "school_id": job["school_id"],
+                "derived_quality": job["derived_quality"], "status": job["status"],
+            }
+            conn.execute("""
+                UPDATE jobs SET institution_id=NULL,school_id=NULL,
+                  derived_quality='quarantined',business_scope='unknown',
+                  business_scope_confidence='low',business_scope_reason=?,
+                  faculty_market_eligible=0,faculty_market_role='unknown',
+                  faculty_market_reason=?,school_evidence_context='unknown',
+                  status='unknown',verification_note=?,updated_at=? WHERE id=?
+            """, (reason, reason, reason, now_utc(), job["id"]))
+            conn.execute(
+                "INSERT INTO faculty_job_repair_audit "
+                "(observed_at,action,job_id,old_value,new_value,reason) VALUES (?,?,?,?,?,?)",
+                (now_utc(), "contaminated_institution_quarantine", job["id"],
+                 json.dumps(old_value, ensure_ascii=False),
+                 json.dumps({"institution_id": None, "school_id": None,
+                             "derived_quality": "quarantined", "status": "unknown"}, ensure_ascii=False),
+                 reason),
+            )
+            quarantined_jobs += 1
+        conn.execute(
+            "UPDATE business_schools SET is_current=0,updated_at=? "
+            "WHERE institution_id=? AND is_current=1", (now_utc(), institution["id"]),
+        )
+        conn.execute(
+            "UPDATE institutions SET is_current=0,updated_at=? WHERE id=?",
+            (now_utc(), institution["id"]),
+        )
+        # The schema keeps normalized_name/country_code unique even for
+        # historical rows. Free the contaminated key so a later, explicit
+        # source replay can create a clean current institution without
+        # overwriting this review record.
+        conn.execute(
+            "UPDATE institutions SET normalized_name=?,updated_at=? WHERE id=?",
+            (f"{institution['normalized_name']}__quarantined_{institution['id']}",
+             now_utc(), institution["id"]),
+        )
+        retired += 1
+    return {"queued": queued, "quarantined_jobs": quarantined_jobs, "retired": retired}
+
+
+def _store_faculty_policy_metadata(conn):
+    """Persist the exact read-model policies used by this repair generation."""
+    policies = {
+        "default_market": {
+            "policy_version": "faculty_market_v3_20260827",
+            "settings": DEFAULT_MARKET_FILTER_DEFINITION,
+        },
+        "aacsb_lifecycle": {
+            "policy_version": "aacsb_lifecycle_v3_20260827",
+            "settings": {
+                "missing_complete_runs_before_inactive": AACSB_MISSING_RUNS_BEFORE_INACTIVE,
+                "complete_roster_requires_client_metadata": True,
+                "roster_raw_observed_must_reach_reported_total": True,
+                "complete_site_statuses": sorted(AACSB_COMPLETE_JOB_SCAN_STATUSES),
+                "false_positive_identity_grain": "source_name + source_job_id",
+                "decision_table": "source_record_decisions",
+                "reviewed_seed_count": len(_AACSB_REVIEWED_FALSE_POSITIVES),
+            },
+        },
+        "astar_signal": {
+            "policy_version": "astar_signal_v2_20260827",
+            "settings": {
+                "tier_signal_default": "off",
+                "environment_opt_in": "FACULTY_ASTAR_TIER_SIGNAL=1",
+                "display_label": "Observed A* Publication Footprint",
+                "counts_are_institution_level_floors": True,
+            },
+        },
+    }
+    stamp = now_utc()
+    for name, payload in policies.items():
+        settings_json = json.dumps(payload["settings"], ensure_ascii=False, sort_keys=True)
+        fingerprint = hashlib.sha256(settings_json.encode("utf-8")).hexdigest()
+        conn.execute("""
+            INSERT INTO faculty_job_policy_metadata
+              (policy_name,policy_version,fingerprint,settings_json,observed_at)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT(policy_name) DO UPDATE SET
+              policy_version=excluded.policy_version,fingerprint=excluded.fingerprint,
+              settings_json=excluded.settings_json,observed_at=excluded.observed_at
+        """, (name, payload["policy_version"], fingerprint, settings_json, stamp))
 
 
 def _link_jobs_to_unique_school(conn):
@@ -2310,7 +4342,7 @@ def _backfill_business_scope(conn):
 def _status_for(normalized):
     today = date.today()
     deadline = normalized.get("deadline_date")
-    if deadline:
+    if deadline and normalized.get("deadline_mode") == "fixed":
         try:
             deadline_date = date.fromisoformat(deadline)
             if deadline_date < today:
@@ -2430,8 +4462,15 @@ _JOB_WRITE_COLUMNS = (
     "deadline_mode", "deadline_evidence", "deadline_parse_reason", "start_term", "start_year",
     "hiring_cycle", "hiring_cycle_reason", "salary_raw", "salary_min", "salary_max", "salary_currency",
     "salary_period", "phd_required", "phd_required_by", "teaching_areas_json", "research_areas_json",
-    "teaching_load_raw", "visa_text", "visa_status", "language_requirements", "official_url",
+    "teaching_load_raw", "visa_text", "visa_status",
+    # Written as well as stored: a column the upsert does not list stays
+    # NULL forever no matter how well it is derived.
+    "visa_pathways", "language_requirements", "official_url",
     "original_title", "first_seen_at", "last_seen_at", "status", "verification_note", "derived_quality", "fingerprint",
+    # appointment_type existed on the table but not here, so every row written
+    # after the backfill migration was NULL again regardless of what the
+    # normalizer derived from the title.
+    "appointment_type",
     "created_at", "updated_at",
 )
 
@@ -2482,6 +4521,31 @@ def _update_job_from_values(conn, job_id, values, *, preserve_created=True):
     )
 
 
+def _record_observation_provenance(conn, job_id, source_id, source_job, changes, reasons, observed_at):
+    """Record which observation changed which field, and under what rule.
+
+    Without this a later reader can see that a salary exists but not whether it
+    came from the board that owns the posting or from a second board that
+    happened to be read afterwards.
+    """
+    for field, value in changes.items():
+        if field in {"updated_at", "fingerprint"}:
+            continue
+        conn.execute(
+            "UPDATE job_field_provenance SET is_current=0 WHERE job_id=? AND field_name=?",
+            (job_id, field),
+        )
+        conn.execute("""
+            INSERT INTO job_field_provenance
+              (job_id,field_name,value_text,source_id,source_job_id,source_url,
+               evidence_text,captured_at,is_current)
+            VALUES (?,?,?,?,?,?,?,?,1)
+        """, (job_id, field, None if value is None else str(value)[:500], source_id,
+              source_job.source_job_id, source_job.source_url,
+              f"re-observation policy: {reasons.get(field, 'observation')}",
+              observed_at))
+
+
 def _insert_provenance(conn, job_id, source_id, source_job, normalized):
     timestamp = normalized.get("captured_at") or now_utc()
     fields = {
@@ -2497,6 +4561,11 @@ def _insert_provenance(conn, job_id, source_id, source_job, normalized):
         "discipline_primary": (normalized.get("discipline_primary"), normalized.get("classification_reason")),
         "rank_normalized": (normalized.get("rank_normalized"), normalized.get("rank_mapping_explanation")),
         "official_url": (normalized.get("official_url"), normalized.get("official_url")),
+        # Both of these are derived on every observation and were invisible to
+        # anyone asking which reading produced the value.
+        "appointment_type": (normalized.get("appointment_type"),
+                             normalized.get("rank_raw") or normalized.get("title_raw")),
+        "last_seen_at": (normalized.get("captured_at"), "observation timestamp"),
     }
     for field_name, (value, evidence) in fields.items():
         if value in (None, "", "unknown", "Unknown"):
@@ -2510,11 +4579,25 @@ def _insert_provenance(conn, job_id, source_id, source_job, normalized):
               (job_id,field_name,source_id,source_job_id,source_url,value_text,evidence_text,captured_at,is_current)
             VALUES (?,?,?,?,?,?,?,?,1)
         """, (job_id, field_name, source_id, source_job.source_job_id, source_job.source_url,
-              str(value), str(evidence or "")[:3000], timestamp))
+            str(value), str(evidence or "")[:3000], timestamp))
+
+
+def _aacsb_source_is_known_false_positive(conn, source_id, source_job_id):
+    row = conn.execute(
+        """SELECT 1 FROM source_record_decisions
+           WHERE source_id=? AND source_job_id=? AND decision='false_positive'
+             AND is_current=1 LIMIT 1""",
+        (source_id, str(source_job_id)),
+    ).fetchone()
+    return bool(row)
 
 
 def _upsert_job(conn, source_id, source_job, normalized, run_started):
     normalized = _prepare_entity_fields(normalized)
+    known_aacsb_false_positive = (
+        source_job.source == "aacsb_official"
+        and _aacsb_source_is_known_false_positive(conn, source_id, source_job.source_job_id)
+    )
     if source_job.source == "aacsb_official":
         # Only a role-eligible, posting-level business match may restore an
         # older quarantined AACSB record.  The roster school itself is not job
@@ -2525,6 +4608,14 @@ def _upsert_job(conn, source_id, source_job, normalized, run_started):
             and normalized.get("business_scope") in {"business_school", "business_discipline"}
             else "quarantined"
         )
+    if known_aacsb_false_positive:
+        policy_reason = "Reviewed AACSB false-positive identity; retained as source evidence outside the default market."
+        normalized.update({
+            "derived_quality": "quarantined", "business_scope": "unknown",
+            "business_scope_confidence": "low", "business_scope_reason": policy_reason,
+            "faculty_market_role": "unknown", "faculty_market_eligible": 0,
+            "faculty_market_reason": policy_reason, "school_evidence_context": "unknown",
+        })
     institution_id = _institution(conn, normalized, source_job)
     # A school association is useful only after the record itself has passed
     # both the individual-faculty gate and the business-market boundary. Raw
@@ -2553,38 +4644,23 @@ def _upsert_job(conn, source_id, source_job, normalized, run_started):
         action = "merged" if basis in {"official_url", "fingerprint"} else "updated"
         current = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         previous = current
-        changes = []
-        update_fields = [
-            "title_raw", "title_normalized", "institution_id", "school_id", "department", "description_excerpt", "discipline_primary",
-            "discipline_secondary_json", "classification_reason", "business_scope", "business_scope_confidence",
-            "business_scope_reason", "keywords_json", "rank_raw", "rank_normalized",
-            "faculty_market_role", "faculty_market_eligible", "faculty_market_reason",
-            "school_evidence_context",
-            "career_stage", "rank_mapping_confidence", "rank_mapping_explanation", "track_type", "contract_type",
-            "employment_type", "country", "country_code", "region_group", "state_province", "city", "location_evidence", "remote_type",
-            "posted_date", "deadline_date", "deadline_mode", "deadline_evidence", "deadline_parse_reason", "start_term", "start_year", "hiring_cycle", "hiring_cycle_reason",
-            "salary_raw", "salary_min", "salary_max", "salary_currency", "salary_period", "phd_required",
-            "visa_status", "official_url", "original_title", "status", "verification_note", "fingerprint", "updated_at",
-            "derived_quality",
-        ]
         values = _job_payload_values(normalized, institution_id, school_id, current["first_seen_at"], now)
-        for field in update_fields:
-            new_value = values.get(field)
-            old_value = current[field]
-            # These fields are authoritative derived values for the current
-            # source observation.  Clearing a stale deadline or location is
-            # necessary when a source no longer provides that evidence.
-            clearable = {
-                "posted_date", "deadline_date", "deadline_mode", "deadline_evidence",
-                "deadline_parse_reason", "location_evidence", "city", "state_province",
-                "country", "country_code", "region_group", "original_title", "institution_id", "school_id",
-            }
-            if ((field in clearable and new_value != old_value) or
-                    (field not in clearable and new_value not in (None, "") and new_value != old_value)):
-                changes.append(field)
+        # Whether this board already carries the job decides how much authority
+        # the observation has. Its own re-read may withdraw a value it stopped
+        # publishing; a second board carrying the same posting may only add
+        # what we do not already hold. See services/faculty_jobs_field_policy.
+        same_source = bool(conn.execute(
+            "SELECT 1 FROM job_sources WHERE job_id=? AND source_id=?",
+            (job_id, source_id),
+        ).fetchone())
+        changes, change_reasons = plan_field_updates(current, values, same_source=same_source)
         if changes:
-            conn.execute("UPDATE jobs SET " + ",".join(f"{field}=?" for field in changes) + " WHERE id=?",
-                         [values[field] for field in changes] + [job_id])
+            conn.execute(
+                "UPDATE jobs SET " + ",".join(f"{field}=?" for field in changes) + " WHERE id=?",
+                list(changes.values()) + [job_id],
+            )
+            _record_observation_provenance(conn, job_id, source_id, source_job,
+                                           changes, change_reasons, now)
 
     conn.execute("""
         INSERT INTO job_sources
@@ -2595,6 +4671,11 @@ def _upsert_job(conn, source_id, source_job, normalized, run_started):
           official_url=COALESCE(excluded.official_url,job_sources.official_url),
           last_seen=excluded.last_seen, active=1, consecutive_missing_runs=0
     """, (job_id, source_id, source_job.source_job_id, source_job.source_url, normalized.get("official_url"), now, now))
+    if known_aacsb_false_positive:
+        conn.execute("""
+            UPDATE job_sources SET active=0,consecutive_missing_runs=?
+            WHERE source_id=? AND source_job_id=?
+        """, (AACSB_MISSING_RUNS_BEFORE_INACTIVE, source_id, source_job.source_job_id))
     extraction = {key: value for key, value in normalized.items() if key not in {"description_excerpt", "track_evidence", "visa_evidence"}}
     excerpt = normalized.get("description_excerpt")
     content_hash = hashlib.sha256(json.dumps(extraction, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
@@ -2657,10 +4738,12 @@ def _repair_source_job(conn, link, record):
     official = (record["official_url"] if record else None) or link["official_url"]
 
     if source_name == "inside_higher_ed":
-        from services.faculty_jobs_sources.insidehighered import InsideHigherEdAdapter
-        recovered = InsideHigherEdAdapter._institution_from_text(excerpt, title)
-        if recovered:
-            institution = recovered
+        # A listing card can concatenate its state and a missing location
+        # marker into the employer label (``Ohio Not Specified Miami
+        # University``). The excerpt still contains the explicit university
+        # phrase, so this narrow correction is safer than a fuzzy resolver.
+        if re.search(r"\bNot\s+Specified\s+Miami\s+University\b", excerpt, re.I):
+            institution = "Miami University"
         recovered_location = _repair_date_after_keyword(
             excerpt,
             r"(?:work\s+)?location\s*:\s*(.*?)(?=\s*(?:type\s+of|categories?\s*:|view\s+details|save\b|$))",
@@ -2742,18 +4825,27 @@ def _repair_source_job(conn, link, record):
         deadline = _repair_date_after_keyword(
             excerpt, r"(?:application\s+deadline|deadline|closing(?:\s+date)?|closes|apply\s+by|expires?)\s*:?\s*([^.;]{1,120})"
         )
-
-    # A board may expose the business-school/department as the employer
-    # label while the bounded excerpt contains the university.  Recover only
-    # an explicit University/College/Institute phrase; never use a city as a
-    # substitute institution.
-    if re.search(r"\b(?:school|college|faculty)\b", str(institution), re.I) and not re.search(
-        r"\b(?:university|institute|polytechnic)\b", str(institution), re.I
-    ):
-        from services.faculty_jobs_sources.insidehighered import InsideHigherEdAdapter
-        recovered = InsideHigherEdAdapter._institution_from_text(excerpt, title)
+    elif source_name == "poms":
+        # Older POMS table rows were shifted by the parser and placed a title
+        # fragment in the institution field. The preserved bounded excerpt
+        # has an explicit ``University/employer:`` label, so it is safe to
+        # replay that field without refetching or editing the raw record.
+        recovered = re.search(
+            r"\bUniversity/employer\s*:\s*(.+?)(?=\.\s*$|\s+Location\s*:|\s+Discipline\s*:)",
+            excerpt, re.I,
+        )
         if recovered:
-            institution = recovered
+            institution = recovered.group(1).strip(" .")
+    elif source_name == "akadeus":
+        # AKADEUS detail excerpts expose the employer as ``Company:`` before
+        # location and discipline. This is source-level evidence for the
+        # institution, not a fuzzy guess from the job title.
+        recovered = re.search(
+            r"\bCompany\s*:\s*(.+?)(?=\s+Location\s*:|\s+Discipline\s*:|\s+Employment\s+Type\s*:)",
+            excerpt, re.I,
+        )
+        if recovered:
+            institution = recovered.group(1).strip(" .")
 
     # For all sources, use the bounded text as a last-resort evidence source;
     # never reuse the old normalized deadline_date because it may be the very
@@ -3834,13 +5926,12 @@ def _repair_business_school_entity_labels(conn):
 def _repair_job_status_recency(conn):
     """Forward-correct stale active labels from preserved date evidence."""
     rows = conn.execute(
-        """SELECT j.*,MIN(js.source_id) AS audit_source_id,
+        f"""SELECT j.*,MIN(js.source_id) AS audit_source_id,
                   MIN(js.source_job_id) AS audit_source_job_id,
                   COUNT(DISTINCT js.source_id) AS source_count
            FROM jobs j
            LEFT JOIN job_sources js ON js.job_id=j.id AND js.active=1
-           WHERE j.derived_quality='accepted'
-             AND j.status IN ('open','likely_open','closing_soon')
+           WHERE {default_market_where('j')}
            GROUP BY j.id ORDER BY j.id"""
     ).fetchall()
     changed = 0
@@ -3920,6 +6011,7 @@ def _repair_duplicate_review_metadata(conn):
 
 def repair_faculty_jobs_database(db_path=None):
     """Run the idempotent repair migration explicitly and return its stats."""
+    _require_guarded_production_write(db_path)
     ensure_faculty_jobs_tables(db_path)
     conn = _connect(db_path)
     try:
@@ -3961,7 +6053,11 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
                         adapters=None, detail_budget=None):
     """Run selected public adapters independently and transactionally."""
     db_path = db_path or FACULTY_DB_PATH
+    _require_guarded_production_write(db_path)
     ensure_faculty_jobs_tables(db_path)
+    # Origins that declare a pace slower than a run can wait out get a fixed
+    # request budget; this is the run boundary that budget is counted against.
+    reset_crawl_budgets()
     with _FACULTY_UPDATE_LOCK:
         conn = _connect(db_path)
         try:
@@ -3980,7 +6076,13 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
                 conn.execute("UPDATE sources SET last_attempt_at=?, last_status='running', last_error=NULL, updated_at=? WHERE id=?", (started, started, source["id"]))
                 run_id = conn.execute("INSERT INTO ingestion_runs (source_id,started_at,status) VALUES (?,?,?)", (source["id"], started, "running")).lastrowid
                 conn.commit()
-                if not source["enabled"] or source["support_status"] not in {"enabled", "degraded"}:
+                explicit_opt_in = bool(
+                    requested and source["name"] in requested
+                    and source["support_status"] == "opt_in"
+                )
+                if ((not source["enabled"]
+                     or source["support_status"] not in {"enabled", "degraded"})
+                        and not explicit_opt_in):
                     reason = source["support_reason"] or "Source disabled by policy."
                     conn.execute("UPDATE ingestion_runs SET finished_at=?,status='skipped',error_summary=? WHERE id=?", (now_utc(), reason, run_id))
                     conn.execute("UPDATE sources SET last_status='skipped',last_error=?,updated_at=? WHERE id=?", (reason[:500], now_utc(), source["id"]))
@@ -4003,6 +6105,10 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
                     adapter.detail_budget = max(0, min(1000, int(detail_budget)))
                 try:
                     response = adapter.fetch()
+                    reported_total = getattr(response, "reported_total", None)
+                    coverage_complete = getattr(response, "coverage_complete", None)
+                    listing_pages = getattr(response, "listing_pages", None)
+                    absence_reconciliation_applied = coverage_complete is True
                     inserted = updated = merged = 0
                     seen = []
                     with conn:
@@ -4013,16 +6119,41 @@ def update_faculty_jobs(db_path=None, source_names=None, timeout=None, max_pages
                             if action == "inserted": inserted += 1
                             elif action == "merged": merged += 1
                             else: updated += 1
-                        _mark_missing_after_success(conn, source["id"], seen)
+                        # A successful request is not necessarily a complete
+                        # source snapshot.  A bounded/partial prefix may revive
+                        # records it sees, but absence from that prefix is not
+                        # evidence that a previously linked posting disappeared.
+                        # Only an explicitly complete snapshot may advance the
+                        # missing/deactivation lifecycle for unseen source IDs.
+                        if absence_reconciliation_applied:
+                            _mark_missing_after_success(conn, source["id"], seen)
                         finished = now_utc()
                         run_notes = "; ".join(str(note) for note in (response.notes or []) if note).strip()[:500] or None
                         conn.execute("""
                             UPDATE ingestion_runs SET finished_at=?,status='success',pages_fetched=?,items_seen=?,
-                              items_inserted=?,items_updated=?,items_merged=?,error_count=0,error_summary=? WHERE id=?
+                              items_inserted=?,items_updated=?,items_merged=?,error_count=0,error_summary=?,
+                              reported_total=?,coverage_complete=?,listing_pages=? WHERE id=?
                         """, (finished, response.pages_fetched, len(response.jobs), inserted, updated, merged,
-                              run_notes, run_id))
+                              run_notes, reported_total,
+                              None if coverage_complete is None else int(bool(coverage_complete)),
+                              None if listing_pages is None else int(listing_pages),
+                              run_id))
                         conn.execute("UPDATE sources SET last_success_at=?,last_status='ok',last_error=NULL,updated_at=? WHERE id=?", (finished, finished, source["id"]))
-                    results.append({"source": source["name"], "status": "success", "pages_fetched": response.pages_fetched, "items_seen": len(response.jobs), "items_inserted": inserted, "items_updated": updated, "items_merged": merged, "notes": response.notes})
+                    results.append({"source": source["name"], "status": "success",
+                                    # Total requests made, versus listing pages
+                                    # actually read; detail enrichment inflates
+                                    # the former and says nothing about reach.
+                                    "pages_fetched": response.pages_fetched,
+                                    "listing_pages": listing_pages,
+                                    "items_seen": len(response.jobs), "items_inserted": inserted,
+                                    "items_updated": updated, "items_merged": merged,
+                                    # Say what the board claims to hold, so a
+                                    # first-page-only read is never mistaken for
+                                    # full coverage of that source.
+                                    "reported_total": reported_total,
+                                    "coverage_complete": coverage_complete,
+                                    "absence_reconciliation_applied": absence_reconciliation_applied,
+                                    "notes": response.notes})
                 except Exception as exc:
                     error = _safe_error(exc)
                     conn.execute("UPDATE ingestion_runs SET finished_at=?,status='error',error_count=1,error_summary=? WHERE id=?", (now_utc(), error, run_id))
@@ -4068,6 +6199,13 @@ def _source_names(conn, job_id):
 
 def _job_dict(conn, row, include_private=False):
     value = dict(row)
+    value.update(lifecycle_fields(value))
+    career_actions.decorate_job(value)
+    value["posting_kind"] = "pool" if value.pop("posting_pool", 0) else "advertisement"
+    value["requirements"] = requirements.requirements_for_job(conn, value["id"])
+    value["timing"] = requirements.timing_for_job(value, value["requirements"])
+    value["last_verified_at"] = value["timing"]["last_verified_at"]
+    value["teaching_proxy_rule"] = PROXY_RULE if value.get("carnegie_unitid") else None
     value["discipline_secondary"] = _json_load(value.get("discipline_secondary_json"), [])
     value["keywords"] = _json_load(value.get("keywords_json"), [])
     value["teaching_areas"] = _json_load(value.get("teaching_areas_json"), [])
@@ -4116,6 +6254,54 @@ def _job_dict(conn, row, include_private=False):
     return value
 
 
+def _require_current_schema(db_path=None):
+    """Assert the schema is current without changing anything.
+
+    Read endpoints used ``ensure_faculty_jobs_tables`` to open the database,
+    which migrates it. A page load is not a decision to migrate: it happens
+    with no backup behind it and no record of who asked. Reads assert; only an
+    explicit write-mode command migrates.
+    """
+    target = Path(db_path or FACULTY_DB_PATH)
+    if not target.exists():
+        # An isolated fixture may need first-run schema creation. The live
+        # store is different: a missing production database is an operational
+        # incident, not permission for a GET to create a new database.
+        if target.resolve() == Path(FACULTY_DB_PATH).resolve():
+            raise FacultyJobsSchemaOutOfDate(
+                "production faculty-jobs database is missing; read endpoints "
+                "do not create it. Run an explicit guarded write-mode "
+                "initialization command after confirming the target path."
+            )
+        ensure_faculty_jobs_tables(target)
+        return
+    conn = sqlite3.connect(f"file:{target.as_posix()}?mode=ro", uri=True, timeout=60)
+    try:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+    if int(version) != int(FACULTY_JOBS_SCHEMA_VERSION):
+        raise FacultyJobsSchemaOutOfDate(
+            f"database schema is user_version={version} but this build expects "
+            f"{FACULTY_JOBS_SCHEMA_VERSION}. Run a write-mode command to migrate; "
+            "read endpoints do not migrate because that would happen without a backup."
+        )
+
+
+class FacultyJobsSchemaOutOfDate(RuntimeError):
+    """The database is behind and a read refused to migrate it."""
+
+
+def _require_guarded_production_write(db_path=None):
+    """Reject service-level writes to the live store without a write guard."""
+    target = Path(db_path or FACULTY_DB_PATH).resolve()
+    production = Path(FACULTY_DB_PATH).resolve()
+    if target == production and not write_guard_active():
+        raise FacultyJobsWriteGuardRequired(
+            "production faculty-jobs writes must run inside the preflight/backup/postflight guard"
+        )
+
+
 def _job_select():
     return """
       SELECT j.*, i.official_name AS institution_name, i.institution_url,
@@ -4128,21 +6314,38 @@ def _job_select():
              bs.management_strength, bs.is_strength, bs.marketing_strength,
              bs.finance_strength, bs.accounting_strength, bs.operations_strength,
              so.action AS scope_override_action, so.reason AS scope_override_reason,
-             so.source_url AS scope_override_source_url
+             so.source_url AS scope_override_source_url,
+             cp.unitid AS carnegie_unitid, cp.data_year AS carnegie_year,
+             cp.teaching_proxy, cp.institutional_classification AS carnegie_institutional_classification,
+             cp.source_url AS carnegie_source_url, cp.source_sha256 AS carnegie_source_sha256,
+             icl.method AS carnegie_match_method,
+             """ + career_actions.select_columns() + """
       FROM jobs j
       LEFT JOIN institutions i ON i.id=j.institution_id
       LEFT JOIN business_schools bs ON bs.id=j.school_id
       LEFT JOIN job_scope_overrides so ON so.job_id=j.id
+      LEFT JOIN institution_career_links icl ON icl.institution_id=i.id
+      LEFT JOIN carnegie_institution_catalog cp ON cp.unitid=icl.unitid
+      LEFT JOIN job_requirement_current rq ON rq.job_id=j.id
     """
+
+
+# The page is called Business Faculty Jobs, so its default is the set whose
+# business school was actually established. The broader "the title mentions a
+# business discipline, school unverified" set is several times larger and
+# remains one click away -- but naming it the default made an unverified
+# majority look like the verified product.
+DEFAULT_MARKET_SCOPE = "business_school"
 
 
 def _requested_scope(query=None):
     """Return the public market view requested by a caller.
 
-    The business-market view is the safe default for this domain.  The raw
-    source catalogue remains available explicitly through ``scope=all``.
+    ``business_school`` (explicit school evidence) is the default. ``business``
+    adds business-discipline roles whose school is unverified, and ``all`` is
+    the raw source catalogue for audit. Both remain reachable explicitly.
     """
-    value = str((query or {}).get("scope") or "business").strip().casefold()
+    value = str((query or {}).get("scope") or DEFAULT_MARKET_SCOPE).strip().casefold()
     if value in {"all", "audit", "all_postings"}:
         return "all"
     if value in {"business_school", "verified_business_school", "school"}:
@@ -4151,20 +6354,43 @@ def _requested_scope(query=None):
 
 
 def _scope_conditions(query=None, prefix=""):
+    """Build the public scope filter.
+
+    The default market deliberately uses the shared four-part predicate.  A
+    manually reviewed scope override is an explicit opt-in query mode so it
+    cannot silently make the API/report totals disagree.
+    """
     scope = _requested_scope(query)
     column = f"{prefix}business_scope" if prefix else "business_scope"
     override = "so.action" if prefix else "scope_override_action"
     quality = f"{prefix}derived_quality" if prefix else "derived_quality"
     eligible = f"{prefix}faculty_market_eligible" if prefix else "faculty_market_eligible"
-    status = f"{prefix}status" if prefix else "status"
+    status = effective_status_sql(prefix)
+    status_values = ",".join(repr(value) for value in DEFAULT_MARKET_STATUSES)
+    # One vacancy two boards both carried is one row here too. This predicate
+    # is written out separately from the scope module's, which is how the
+    # merge reached summary and analytics without reaching list and CSV;
+    # keep the two in step.
+    unmerged = f"{prefix}merged_into_job_id IS NULL" if prefix else "merged_into_job_id IS NULL"
     active = "" if str((query or {}).get("status") or "").strip() else (
-        f" AND {status} IN ('open','likely_open','closing_soon')"
+        f" AND {status} IN ({status_values})"
     )
+    include_overrides = str((query or {}).get("include_overrides") or "").strip().lower() in {
+        "1", "true", "yes"
+    }
     if scope == "business_school":
-        return [f"({quality}='accepted' AND {eligible}=1 AND {column}='business_school' AND COALESCE({override},'')!='exclude'{active})"], [], scope
+        base = f"{unmerged} AND {quality}='accepted' AND {eligible}=1 AND {column}='business_school'"
+        if include_overrides:
+            base = f"({base} AND COALESCE({override},'')!='exclude')"
+        return [f"({base}{active})"], [], scope
     if scope == "business":
-        return [f"((({quality}='accepted' AND {eligible}=1 AND {column} IN ('business_school','business_discipline') AND COALESCE({override},'')!='exclude') OR {override}='include'){active})"], [], scope
-    return [], [], scope
+        if not include_overrides and not str((query or {}).get("status") or "").strip():
+            return [default_market_where(prefix)], [], scope
+        base = f"{unmerged} AND {quality}='accepted' AND {eligible}=1 AND {column} IN ('business_school','business_discipline')"
+        if include_overrides:
+            base = f"(({base} AND COALESCE({override},'')!='exclude') OR {override}='include')"
+        return [f"({base}{active})"], [], scope
+    return [unmerged], [], scope
 
 
 def _summary_scope_conditions(query=None):
@@ -4173,40 +6399,170 @@ def _summary_scope_conditions(query=None):
     return clauses, args, _requested_scope(query)
 
 
+def _source_filter_options(conn, scope_where, scope_args):
+    """Sources present in the current scope, with how many jobs each carries.
+
+    The count is deliberately part of the filter payload: when one board
+    supplies 2,099 of 2,377 rows, that fact belongs next to the control, not
+    buried in a source-health page nobody opens while searching.
+    """
+    rows = conn.execute(
+        "SELECT s.name AS name, COUNT(DISTINCT f.id) AS jobs "
+        "FROM (" + _job_select() + " WHERE " + scope_where + ") f "
+        # active=1 to match the filter these counts label. Counting inactive
+        # links here made the dropdown promise more rows than selecting it
+        # returned.
+        "JOIN job_sources jsf ON jsf.job_id=f.id AND jsf.active=1 "
+        "JOIN sources s ON s.id=jsf.source_id "
+        "GROUP BY s.name ORDER BY jobs DESC, s.name",
+        scope_args,
+    ).fetchall()
+    return [{"name": row["name"], "jobs": int(row["jobs"])} for row in rows]
+
+
+def _filter_values(value):
+    """Accept one filter value or a comma-separated list, in any order.
+
+    Used for source names and for the plain column vocabularies alike; none of
+    those values contains a comma, so the separator stays unambiguous.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        candidates = list(value)
+    else:
+        candidates = str(value).split(",")
+    names = []
+    for candidate in candidates:
+        name = str(candidate or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+# One definition of each stance, shared by the filter, the counts and the CSV
+# so they cannot drift into disagreeing about which statuses mean what.
+_VISA_STANCE_SQL = {
+    "supportive": "COALESCE(j.visa_status,'unknown') IN ('sponsorship_explicit_yes',"
+                  "'permanent_residency_supported','international_candidates_welcome')",
+    "blocking": "COALESCE(j.visa_status,'unknown') IN ('citizenship_required',"
+                "'citizen_or_pr_required','sponsorship_explicit_no')",
+    "unclear": "COALESCE(j.visa_status,'unknown')='unclear'",
+    "unstated": "COALESCE(j.visa_status,'unknown')='unknown'",
+}
+
+
 def _query_conditions(query):
     query = query or {}
     clauses, args, _scope = _scope_conditions(query, "j.")
     q = str(query.get("q") or "").strip()
     if q:
+        # Two ways to match, deliberately ORed rather than one replacing the
+        # other.
+        #
+        # The substring pass is what people expect from a filter box: typing
+        # part of an institution or city narrows the list, and it reaches
+        # columns the index does not carry (institution and school names live
+        # in joined tables).
+        #
+        # The full-text pass adds what substring matching cannot do: separate
+        # words. "tenure marketing" as a substring matches nothing, because no
+        # posting contains that literal string -- but plenty contain both
+        # words, and that is what the person meant.
         like = f"%{q}%"
-        clauses.append("(j.title_raw LIKE ? OR i.official_name LIKE ? OR bs.official_name LIKE ? OR j.department LIKE ? OR j.description_excerpt LIKE ? OR j.city LIKE ?)")
-        args.extend([like] * 6)
-    country = str(query.get("country") or "").strip()
-    if country:
-        code = country_code_for(country)
-        if code:
-            clauses.append("j.country_code=?")
-            args.append(code)
+        substring = ("(j.title_raw LIKE ? OR i.official_name LIKE ? OR "
+                     "bs.official_name LIKE ? OR j.department LIKE ? OR "
+                     "j.description_excerpt LIKE ? OR j.city LIKE ?)")
+        from services import faculty_jobs_search
+        expression = faculty_jobs_search.sanitise(q)
+        if expression and " AND " in expression:
+            # Only for multi-word queries: for a single word the substring pass
+            # already matches everything the index would, and more.
+            clauses.append(
+                f"({substring} OR j.id IN (SELECT rowid FROM jobs_fts "
+                f"WHERE jobs_fts MATCH ?))")
+            args.extend([like] * 6 + [expression])
         else:
+            clauses.append(substring)
+            args.extend([like] * 6)
+    countries = _filter_values(query.get("country"))
+    if countries:
+        codes = []
+        for name in countries:
+            code = country_code_for(name)
+            if code and code not in codes:
+                codes.append(code)
+        if not codes:
             # An unsupported country value is a valid filter with no matches,
             # not a server error or a silent source-region fallback.
             clauses.append("1=0")
+        elif len(codes) == 1:
+            clauses.append("j.country_code=?")
+            args.append(codes[0])
+        else:
+            clauses.append("j.country_code IN (%s)" % ",".join("?" for _ in codes))
+            args.extend(codes)
     for key, column in (("region", "j.region_group"), ("state_province", "j.state_province"),
                         ("discipline", "j.discipline_primary"), ("rank", "j.rank_normalized"),
                         ("career_stage", "j.career_stage"), ("track", "j.track_type"),
-                        ("status", "j.status"), ("school_tier", "COALESCE(bs.business_research_tier,'Unclassified')"),
+                        ("appointment_type", "COALESCE(j.appointment_type,'unknown')"),
+                        ("visa_status", "COALESCE(j.visa_status,'unknown')"),
+                        ("status", effective_status_sql("j")), ("school_tier", "COALESCE(bs.business_research_tier,'Unclassified')"),
                         ("university_level", "COALESCE(i.university_research_level,'Unknown')")):
-        value = str(query.get(key) or "").strip()
-        if value:
+        # Several values may be given, comma-separated, so a search can ask for
+        # Marketing *or* Information Systems in one pass. No value in any of
+        # these vocabularies contains a comma, so the separator is unambiguous;
+        # a single value still produces a plain equality.
+        values = _filter_values(query.get(key))
+        if len(values) == 1:
             clauses.append(f"{column}=?")
-            args.append(value)
+            args.append(values[0])
+        elif values:
+            clauses.append(f"{column} IN ({','.join('?' for _ in values)})")
+            args.extend(values)
+    # Sponsorship, grouped the way the decision is made. The exact status is
+    # filterable above; this is the question a candidate who needs a visa
+    # actually asks. `unstated` is deliberately not called "no" -- at current
+    # coverage it overwhelmingly means the posting's page has not been read,
+    # and an unread page is not an employer's answer.
+    clauses.append("(" + career_view_sql(query.get("career_view")) + ")")
+    clauses.append("(" + career_actions.position_filter(query.get("position_type")) + ")")
+    clauses.append("(" + career_actions.action_sql(query.get("action_view")) + ")")
+    clauses.append("(" + career_actions.posting_kind_filter(query.get("posting_kind")) + ")")
+    stance = str(query.get("visa_stance") or "").strip().casefold()
+    if stance in _VISA_STANCE_SQL:
+        clauses.append(_VISA_STANCE_SQL[stance])
+    # Source is a link, not a column: 41 jobs are carried by more than one
+    # board, so a job must match when *any* of its sources matches. Testing a
+    # column would drop cross-posted jobs from an include filter and leak them
+    # through an exclude filter.
+    # "From this source" means the source still carries it. Matching inactive
+    # links too made the filter disagree with the source-health panel, which
+    # counts active links: inside_higher_ed answered 52 in one place and 45 in
+    # the other for the same question. ``ever_source`` keeps the historical
+    # question available under a name that says which question it is; a job's
+    # full link history stays visible in its detail view either way.
+    active_source = ("EXISTS (SELECT 1 FROM job_sources jsf JOIN sources sf ON sf.id=jsf.source_id "
+                     "WHERE jsf.job_id=j.id AND jsf.active=1 AND sf.name IN (%s))")
+    ever_source = ("EXISTS (SELECT 1 FROM job_sources jsf JOIN sources sf ON sf.id=jsf.source_id "
+                   "WHERE jsf.job_id=j.id AND sf.name IN (%s))")
+    for key, template, negate in (("source", active_source, False),
+                                  ("exclude_source", active_source, True),
+                                  ("ever_source", ever_source, False)):
+        names = _filter_values(query.get(key))
+        if not names:
+            continue
+        placeholders = ",".join("?" for _ in names)
+        clause = template % placeholders
+        clauses.append(f"NOT {clause}" if negate else clause)
+        args.extend(names)
     posted_after = str(query.get("posted_after") or "").strip()
     if posted_after:
         clauses.append("j.posted_date>=?")
         args.append(posted_after)
     closing_before = str(query.get("closing_before") or "").strip()
     if closing_before:
-        clauses.append("j.deadline_date IS NOT NULL AND j.deadline_date<=?")
+        clauses.append(career_actions.hard_deadline_sql() + "<=?")
         args.append(closing_before)
     salary_known = str(query.get("salary_known") or "").lower()
     if salary_known in {"1", "true", "yes"}:
@@ -4217,7 +6573,7 @@ def _query_conditions(query):
 
 
 def build_faculty_jobs_payload(db_path=None, query=None, include_private=False):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     query = query or {}
     conn = _connect(db_path)
     try:
@@ -4225,13 +6581,43 @@ def build_faculty_jobs_payload(db_path=None, query=None, include_private=False):
         scope = _requested_scope(query)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         filtered_where = " AND ".join(clauses) if clauses else "1=1"
-        sort = str(query.get("sort") or ("fit" if include_private else "newest"))
+        sort = str(query.get("sort") or ("fit" if include_private else "market_priority"))
+        # Newest-first buries the postings a candidate is actually searching
+        # for: an aggregator's adjunct volume arrives constantly, so a
+        # tenure-track opening at a verified business school is pushed off the
+        # first page by contingent teaching work posted an hour later. This
+        # ordering states the preference explicitly instead of letting arrival
+        # time stand in for relevance. Nothing is hidden -- only ordered.
+        # The contingent control actually changes the ordering. Unticked, an
+        # adjunct posting sorts below continuing appointments; ticked, that
+        # term drops out and adjunct rows compete on the remaining criteria.
+        # Either way nothing is hidden -- this is ordering, not filtering.
+        rank_contingent_equally = str(query.get("include_contingent") or "").lower() in {
+            "1", "true", "yes", "on"}
+        contingent_term = (
+            "" if rank_contingent_equally else
+            "CASE WHEN COALESCE(j.appointment_type,'unknown')='adjunct' THEN 1 ELSE 0 END, ")
+        market_priority = (
+            "CASE WHEN j.track_type IN ('tenure_track','tenured') THEN 0 "
+            "     WHEN j.track_type='permanent_open_ended' THEN 1 ELSE 2 END, "
+            + contingent_term +
+            "CASE WHEN j.business_scope='business_school' THEN 0 ELSE 1 END, "
+            "CASE WHEN j.career_stage='early_career_faculty' THEN 0 ELSE 1 END, "
+            "j.first_seen_at DESC, j.id DESC"
+        )
         order = {
+            "market_priority": market_priority,
             "newest": "j.first_seen_at DESC, j.id DESC",
             "closing_soon": "CASE WHEN j.deadline_date IS NULL THEN 1 ELSE 0 END, j.deadline_date ASC, j.first_seen_at DESC",
             "salary": "CASE WHEN j.salary_max IS NULL THEN 1 ELSE 0 END, j.salary_max DESC, j.first_seen_at DESC",
             "school_tier": "CASE COALESCE(bs.business_research_tier,'Unclassified') WHEN 'T1' THEN 1 WHEN 'T2' THEN 2 WHEN 'T3' THEN 3 WHEN 'T4' THEN 4 ELSE 5 END, j.first_seen_at DESC",
-        }.get(sort, "j.first_seen_at DESC, j.id DESC")
+        }.get(sort, market_priority)
+        if query.get("action_view") == "new" and not query.get("sort"):
+            order = "j.first_seen_at DESC,j.id DESC"
+        elif query.get("action_view") == "review_soon" and not query.get("sort"):
+            today_sql = date.today().isoformat()
+            order = (f"MIN(CASE WHEN rq.review_date>='{today_sql}' THEN rq.review_date ELSE '9999-12-31' END, "
+                     f"CASE WHEN {career_actions.hard_deadline_sql()}>='{today_sql}' THEN {career_actions.hard_deadline_sql()} ELSE '9999-12-31' END), j.id DESC")
         try:
             limit = max(1, min(200, int(query.get("limit", 50))))
             offset = max(0, int(query.get("offset", 0)))
@@ -4254,6 +6640,8 @@ def build_faculty_jobs_payload(db_path=None, query=None, include_private=False):
             "pagination": {"total": total, "limit": limit, "offset": offset, "has_more": offset + len(jobs) < total},
             "meta": {
                 "updated_at": now_utc(), "private_fields": bool(include_private), "scope": scope,
+                "active_filter": active_filter_definition(scope),
+                "active_filter_sql": active_sql(scope),
                 "scope_counts": _business_scope_counts_filtered(conn, filtered_where, args),
                 "source_coverage": _coverage(conn, filtered_where, args),
             },
@@ -4273,6 +6661,7 @@ def enrich_inside_higher_ed_details(db_path=None, source_job_ids=None, max_recor
     or anti-bot flows and never marks an unvisited record missing.
     """
     db_path = db_path or FACULTY_DB_PATH
+    _require_guarded_production_write(db_path)
     ensure_faculty_jobs_tables(db_path)
     requested_ids = {str(item).strip() for item in (source_job_ids or []) if str(item).strip()}
     budget = max(0, min(1000, int(max_records)))
@@ -4391,7 +6780,7 @@ def enrich_inside_higher_ed_details(db_path=None, source_job_ids=None, max_recor
 
 
 def build_faculty_job_detail(db_path, job_id, include_private=False):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         row = conn.execute(_job_select() + " WHERE j.id=?", (int(job_id),)).fetchone()
@@ -4435,6 +6824,29 @@ def _coverage(conn, where="1=1", args=()):
     """).fetchone()
     filtered = _job_select() + " WHERE " + where
     total_jobs = conn.execute("SELECT COUNT(*) FROM (" + filtered + ")", args).fetchone()[0]
+    source_flags = conn.execute(
+        """
+        SELECT
+          SUM(CASE WHEN EXISTS (
+                SELECT 1 FROM job_sources js
+                JOIN sources s ON s.id=js.source_id
+                WHERE js.job_id=f.id AND js.active=1 AND s.enabled=1
+              ) THEN 1 ELSE 0 END) AS enabled_source_jobs,
+          SUM(CASE WHEN EXISTS (
+                SELECT 1 FROM job_sources js
+                WHERE js.job_id=f.id AND js.active=1
+              ) AND NOT EXISTS (
+                SELECT 1 FROM job_sources js
+                JOIN sources s ON s.id=js.source_id
+                WHERE js.job_id=f.id AND js.active=1 AND s.enabled=1
+              ) THEN 1 ELSE 0 END) AS disabled_or_opt_in_only_jobs,
+          SUM(CASE WHEN NOT EXISTS (
+                SELECT 1 FROM job_sources js
+                WHERE js.job_id=f.id AND js.active=1
+              ) THEN 1 ELSE 0 END) AS no_active_source_jobs
+        FROM (""" + filtered + ") f",
+        args,
+    ).fetchone()
     def pct(sql):
         if not total_jobs: return None
         return round(100 * conn.execute(
@@ -4443,6 +6855,14 @@ def _coverage(conn, where="1=1", args=()):
     return {
         "sources_total": sources["total"] or 0, "sources_enabled": sources["enabled"] or 0,
             "sources_healthy": sources["healthy"] or 0, "jobs": total_jobs,
+        "jobs_with_enabled_source": int(source_flags["enabled_source_jobs"] or 0),
+        "jobs_with_disabled_or_opt_in_source_only": int(
+            source_flags["disabled_or_opt_in_only_jobs"] or 0),
+        "jobs_with_no_active_source": int(source_flags["no_active_source_jobs"] or 0),
+        "source_snapshot_policy": (
+            "Active job links include enabled-source observations and preserved "
+            "disabled/opt-in/manual snapshots; source metadata is not a row filter."
+        ),
         "official_url_percent": pct("j.official_url IS NOT NULL"),
         "deadline_percent": pct("j.deadline_date IS NOT NULL OR j.deadline_mode IN ('open_until_filled','rolling')"),
         "salary_percent": pct("j.salary_min IS NOT NULL"),
@@ -4454,12 +6874,54 @@ def _coverage(conn, where="1=1", args=()):
     }
 
 
+
+def search_faculty_jobs(db_path, query="", scope="business", limit=25, offset=0):
+    """Full-text search, read-only, obeying the shared scope contract.
+
+    Requires the current schema rather than migrating: a search endpoint that
+    migrates the database to answer a query would change the file whenever
+    someone typed in a box.
+    """
+    from services import faculty_jobs_search
+    from services.faculty_jobs_scope import SCOPES, catalogue_sql
+
+    if scope not in SCOPES:
+        scope = "business"
+    try:
+        limit = max(1, min(100, int(limit)))
+        offset = max(0, int(offset))
+    except (TypeError, ValueError):
+        limit, offset = 25, 0
+
+    # Assert, then open our own read-only handle: the guard checks the schema
+    # and deliberately returns nothing, because a read must not hand back a
+    # connection that could be written through.
+    _require_current_schema(db_path)
+    conn = sqlite3.connect(
+        f"file:{Path(db_path or FACULTY_DB_PATH).as_posix()}?mode=ro",
+        uri=True, timeout=60)
+    conn.row_factory = sqlite3.Row
+    try:
+        status = faculty_jobs_search.index_status(conn)
+        if not status.get("available"):
+            return {"ok": False, "scope": scope, "query": query,
+                    "reason": status.get("reason", "the full-text index is absent"),
+                    "total": 0, "results": []}
+        result = faculty_jobs_search.search(
+            conn, query, scope_sql=catalogue_sql(scope), limit=limit, offset=offset)
+        result.update({"ok": True, "scope": scope, "limit": limit, "offset": offset,
+                       "scope_filter_sql": catalogue_sql(scope), "index": status})
+        return result
+    finally:
+        conn.close()
+
 def build_faculty_job_summary(db_path=None, query=None):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         scope_clauses, scope_args, scope = _summary_scope_conditions(query)
         scope_where = " AND ".join(scope_clauses) if scope_clauses else "1=1"
+        scope_totals = scope_counts(conn, scope, _job_select())
         today = date.today().isoformat()
         seven = (date.today() - timedelta(days=7)).isoformat()
         thirty = (date.today() - timedelta(days=30)).isoformat()
@@ -4467,24 +6929,103 @@ def build_faculty_job_summary(db_path=None, query=None):
         def count(extra="1=1", extra_args=()):
             where = " AND ".join([scope_where, extra]) if scope_where != "1=1" else extra
             return conn.execute("SELECT COUNT(*) FROM (" + _job_select() + " WHERE " + where + ")", (*scope_args, *extra_args)).fetchone()[0]
-        active = "j.status IN ('open','likely_open','closing_soon')"
+        # The summary is a read model of exactly the set the list endpoint
+        # returns for the same query. Scope already carries the accepted /
+        # eligible / business-scope rules for the two market views, so the only
+        # thing to add is the active-status filter. ANDing the full default
+        # market predicate on top -- as this did -- made scope=all report the
+        # business count while the list and CSV reported the audit count.
+        active = active_sql(scope, "j")
         active_where = " AND ".join([scope_where, active]) if scope_where != "1=1" else active
+        career_query = dict(query or {})
+        career_query.pop("career_view", None)
+        career_query.pop("university_level", None)
+        career_clauses, career_args = _query_conditions(career_query)
+        career_where = " AND ".join(career_clauses)
+        career_counts = {
+            name: conn.execute("SELECT COUNT(*) FROM (" + _job_select() +
+                " WHERE " + career_where + " AND (" + career_view_sql(name) + "))",
+                career_args).fetchone()[0]
+            for name in CAREER_VIEWS
+        }
+        action_query = dict(query or {})
+        action_query.pop("action_view", None)
+        action_clauses, action_args = _query_conditions(action_query)
+        action_where = " AND ".join(action_clauses)
+        action_counts = {
+            name: conn.execute("SELECT COUNT(*) FROM (" + _job_select() +
+                " WHERE " + action_where + " AND (" + career_actions.action_sql(name) + "))",
+                action_args).fetchone()[0]
+            for name in career_actions.ACTION_VIEWS
+        }
         return {"ok": True, "summary": {
+            "action_counts": action_counts,
+            "action_rules": career_actions.ACTION_RULES,
+            "action_count_basis": "Same submitted filters except action_view. Queues overlap; do not add their counts.",
+            "preferred_query": career_actions.PREFERRED_QUERY,
+            "career_view": str((query or {}).get("career_view") or "all"),
+            "career_view_counts": career_counts,
+            "career_view_count_basis": "Same scope and other filters, excluding career_view and university_level; counts are observed jobs, not all schools or verified openings.",
+            "carnegie_year": 2025,
+            "teaching_proxy_rule": PROXY_RULE,
+            "status_as_of": today,
             "scope": scope,
-            "active_jobs": count(active), "new_7d": count("j.first_seen_at>=?", (seven,)),
-            "new_30d": count("j.first_seen_at>=?", (thirty,)),
-            "closing_next_14d": count("j.deadline_date IS NOT NULL AND j.deadline_date>=? AND j.deadline_date<=? AND j.status!='closed'", (today, fourteen)),
+            # Two different questions, both answered rather than conflated: how
+            # many records this scope contains, and how many of them are still
+            # open. For the audit scope they differ by the closed postings the
+            # catalogue deliberately retains, and reporting only the second
+            # made the list and the summary look inconsistent.
+            # What this query matched -- the number the list and the CSV
+            # return. Named for the query, not for the scope: the default
+            # market query already carries the active-status filter, so in the
+            # two market scopes this is *not* the scope catalogue, and calling
+            # it one made 404 and 315 appear under the same heading.
+            "matching_records": count(),
+            "active_jobs": count(active),
+            # The scope this query sits inside, independent of any filter the
+            # reader applied. Reported alongside so the page can say "315 of
+            # 404 in scope, the rest closed or status-unknown" rather than
+            # showing one number whose denominator is invisible.
+            "scope_catalogue_records": scope_totals["catalogue_records"],
+            "scope_active_jobs": scope_totals["active_jobs"],
+            "inactive_by_status": scope_totals["inactive_by_status"],
+            # All three scopes at once. Shown together because the relationship
+            # is the point: strict is a subset of broad is a subset of audit,
+            # and a reader who only ever sees the number for the scope they are
+            # on cannot tell whether the others are larger, smaller, or what
+            # the difference is made of.
+            "scope_comparison": {
+                name: scope_counts(conn, name, _job_select())
+                for name in SCOPES
+            },
+            "new_7d": count(" AND ".join([active, "j.first_seen_at>=?"]), (seven,)),
+            # How long we have been looking, so the page can say when "new"
+            # cannot yet mean new. Until local observation is older than the
+            # window, every record inside it is new by construction and the
+            # count carries no information about the market.
+            "first_observation_at": conn.execute(
+                "SELECT MIN(j.first_seen_at) FROM (" + _job_select() + " WHERE "
+                + scope_where + ") j", scope_args).fetchone()[0],
+            "new_30d": count(" AND ".join([active, "j.first_seen_at>=?"]), (thirty,)),
+            "closing_next_14d": count(" AND ".join([
+                active, career_actions.hard_deadline_sql() + " BETWEEN ? AND ?"
+            ]), (today, fourteen)),
             "by_region": _group_counts_filtered(conn, "region_group", active_where, scope_args),
             "by_discipline": _group_counts_filtered(conn, "discipline_primary", active_where, scope_args),
             "business_scope_counts": _business_scope_counts_filtered(conn, scope_where, scope_args),
             "coverage": _coverage(conn, scope_where, scope_args), "updated_at": now_utc(),
+             "active_filter": active_filter_definition(scope),
+             "active_filter_sql": active_sql(scope),
         }}
     finally:
         conn.close()
 
 
 def _group_counts(conn, column, where="1=1", args=()):
-    allowed = {"region_group", "discipline_primary", "country", "country_code", "state_province", "rank_normalized", "career_stage", "track_type", "status"}
+    allowed = {"region_group", "discipline_primary", "country", "country_code", "state_province", "rank_normalized", "career_stage", "track_type", "appointment_type",
+    "faculty_market_role", "faculty_market_eligible", "business_scope",
+    "salary_min", "salary_max", "salary_currency", "salary_period",
+    "deadline_mode", "deadline_evidence", "status"}
     if column not in allowed:
         return []
     return [{"label": row["label"] or "Unknown", "count": row["count"]} for row in conn.execute(f"SELECT {column} AS label, COUNT(*) AS count FROM jobs WHERE {where} GROUP BY {column} ORDER BY count DESC, label", args).fetchall()]
@@ -4495,6 +7036,7 @@ def _group_counts_filtered(conn, column, where="1=1", args=()):
     if column not in allowed:
         return []
     select_column = {
+        "status": effective_status_sql("f"),
         "business_research_tier": "COALESCE(f.business_research_tier,'Unclassified')",
         "university_research_level": "COALESCE(f.university_research_level,'Unknown')",
     }.get(column, f"f.{column}")
@@ -4512,10 +7054,10 @@ def _business_scope_counts_filtered(conn, where="1=1", args=()):
 
 
 def build_faculty_job_filters(db_path=None, query=None):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
-        scope_clauses, scope_args = _query_conditions({**(query or {}), "q": "", "country": "", "region": "", "state_province": "", "discipline": "", "rank": "", "career_stage": "", "track": "", "status": "", "school_tier": "", "university_level": "", "posted_after": "", "closing_before": "", "salary_known": ""})
+        scope_clauses, scope_args = _query_conditions({**(query or {}), "q": "", "country": "", "region": "", "state_province": "", "discipline": "", "rank": "", "career_stage": "", "track": "", "status": "", "school_tier": "", "university_level": "", "posted_after": "", "closing_before": "", "salary_known": "", "appointment_type": "", "source": "", "exclude_source": "", "position_type": "", "action_view": ""})
         scope = _requested_scope(query)
         scope_where = " AND ".join(scope_clauses) if scope_clauses else "1=1"
         def values(column, table="jobs"):
@@ -4529,6 +7071,10 @@ def build_faculty_job_filters(db_path=None, query=None):
             "country_options": list(COUNTRY_OPTIONS),
             "states_provinces": values("state_province"), "disciplines": list(DISCIPLINES),
             "ranks": values("rank_normalized"), "career_stages": values("career_stage"), "tracks": values("track_type"),
+            "appointment_types": list(APPOINTMENT_TYPES),
+            # Counted per source so a board that supplies most of the view is
+            # visible as such before anyone reads the numbers as a market.
+            "sources": _source_filter_options(conn, scope_where, scope_args),
             "statuses": ["open", "likely_open", "closing_soon", "closed", "unknown"],
             "school_tiers": ["T1", "T2", "T3", "T4", "Unclassified"],
             "university_levels": ["R1", "R2", "RCU", "Other", "Unknown"],
@@ -4539,7 +7085,7 @@ def build_faculty_job_filters(db_path=None, query=None):
 
 
 def build_faculty_job_sources(db_path=None):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         def source_field_coverage(source_id):
@@ -4573,29 +7119,301 @@ def build_faculty_job_sources(db_path=None):
                 result[name] = {"count": count, "percent": round(100 * count / total, 1) if total else None}
             return result
 
-        rows = conn.execute("""
+        def age_hours(value):
+            if not value:
+                return None
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return round(max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds() / 3600), 1)
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        def scan_outcomes(source_id, source_name):
+            """Summarize observed run outcomes without calling them market coverage."""
+            outcomes = {"error": 0, "blocked": 0, "unknown": 0, "successful": 0}
+            if source_name == "aacsb_official":
+                rows = conn.execute(
+                    "SELECT website_status,job_scan_status FROM aacsb_scan_history "
+                    "WHERE directory_school_id IN "
+                    "(SELECT id FROM aacsb_directory_schools)"
+                ).fetchall()
+                for row in rows:
+                    website = str(row["website_status"] or "").casefold()
+                    status = str(row["job_scan_status"] or "").casefold()
+                    if website in {"blocked", "robots_disallowed"} or status == "blocked":
+                        outcomes["blocked"] += 1
+                    elif website == "error" or status == "error":
+                        outcomes["error"] += 1
+                    elif status in {"unknown", "not_found", "not_checked", ""}:
+                        outcomes["unknown"] += 1
+                    else:
+                        outcomes["successful"] += 1
+            else:
+                rows = conn.execute(
+                    "SELECT status,error_count,error_summary FROM ingestion_runs WHERE source_id=?",
+                    (source_id,),
+                ).fetchall()
+                for row in rows:
+                    status = str(row["status"] or "").casefold()
+                    summary = str(row["error_summary"] or "").casefold()
+                    if "blocked" in summary or "robots" in summary:
+                        outcomes["blocked"] += 1
+                    elif status in {"error", "partial", "failed"} or int(row["error_count"] or 0):
+                        outcomes["error"] += 1
+                    elif status in {"success", "ok", "completed"}:
+                        outcomes["successful"] += 1
+                    else:
+                        outcomes["unknown"] += 1
+            total = sum(outcomes.values())
+            return {
+                "counts": outcomes,
+                "total_observations": total,
+                "error_blocked_unknown_count": outcomes["error"] + outcomes["blocked"] + outcomes["unknown"],
+                "error_blocked_unknown_percent": round(
+                    100 * (outcomes["error"] + outcomes["blocked"] + outcomes["unknown"]) / total, 1
+                ) if total else None,
+            }
+
+        def source_precision(source):
+            source_id = int(source["id"])
+            source_name = str(source["name"] or "")
+            active_base = "FROM job_sources js JOIN jobs j ON j.id=js.job_id WHERE js.source_id=? AND js.active=1"
+            active_job_count = conn.execute(
+                "SELECT COUNT(DISTINCT js.job_id) " + active_base, (source_id,)
+            ).fetchone()[0]
+            eligible_sql = (
+                "j.derived_quality='accepted' AND j.faculty_market_eligible=1 "
+                "AND j.business_scope IN ('business_school','business_discipline')"
+            )
+            confirmed_eligible = conn.execute(
+                "SELECT COUNT(DISTINCT js.job_id) " + active_base + " AND " + eligible_sql,
+                (source_id,),
+            ).fetchone()[0]
+            confirmed_active = conn.execute(
+                "SELECT COUNT(DISTINCT js.job_id) " + active_base + " AND " + default_market_where("j"),
+                (source_id,),
+            ).fetchone()[0]
+            review_only = max(0, int(active_job_count) - int(confirmed_eligible))
+            false_positive = 0
+            active_false_positive = 0
+            if source_name == "aacsb_official":
+                false_positive = conn.execute(
+                    """SELECT COUNT(DISTINCT js.job_id)
+                       FROM job_sources js
+                       JOIN source_record_decisions d
+                         ON d.source_id=js.source_id AND d.source_job_id=js.source_job_id
+                       WHERE js.source_id=? AND d.decision='false_positive'
+                         AND d.is_current=1""",
+                    (source_id,),
+                ).fetchone()[0]
+                active_false_positive = conn.execute(
+                    """SELECT COUNT(DISTINCT js.job_id)
+                       FROM job_sources js
+                       JOIN source_record_decisions d
+                         ON d.source_id=js.source_id AND d.source_job_id=js.source_job_id
+                       WHERE js.source_id=? AND js.active=1
+                         AND d.decision='false_positive' AND d.is_current=1""",
+                    (source_id,),
+                ).fetchone()[0]
+            field_coverage = source_field_coverage(source_id)
+            last_success = source["last_success_at"] or conn.execute(
+                "SELECT MAX(finished_at) FROM ingestion_runs WHERE source_id=? AND status='success'",
+                (source_id,),
+            ).fetchone()[0]
+            aacsb_roster = None
+            if source_name == "aacsb_official":
+                # Per-school completeness, aggregated honestly: this is the
+                # date of the most recent complete *school* observation, and it
+                # only makes the source complete when every active school with
+                # a website has one.
+                last_complete = conn.execute(
+                    "SELECT MAX(checked_at) FROM aacsb_scan_history WHERE reconciliation_complete=1"
+                ).fetchone()[0]
+                total_schools = conn.execute(
+                    "SELECT COUNT(*) FROM aacsb_directory_schools "
+                    "WHERE active=1 AND official_website IS NOT NULL AND official_website!=''"
+                ).fetchone()[0]
+                complete_schools = conn.execute("""
+                    SELECT COUNT(DISTINCT directory_school_id) FROM aacsb_scan_history
+                    WHERE reconciliation_complete=1
+                """).fetchone()[0]
+                # Schools with no website recorded cannot be scanned, so they
+                # are not in the denominator -- but they must be visible, or
+                # the roster silently shrinks by however many we failed to
+                # resolve and the coverage percentage flatters itself.
+                unresolvable = conn.execute(
+                    "SELECT COUNT(*) FROM aacsb_directory_schools "
+                    "WHERE active=1 AND (official_website IS NULL OR official_website='')"
+                ).fetchone()[0]
+                aacsb_roster = {"schools": int(total_schools),
+                                "complete_observations": int(complete_schools),
+                                "no_website_recorded": int(unresolvable),
+                                "roster_rows": int(total_schools) + int(unresolvable)}
+                if complete_schools < total_schools:
+                    last_complete = None
+            else:
+                # A successful HTTP fetch is not a complete reading of a board.
+                # Equating them showed AIS -- which reaches 25 of the 53 results
+                # it advertises -- as having a "last complete scan", and every
+                # source with no reported total as complete by default.
+                last_complete = conn.execute("""
+                    SELECT MAX(finished_at) FROM ingestion_runs
+                    WHERE source_id=? AND status='success' AND coverage_complete=1
+                """, (source_id,)).fetchone()[0]
+            outcomes = scan_outcomes(source_id, source_name)
+            return {
+                "active_job_count": int(active_job_count),
+                # "confirmed" is reserved for evidence a person or the source
+                # itself asserted. These counts are what our own rules accepted,
+                # which is a different claim and was being read as the first.
+                "rule_accepted_jobs": int(confirmed_eligible),
+                "rule_accepted_active_market_jobs": int(confirmed_active),
+                "review_only_jobs": int(review_only),
+                "reviewed_false_positive_jobs": int(false_positive),
+                "active_reviewed_false_positive_jobs": int(active_false_positive),
+                "acceptance_rate_percent": round(100 * confirmed_eligible / active_job_count, 1) if active_job_count else None,
+                "acceptance_rate_note": (
+                    "Share of this source's active links our rules accepted into the market. "
+                    "It is not precision: nothing here was checked against ground truth."
+                ),
+                # Availability, completeness and freshness are three different
+                # questions and were being answered with one date.
+                "last_successful_scan": last_success,
+                "last_complete_scan": last_complete,
+                "completeness_state": (
+                    "complete" if last_complete else
+                    ("partial" if aacsb_roster and aacsb_roster["complete_observations"] else
+                     ("unverifiable" if source["support_status"] in {"enabled", "opt_in"}
+                      else "not_read"))
+                ),
+                # For the roster scan, say how much of it was actually read.
+                # A school we could not reach is not a school without vacancies.
+                "roster_coverage": aacsb_roster,
+                "stale_age_hours": age_hours(last_complete or last_success),
+                "individual_official_application_url_coverage_percent": field_coverage["official_url"]["percent"],
+                "scan_outcomes": outcomes,
+            }
+
+        rows = conn.execute(f"""
             SELECT s.*, (SELECT COUNT(*) FROM job_sources js WHERE js.source_id=s.id AND js.active=1) AS active_jobs,
                    (SELECT COUNT(DISTINCT js.job_id) FROM job_sources js JOIN jobs j ON j.id=js.job_id
                     WHERE js.source_id=s.id AND js.active=1
-                      AND j.derived_quality='accepted' AND j.faculty_market_eligible=1
-                      AND j.business_scope IN ('business_school','business_discipline')) AS business_scope_jobs,
+                      AND {default_market_where("j")}) AS business_scope_jobs,
                    (SELECT COUNT(DISTINCT js.job_id) FROM job_sources js JOIN jobs j ON j.id=js.job_id
-                    WHERE js.source_id=s.id AND js.active=1 AND j.derived_quality='accepted' AND j.faculty_market_eligible=1 AND j.business_scope='business_school') AS explicit_school_jobs,
+                    WHERE js.source_id=s.id AND js.active=1 AND {default_market_where("j")}
+                      AND j.business_scope='business_school') AS explicit_school_jobs,
                    (SELECT COUNT(*) FROM ingestion_runs ir WHERE ir.source_id=s.id AND ir.status='success') AS successful_runs
             FROM sources s ORDER BY priority,name
         """).fetchall()
+        # Declared once per adapter class; no adapter is instantiated for a
+        # read-only payload.
+        pagination_capability = {
+            adapter.adapter_name: bool(getattr(adapter, "paginates", False))
+            for adapter in adapter_catalog()
+        }
+        # The budget runs actually ran under, not an assumed one.
+        max_pages_budget = max_pages_per_source()
         sources = []
         for row in rows:
             item = dict(row)
             item["field_coverage"] = source_field_coverage(row["id"])
+            item.update(source_precision(row))
+            # What the board last said it holds, next to what we could read.
+            # AIS prints "1 - 25 Results of 53" and paginates through an
+            # internal search endpoint, so only the first page is reachable;
+            # without this the source looks fully harvested.
+            latest = conn.execute("""
+                SELECT reported_total, coverage_complete, items_seen, finished_at
+                FROM ingestion_runs
+                WHERE source_id=? AND status='success' AND reported_total IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+            """, (row["id"],)).fetchone()
+            if latest:
+                reported = int(latest["reported_total"])
+                observed = int(latest["items_seen"] or 0)
+                item["source_reported_total"] = reported
+                item["last_run_items_seen"] = observed
+                item["source_coverage_complete"] = (
+                    None if latest["coverage_complete"] is None
+                    else bool(latest["coverage_complete"]))
+                item["source_coverage_percent"] = (
+                    round(100.0 * observed / reported, 1) if reported else None)
+                item["source_coverage_note"] = (
+                    f"The board reported {reported} results and the last successful run read "
+                    f"{observed}. Counts from this source are a floor."
+                    if observed < reported else
+                    f"The last successful run read all {reported} results the board reported.")
+            else:
+                item["source_reported_total"] = None
+                item["source_coverage_complete"] = None
+                item["source_coverage_percent"] = None
+                item["source_coverage_note"] = (
+                    "No successful run has recorded a source-reported result total, so how "
+                    "much of this board was read cannot be verified.")
+            # completeness_state is decided above, before these figures
+            # exist. A board that told us its total and came up short was read
+            # and measured -- calling that "unverifiable", the word reserved
+            # for a board that never gave us a total, throws away the
+            # measurement.
+            if (item["completeness_state"] == "unverifiable"
+                    and item["source_coverage_complete"] is False):
+                item["completeness_state"] = "partial"
+            adapter = pagination_capability.get(row["adapter_name"])
+            item["paginates"] = adapter
+            # How many listing pages the last successful run actually read.
+            # pages_fetched counts detail-page requests too, so it cannot answer
+            # this; runs recorded before that split stay null rather than guess.
+            reach = conn.execute("""
+                SELECT listing_pages FROM ingestion_runs
+                WHERE source_id=? AND status='success'
+                ORDER BY id DESC LIMIT 1
+            """, (row["id"],)).fetchone()
+            item["last_run_listing_pages"] = (
+                None if reach is None or reach["listing_pages"] is None
+                else int(reach["listing_pages"]))
+            if item["paginates"] is False:
+                item["source_coverage_note"] += (
+                    " This source is read single-page: it has no working page parameter, so "
+                    "anything beyond the first page is not reachable.")
+            elif item["paginates"] and item["last_run_listing_pages"] is not None:
+                item["source_coverage_note"] += (
+                    f" This board does paginate and the last run read "
+                    f"{item['last_run_listing_pages']} listing page(s); further pages are "
+                    "reachable and were left unread under the configured page budget."
+                    if item["last_run_listing_pages"] < max_pages_budget else
+                    f" This board paginates; the last run read "
+                    f"{item['last_run_listing_pages']} listing page(s).")
+            if row["name"] == "carnegie_official":
+                from services.faculty_jobs_sources.carnegie import source_coverage
+                try:
+                    item["registry_coverage"] = source_coverage()
+                except (sqlite3.Error, OSError, ValueError):
+                    item["registry_coverage"] = {
+                        "available": False, "coverage_complete": False,
+                        "reason": "Carnegie coverage metadata could not be read.",
+                    }
+                item["completeness_state"] = "partial"
+                item["source_coverage_complete"] = False
+                item["source_coverage_note"] = (
+                    "Bounded official-portal observations; page visits are not complete vacancy coverage. "
+                    "Only fresh, attributable individual postings are ingested."
+                )
             sources.append(item)
-        return {"ok": True, "sources": sources, "updated_at": now_utc()}
+        return {
+            "ok": True, "sources": sources, "updated_at": now_utc(),
+            "interpretation": (
+                "Source-specific precision and freshness proxies over preserved local records; "
+                "they are not estimates of the whole academic labor market."
+            ),
+        }
     finally:
         conn.close()
 
 
 def build_faculty_job_runs(db_path=None, limit=50):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         rows = conn.execute("""
@@ -4704,7 +7522,7 @@ def _upsert_aacsb_directory_row(conn, record):
 def _sync_aacsb_school_entity(conn, directory_id):
     """Link an explicit AACSB school to the existing evidence-first entities."""
     row = conn.execute("SELECT * FROM aacsb_directory_schools WHERE id=?", (directory_id,)).fetchone()
-    if not row or not row["school_name"]:
+    if not row or not row["school_name"] or int(row["active"] or 0) != 1:
         return None
     canonical = _canonical_institution_name(row["institution_name"])
     manual = conn.execute(
@@ -4715,7 +7533,8 @@ def _sync_aacsb_school_entity(conn, directory_id):
         canonical = manual["canonical_name"]
     institution_key = normalize_name(canonical)
     institution = conn.execute(
-        "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS ? LIMIT 1",
+        "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS ? "
+        "AND is_current=1 LIMIT 1",
         (institution_key, row["country_code"]),
     ).fetchone()
     if not institution and row["country_code"]:
@@ -4724,9 +7543,23 @@ def _sync_aacsb_school_entity(conn, directory_id):
         # AACSB roster now supplies explicit location evidence; do not create
         # a second entity merely because the country was previously unknown.
         institution = conn.execute(
-            "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS NULL LIMIT 1",
+            "SELECT * FROM institutions WHERE normalized_name=? AND country_code IS NULL "
+            "AND is_current=1 LIMIT 1",
             (institution_key,),
         ).fetchone()
+    if institution is None:
+        # A retired entity with the same unique key is kept as history. Free
+        # that key by suffixing only its normalized form, then create a new
+        # current row from the explicit AACSB roster identity.
+        retired = conn.execute(
+            "SELECT id FROM institutions WHERE normalized_name=? AND country_code IS ? "
+            "AND is_current=0 LIMIT 1", (institution_key, row["country_code"]),
+        ).fetchone()
+        if retired:
+            conn.execute(
+                "UPDATE institutions SET normalized_name=?,updated_at=? WHERE id=?",
+                (f"{institution_key}__retired_{retired['id']}", now_utc(), retired["id"]),
+            )
     timestamp = row["detail_checked_at"] or row["last_seen_at"] or now_utc()
     if institution:
         institution_id = int(institution["id"])
@@ -4736,7 +7569,7 @@ def _sync_aacsb_school_entity(conn, directory_id):
         conn.execute("""
             UPDATE institutions SET aliases_json=?, institution_url=COALESCE(?,institution_url), country=COALESCE(?,country),
               country_code=COALESCE(?,country_code), region_group=COALESCE(?,region_group), city=COALESCE(?,city),
-              state_province=COALESCE(?,state_province), is_current=1, updated_at=? WHERE id=?
+              state_province=COALESCE(?,state_province), updated_at=? WHERE id=?
         """, (json.dumps(aliases[:50], ensure_ascii=False), row["official_website"], row["country"], row["country_code"], row["region_group"], row["city"], row["state_province"], timestamp, institution_id))
     else:
         cur = conn.execute("""
@@ -4750,13 +7583,24 @@ def _sync_aacsb_school_entity(conn, directory_id):
     school_name = str(row["school_name"]).strip()
     school_key = normalize_name(school_name)
     school = conn.execute(
-        "SELECT id FROM business_schools WHERE institution_id=? AND normalized_name=? LIMIT 1",
+        "SELECT id,is_current,merged_into_id FROM business_schools WHERE institution_id=? AND normalized_name=? "
+        "ORDER BY is_current DESC,id LIMIT 1",
         (institution_id, school_key),
     ).fetchone()
-    if school:
+    school_id = None
+    if school and int(school["is_current"] or 0) == 1:
         school_id = int(school["id"])
+    elif school:
+        school_id = _current_entity_id(conn, "business_schools", school["id"])
+        if school_id is None:
+            conn.execute(
+                "UPDATE business_schools SET normalized_name=?,updated_at=? WHERE id=?",
+                (f"{school_key}__retired_{school['id']}", now_utc(), school["id"]),
+            )
+    if school_id is not None:
         conn.execute("""
-            UPDATE business_schools SET website=COALESCE(?,website), aacsb=1, last_verified_at=?, is_current=1, updated_at=? WHERE id=?
+            UPDATE business_schools SET website=COALESCE(?,website), aacsb=1,
+              last_verified_at=?, updated_at=? WHERE id=?
         """, (row["official_website"], timestamp, now_utc(), school_id))
     else:
         cur = conn.execute("""
@@ -4766,21 +7610,281 @@ def _sync_aacsb_school_entity(conn, directory_id):
         """, (institution_id, school_name, school_key, row["official_website"], timestamp, timestamp, now_utc()))
         school_id = int(cur.lastrowid)
     evidence = conn.execute(
-        "SELECT 1 FROM school_evidence WHERE school_id=? AND evidence_type='AACSB' AND source_url=? LIMIT 1",
+        "SELECT 1 FROM school_evidence WHERE school_id=? AND evidence_type='AACSB' "
+        "AND source_url=? AND is_current=1 LIMIT 1",
         (school_id, row["directory_url"]),
     ).fetchone()
     if not evidence:
         conn.execute("""
             INSERT INTO school_evidence
-              (school_id,evidence_type,value,source_name,source_url,source_date,verified_at,confidence,notes)
-            VALUES (?,?,?,?,?,?,?,?,?)
+              (school_id,evidence_type,value,source_name,source_url,source_date,verified_at,confidence,notes,is_current,valid_from)
+            VALUES (?,?,?,?,?,?,?,?,?,1,?)
         """, (school_id, "AACSB", row["accreditation_scope"] or "Business",
                "AACSB Accredited School Search", row["directory_url"],
                str(timestamp)[:10], now_utc(), "high",
-               "AACSB public accredited-school directory evidence; this establishes accreditation only, not hiring or research tier."))
+               "AACSB public accredited-school directory evidence; this establishes accreditation only, not hiring or research tier.",
+               now_utc()))
     refresh_school_classification(conn, school_id)
     conn.execute("UPDATE aacsb_directory_schools SET linked_business_school_id=?, updated_at=? WHERE id=?", (school_id, now_utc(), directory_id))
     return school_id
+
+
+def _refresh_aacsb_accreditation_state(conn):
+    """Make current accreditation evidence follow the active AACSB roster.
+
+    The roster is authoritative for accreditation, but it is not evidence that
+    a particular vacancy belongs to that school.  This helper therefore only
+    updates school accreditation/evidence and leaves job-market classification
+    to the separate boundary repair.
+    """
+    stamp = now_utc()
+    active_school_directories = defaultdict(list)
+    for directory in conn.execute(
+        """SELECT * FROM aacsb_directory_schools
+           WHERE active=1 AND school_name IS NOT NULL AND school_name!=''
+           ORDER BY id"""
+    ).fetchall():
+        school_id = _sync_aacsb_school_entity(conn, int(directory["id"]))
+        if school_id is not None:
+            active_school_directories[int(school_id)].append(directory)
+
+    changed = retired_evidence = inserted_evidence = 0
+    current_schools = conn.execute(
+        "SELECT id,aacsb FROM business_schools WHERE is_current=1 ORDER BY id"
+    ).fetchall()
+    for school in current_schools:
+        school_id = int(school["id"])
+        directories = active_school_directories.get(school_id, [])
+        if directories:
+            if int(school["aacsb"] or 0) != 1:
+                conn.execute(
+                    "UPDATE business_schools SET aacsb=1,updated_at=? WHERE id=?",
+                    (stamp, school_id),
+                )
+                changed += 1
+            for directory in directories:
+                existing = conn.execute(
+                    """SELECT id FROM school_evidence
+                       WHERE school_id=? AND evidence_type='AACSB' AND source_url=? AND is_current=1
+                       LIMIT 1""",
+                    (school_id, directory["directory_url"]),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute("""
+                    INSERT INTO school_evidence
+                      (school_id,evidence_type,value,source_name,source_url,source_date,verified_at,
+                       confidence,notes,is_current,valid_from)
+                    VALUES (?,?,?,?,?,?,?,?,?,1,?)
+                """, (school_id, "AACSB", directory["accreditation_scope"] or "Business",
+                       "AACSB Accredited School Search", directory["directory_url"],
+                       str(directory["last_seen_at"] or stamp)[:10], stamp, "high",
+                       "Current AACSB public directory evidence establishes accreditation only; it does not establish a faculty vacancy or research tier.",
+                       stamp))
+                inserted_evidence += 1
+            continue
+
+        if int(school["aacsb"] or 0) != 0:
+            conn.execute(
+                "UPDATE business_schools SET aacsb=0,updated_at=? WHERE id=?",
+                (stamp, school_id),
+            )
+            changed += 1
+        result = conn.execute("""
+            UPDATE school_evidence SET is_current=0,valid_to=COALESCE(valid_to,?)
+            WHERE school_id=? AND evidence_type='AACSB' AND is_current=1
+        """, (stamp, school_id))
+        retired_evidence += int(result.rowcount or 0)
+
+    for school in current_schools:
+        school_id = int(school["id"])
+        if school_id in active_school_directories or int(school["aacsb"] or 0) != 0 or retired_evidence:
+            refresh_school_classification(conn, school_id)
+    return {"schools_changed": changed, "evidence_inserted": inserted_evidence,
+            "evidence_retired": retired_evidence,
+            "active_school_count": len(active_school_directories)}
+
+
+def _backfill_aacsb_job_partitions(conn):
+    """Attach preserved AACSB source identities to their directory partition."""
+    source = conn.execute(
+        "SELECT id FROM sources WHERE name='aacsb_official'"
+    ).fetchone()
+    if not source:
+        return {"partitions": 0, "unmapped": 0}
+    source_id = int(source["id"])
+    # The legacy official-site rows predate the per-run partition ledger. Do
+    # not attach them to the newest run and imply that run observed them; a
+    # NULL run id makes the historical backfill boundary explicit.
+    directories = conn.execute(
+        "SELECT id,directory_url,institution_name,linked_business_school_id,job_scan_status "
+        "FROM aacsb_directory_schools ORDER BY id"
+    ).fetchall()
+    by_url = {str(row["directory_url"]): row for row in directories if row["directory_url"]}
+    by_school = defaultdict(list)
+    by_institution = defaultdict(list)
+    for row in directories:
+        if row["linked_business_school_id"] is not None:
+            by_school[int(row["linked_business_school_id"])].append(row)
+        if row["institution_name"]:
+            by_institution[normalize_name(row["institution_name"])].append(row)
+    links = conn.execute("""
+        SELECT js.*,j.school_id,j.institution_id,i.official_name AS institution_name,
+               sjr.structured_extraction
+        FROM job_sources js
+        JOIN jobs j ON j.id=js.job_id
+        LEFT JOIN institutions i ON i.id=j.institution_id
+        JOIN source_job_records sjr
+          ON sjr.source_id=js.source_id AND sjr.source_job_id=js.source_job_id
+        WHERE js.source_id=?
+        ORDER BY js.source_job_id
+    """, (source_id,)).fetchall()
+    created = unmapped = 0
+    for link in links:
+        policy_false_positive = _aacsb_source_is_known_false_positive(
+            conn, source_id, link["source_job_id"])
+        partition_active = 0 if policy_false_positive else int(link["active"] or 0)
+        partition_missing = (
+            AACSB_MISSING_RUNS_BEFORE_INACTIVE
+            if policy_false_positive
+            else int(link["consecutive_missing_runs"] or 0)
+        )
+        try:
+            extraction = json.loads(link["structured_extraction"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            extraction = {}
+        directory = None
+        explicit_url = extraction.get("aacsb_directory_url")
+        if explicit_url:
+            directory = by_url.get(str(explicit_url))
+        # Older rows often retained the school link but not the directory URL.
+        # A unique directory-school link is stronger than an institution-name
+        # fallback and remains safe when a university has multiple AACSB units.
+        if directory is None and link["school_id"] is not None:
+            candidates = by_school.get(int(link["school_id"]), [])
+            if len(candidates) == 1:
+                directory = candidates[0]
+        if directory is None and link["institution_name"]:
+            candidates = by_institution.get(normalize_name(link["institution_name"]), [])
+            # Institution-only mapping is allowed only for a one-directory
+            # institution; it does not invent a school when the roster has
+            # multiple AACSB schools under the same university.
+            if len(candidates) == 1:
+                directory = candidates[0]
+        if directory is None:
+            unmapped += 1
+            continue
+        conn.execute("""
+            INSERT INTO aacsb_job_source_partitions
+              (directory_school_id,source_id,source_job_id,job_id,scan_run_id,source_url,official_url,
+               first_seen_at,last_seen_at,active,consecutive_missing_runs,last_scan_status,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(directory_school_id,source_id,source_job_id) DO UPDATE SET
+              job_id=excluded.job_id,source_url=excluded.source_url,
+              official_url=COALESCE(excluded.official_url,aacsb_job_source_partitions.official_url),
+              last_seen_at=excluded.last_seen_at,
+              active=excluded.active,consecutive_missing_runs=excluded.consecutive_missing_runs,
+              last_scan_status=COALESCE(excluded.last_scan_status,aacsb_job_source_partitions.last_scan_status),
+              updated_at=excluded.updated_at
+        """, (directory["id"], source_id, link["source_job_id"], link["job_id"], None,
+               link["source_url"], link["official_url"], link["first_seen"], link["last_seen"],
+               partition_active, partition_missing,
+               "false_positive" if policy_false_positive else (
+                   directory["job_scan_status"] or "backfilled_historical"),
+               link["first_seen"], now_utc()))
+        created += 1
+    return {"partitions": created, "unmapped": unmapped}
+
+
+def _quarantine_known_aacsb_false_positives(conn):
+    """Deactivate reviewed AACSB source identities without deleting evidence."""
+    source = conn.execute(
+        "SELECT id FROM sources WHERE name='aacsb_official'"
+    ).fetchone()
+    if not source:
+        return {"jobs": 0, "links": 0, "quarantined": 0}
+    source_id = int(source["id"])
+    links_changed = jobs_seen = quarantined = 0
+    decision_links = conn.execute("""
+        SELECT js.*,d.reason,d.reason_code
+        FROM source_record_decisions d
+        JOIN job_sources js
+          ON js.source_id=d.source_id AND js.source_job_id=d.source_job_id
+        WHERE d.source_id=? AND d.decision='false_positive' AND d.is_current=1
+        ORDER BY js.job_id,js.source_job_id
+    """, (source_id,)).fetchall()
+    by_job = defaultdict(list)
+    for link in decision_links:
+        by_job[int(link["job_id"])].append(link)
+    jobs_seen = len(by_job)
+    for job_id, links in by_job.items():
+        job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            continue
+        for link in links:
+            needs_change = (
+                int(link["active"] or 0) != 0
+                or int(link["consecutive_missing_runs"] or 0)
+                    < AACSB_MISSING_RUNS_BEFORE_INACTIVE
+            )
+            conn.execute("""
+                UPDATE aacsb_job_source_partitions
+                SET active=0,consecutive_missing_runs=?,last_scan_status='false_positive',updated_at=?
+                WHERE source_id=? AND source_job_id=?
+            """, (AACSB_MISSING_RUNS_BEFORE_INACTIVE, now_utc(), source_id,
+                  link["source_job_id"]))
+            conn.execute("""
+                UPDATE job_sources SET active=0,consecutive_missing_runs=?
+                WHERE source_id=? AND source_job_id=?
+            """, (AACSB_MISSING_RUNS_BEFORE_INACTIVE, source_id, link["source_job_id"]))
+            if not needs_change:
+                continue
+            links_changed += 1
+            conn.execute("""
+                INSERT INTO faculty_job_repair_audit
+                  (observed_at,action,job_id,source_id,source_job_id,old_value,new_value,reason)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (now_utc(), "aacsb_reviewed_source_false_positive", job_id, source_id,
+                   link["source_job_id"],
+                   json.dumps({"active": link["active"], "source_url": link["source_url"]}, ensure_ascii=False),
+                   json.dumps({"active": 0, "partition_missing_runs": AACSB_MISSING_RUNS_BEFORE_INACTIVE}, ensure_ascii=False),
+                   f"{link['reason']} Source record and link history are retained outside the default market."))
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM job_sources WHERE job_id=? AND active=1",
+            (job_id,),
+        ).fetchone()[0]
+        if remaining:
+            continue
+        already_quarantined = (
+            job["derived_quality"] == "quarantined"
+            and int(job["faculty_market_eligible"] or 0) == 0
+            and job["status"] == "unknown"
+        )
+        if already_quarantined:
+            continue
+        old = {key: job[key] for key in (
+            "school_id", "derived_quality", "business_scope",
+            "faculty_market_eligible", "status")}
+        reason = (
+            "Reviewed AACSB source record is a false positive and has no other "
+            "active source link."
+        )
+        conn.execute("""
+            UPDATE jobs SET school_id=NULL,derived_quality='quarantined',business_scope='unknown',
+              business_scope_confidence='low',business_scope_reason=?,faculty_market_eligible=0,
+              faculty_market_role='unknown',faculty_market_reason=?,school_evidence_context='unknown',
+              status='unknown',verification_note=?,updated_at=? WHERE id=?
+        """, (reason, reason, reason, now_utc(), job_id))
+        quarantined += 1
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,source_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?,?)
+        """, (now_utc(), "aacsb_false_positive_job_quarantine", job_id, source_id,
+               json.dumps(old, ensure_ascii=False),
+               json.dumps({"school_id": None, "derived_quality": "quarantined", "business_scope": "unknown", "status": "unknown"}, ensure_ascii=False),
+               reason))
+    return {"jobs": jobs_seen, "links": links_changed, "quarantined": quarantined}
 
 
 def _aacsb_record_from_row(row):
@@ -4938,6 +8042,7 @@ def _repair_source_location_country_mismatches(conn):
         "state_province": 5,
         "institution_hint": 4,
         "location_raw": 3,
+        "location_raw_multiple": 3,
         "city_hint": 2,
     }
     for row in rows:
@@ -4985,18 +8090,36 @@ def _repair_source_location_country_mismatches(conn):
             continue
 
         desired_state = row["state_province"]
-        if parsed.get("state_province") and len(state_codes) <= 1 and (
+        if parsed.get("location_evidence") == "location_raw_multiple":
+            desired_state = parsed.get("state_province")
+        elif parsed.get("state_province") and len(state_codes) <= 1 and (
             not desired_state or current_code != desired_code or desired_state != parsed.get("state_province")
         ):
             desired_state = parsed.get("state_province")
         desired_city = row["city"] or parsed.get("city")
+        # A superseded parser could retain ``United States (remote)`` as the
+        # rightmost location component and write the country display into city.
+        # Structured source replay may clear that impossible value (or replace
+        # it with the actual city), while ordinary non-empty cities remain
+        # protected from broad rewrites.
+        if row["city"] and normalize_name(row["city"]) in {
+            normalize_name(row["country"]), normalize_name(country_name),
+            normalize_name(row["country_code"]), normalize_name(desired_code),
+        }:
+            desired_city = parsed.get("city")
+        if parsed.get("location_evidence") == "location_raw_multiple":
+            desired_city = parsed.get("city")
         desired_values = {
             "country": country_name,
             "country_code": desired_code,
             "region_group": parsed.get("region_group"),
             "state_province": desired_state,
             "city": desired_city,
-            "location_evidence": "source_location_replay",
+            "location_evidence": (
+                "location_raw_multiple"
+                if parsed.get("location_evidence") == "location_raw_multiple"
+                else "source_location_replay"
+            ),
         }
         old_values = {key: row[key] for key in desired_values}
 
@@ -5096,6 +8219,608 @@ def _repair_source_location_country_mismatches(conn):
         "changed_jobs": changed,
         "institution_links_repaired": institution_links_repaired,
     }
+
+
+def _repair_known_country_partition_conflicts(conn):
+    """Resolve only country partitions backed by unambiguous preserved evidence.
+
+    Most same-name institutions in different countries are legitimate campuses
+    and stay separate.  These three partitions are narrower:
+
+    * ``Boise, ID`` and ``Hickam AFB, HI`` were created by omissions in the US
+      state table.  The source-location replay above moves their jobs to the
+      existing US entity, after which the empty legacy partition can be retired.
+    * The exact institution name ``Chinese University of Hong Kong, Shenzhen``
+      names the mainland-China campus.  It is not the parent university in Hong
+      Kong, so the campus-specific row and its jobs can be repaired safely.
+
+    No source record is edited or deleted; entity redirects, field provenance,
+    and repair-audit rows retain the complete history.
+    """
+    stats = {
+        "institution_partitions_merged": 0,
+        "campus_jobs_repaired": 0,
+        "queues_resolved": 0,
+    }
+
+    def current_rows(normalized_name, country_code):
+        if country_code is None:
+            return conn.execute(
+                "SELECT * FROM institutions WHERE normalized_name=? "
+                "AND country_code IS NULL AND is_current=1 ORDER BY id",
+                (normalized_name,),
+            ).fetchall()
+        return conn.execute(
+            "SELECT * FROM institutions WHERE normalized_name=? "
+            "AND country_code=? AND is_current=1 ORDER BY id",
+            (normalized_name, country_code),
+        ).fetchall()
+
+    def resolve_queue(old_id, target_id):
+        cur = conn.execute(
+            """UPDATE entity_resolution_queue
+               SET proposed_survivor_id=?,decision='approve',status='resolved',updated_at=?
+               WHERE entity_type='institution' AND entity_id IN (?,?)
+                 AND status!='resolved'""",
+            (target_id, now_utc(), old_id, target_id),
+        )
+        stats["queues_resolved"] += max(0, int(cur.rowcount or 0))
+
+    # These are legacy parser partitions. They are retired only after the
+    # source replay has moved every job away from them.
+    orphan_partitions = (
+        (normalize_name("Boise State University"), "ID", "US",
+         "Boise, ID is Boise, Idaho; the legacy row read ID as Indonesia."),
+        (normalize_name("University of Maryland Global Campus"), None, "US",
+         "Hickam AFB, HI is in Hawaii; the legacy row was created before HI was in the state table."),
+    )
+    for normalized_name, old_code, target_code, reason in orphan_partitions:
+        targets = current_rows(normalized_name, target_code)
+        if not targets:
+            continue
+        target = targets[0]
+        for old in current_rows(normalized_name, old_code):
+            if int(old["id"]) == int(target["id"]):
+                continue
+            jobs_remaining = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE institution_id=?", (old["id"],),
+            ).fetchone()[0]
+            if jobs_remaining:
+                continue
+            merged = _merge_institution_entity(conn, int(old["id"]), int(target["id"]), reason)
+            if merged:
+                stats["institution_partitions_merged"] += 1
+                resolve_queue(int(old["id"]), int(target["id"]))
+
+    campus_name = normalize_name("Chinese University of Hong Kong, Shenzhen")
+    targets = current_rows(campus_name, "CN")
+    old_rows = current_rows(campus_name, "HK")
+    if targets and old_rows:
+        target = targets[0]
+        target_city = target["city"] or "Shenzhen"
+        for old in old_rows:
+            jobs = conn.execute(
+                "SELECT * FROM jobs WHERE institution_id=? ORDER BY id", (old["id"],),
+            ).fetchall()
+            for job in jobs:
+                desired_city = job["city"]
+                if not desired_city or normalize_name(desired_city) in {
+                    normalize_name("China"), normalize_name("Hong Kong"),
+                }:
+                    desired_city = target_city
+                old_values = {
+                    "institution_id": job["institution_id"],
+                    "country": job["country"],
+                    "country_code": job["country_code"],
+                    "region_group": job["region_group"],
+                    "state_province": job["state_province"],
+                    "city": job["city"],
+                    "location_evidence": job["location_evidence"],
+                }
+                new_values = {
+                    "institution_id": int(target["id"]),
+                    "country": "China",
+                    "country_code": "CN",
+                    "region_group": "Asia",
+                    "state_province": None,
+                    "city": desired_city,
+                    "location_evidence": "known_institution_identity",
+                }
+                observed = now_utc()
+                conn.execute(
+                    """UPDATE jobs SET country=?,country_code=?,region_group=?,state_province=?,
+                         city=?,location_evidence=?,updated_at=? WHERE id=?""",
+                    (
+                        new_values["country"], new_values["country_code"],
+                        new_values["region_group"], new_values["state_province"],
+                        new_values["city"], new_values["location_evidence"],
+                        observed, job["id"],
+                    ),
+                )
+                evidence = (
+                    "Campus-specific institution identity: Chinese University of Hong Kong, "
+                    "Shenzhen is in Shenzhen, mainland China; the parent university without "
+                    "the Shenzhen suffix remains Hong Kong."
+                )
+                for field_name in ("country", "country_code", "region_group", "city"):
+                    _record_derived_repair_provenance(
+                        conn, job["id"], field_name, new_values[field_name], evidence,
+                    )
+                conn.execute(
+                    """INSERT INTO faculty_job_repair_audit
+                       (observed_at,action,job_id,old_value,new_value,reason)
+                       VALUES (?,?,?,?,?,?)""",
+                    (
+                        observed, "known_campus_country_repair", job["id"],
+                        json.dumps(old_values, ensure_ascii=False),
+                        json.dumps(new_values, ensure_ascii=False), evidence,
+                    ),
+                )
+                stats["campus_jobs_repaired"] += 1
+            merged = _merge_institution_entity(
+                conn, int(old["id"]), int(target["id"]),
+                "The exact campus-specific institution name identifies the Shenzhen, China entity; the HK partition came from matching the parent-university name.",
+            )
+            if merged:
+                stats["institution_partitions_merged"] += 1
+                resolve_queue(int(old["id"]), int(target["id"]))
+    return stats
+
+
+def _record_derived_repair_provenance(conn, job_id, field_name, value, evidence):
+    """Record a new current derived value while retaining superseded evidence."""
+    link = conn.execute("""
+        SELECT source_id,source_job_id,source_url,last_seen
+        FROM job_sources WHERE job_id=?
+        ORDER BY active DESC,last_seen DESC,source_id,source_job_id LIMIT 1
+    """, (job_id,)).fetchone()
+    conn.execute(
+        "UPDATE job_field_provenance SET is_current=0 WHERE job_id=? AND field_name=?",
+        (job_id, field_name),
+    )
+    if value in (None, ""):
+        return
+    conn.execute("""
+        INSERT INTO job_field_provenance
+          (job_id,field_name,source_id,source_job_id,source_url,value_text,
+           evidence_text,captured_at,is_current)
+        VALUES (?,?,?,?,?,?,?,?,1)
+    """, (
+        job_id, field_name, link["source_id"] if link else None,
+        link["source_job_id"] if link else None,
+        link["source_url"] if link else None, str(value), str(evidence or "")[:3000],
+        now_utc(),
+    ))
+
+
+def _repair_rank_mappings(conn):
+    """Recompute rank-only derived fields without replaying source lifecycle."""
+    rows = conn.execute("""
+        SELECT id,title_raw,country_code,rank_normalized,career_stage,
+               rank_mapping_confidence,rank_mapping_explanation
+        FROM jobs ORDER BY id
+    """).fetchall()
+    stats = {"rows": len(rows), "changed": 0, "open_rank": 0,
+             "lecturer_retained": 0}
+    for row in rows:
+        mapped = map_rank(row["country_code"], row["title_raw"])
+        old = {
+            "rank_normalized": row["rank_normalized"],
+            "career_stage": row["career_stage"],
+            "rank_mapping_confidence": row["rank_mapping_confidence"],
+            "rank_mapping_explanation": row["rank_mapping_explanation"],
+        }
+        new = {
+            "rank_normalized": mapped.rank_normalized,
+            "career_stage": mapped.career_stage,
+            "rank_mapping_confidence": mapped.confidence,
+            "rank_mapping_explanation": mapped.explanation,
+        }
+        if old == new:
+            continue
+        conn.execute("""
+            UPDATE jobs SET rank_normalized=?,career_stage=?,rank_mapping_confidence=?,
+              rank_mapping_explanation=?,updated_at=? WHERE id=?
+        """, (
+            mapped.rank_normalized, mapped.career_stage, mapped.confidence,
+            mapped.explanation, now_utc(), row["id"],
+        ))
+        _record_derived_repair_provenance(
+            conn, row["id"], "rank_normalized", mapped.rank_normalized,
+            f"Rank mapping v3 from preserved title: {row['title_raw']}",
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (
+            now_utc(), "rank_mapping_v3", row["id"],
+            json.dumps(old, ensure_ascii=False), json.dumps(new, ensure_ascii=False),
+            "Recomputed rank fields with multi-rank precedence, local Lecturer retention, and discipline-interposed Assistant Professor handling; title evidence is unchanged.",
+        ))
+        stats["changed"] += 1
+        stats["open_rank"] += int(mapped.rank_normalized == "Open Rank")
+        stats["lecturer_retained"] += int(mapped.rank_normalized in {
+            "Lecturer", "Lecturer / Senior Lecturer", "Senior Lecturer / Reader"})
+    return stats
+
+
+# Fields where a stated disagreement settles it: two postings that name
+# different disciplines, appointment types, institutions or cities are not the
+# same vacancy. Silence on a field proves nothing and is ignored.
+_DISTINCT_EVIDENCE = (
+    ("discipline_primary", "different discipline"),
+    ("appointment_type", "different appointment type"),
+    ("institution_id", "different institution"),
+    ("city", "different city"),
+)
+
+
+def resolve_explicitly_distinct_duplicates(conn):
+    """Mark review pairs that disagree on stated evidence as distinct.
+
+    Reversible: the pair row, its match basis and the reason are retained, so a
+    reviewer can reopen any of these. No job is merged, moved or deleted.
+    """
+    rows = conn.execute("""
+        SELECT d.id, d.job_id, d.possible_job_id, d.match_basis,
+               a.discipline_primary AS a_discipline, b.discipline_primary AS b_discipline,
+               a.appointment_type AS a_appointment, b.appointment_type AS b_appointment,
+               a.institution_id AS a_institution, b.institution_id AS b_institution,
+               a.city AS a_city, b.city AS b_city
+        FROM possible_duplicates d
+        JOIN jobs a ON a.id = d.job_id
+        JOIN jobs b ON b.id = d.possible_job_id
+        WHERE d.resolved = 0
+        ORDER BY d.id
+    """).fetchall()
+    stats = {"considered": len(rows), "marked_distinct": 0, "reasons": {}}
+    for row in rows:
+        reasons = []
+        for field, label in _DISTINCT_EVIDENCE:
+            left, right = row[f"a_{field.split('_')[0]}"], row[f"b_{field.split('_')[0]}"]
+            if field == "appointment_type":
+                left = None if left in (None, "", "unknown") else left
+                right = None if right in (None, "", "unknown") else right
+            if left is not None and right is not None and str(left) != str(right):
+                reasons.append(f"{label} ({left} vs {right})")
+        if not reasons:
+            continue
+        reason = ("Both postings state this and the statements disagree, so they are not the "
+                  "same vacancy: " + "; ".join(reasons) +
+                  ". Recorded as distinct rather than merged; the pair is retained and can be "
+                  "reopened.")
+        conn.execute("""
+            UPDATE possible_duplicates
+            SET resolved=1, resolution='confirmed_distinct', resolved_at=?,
+                resolution_reason=?
+            WHERE id=?
+        """, (now_utc(), reason[:600], row["id"]))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (now_utc(), "duplicate_confirmed_distinct", row["job_id"],
+              json.dumps({"resolved": 0, "possible_job_id": row["possible_job_id"],
+                          "match_basis": row["match_basis"]}, ensure_ascii=False),
+              json.dumps({"resolved": 1, "resolution": "confirmed_distinct"},
+                         ensure_ascii=False),
+              reason[:600]))
+        stats["marked_distinct"] += 1
+        for item in reasons:
+            key = item.split(" (")[0]
+            stats["reasons"][key] = stats["reasons"].get(key, 0) + 1
+    return stats
+
+
+def _rederive_market_cycles(conn):
+    """Recompute hiring_cycle from each posting's own stated start.
+
+    Only the stated start counts. A posting with no start year gets `unknown`
+    -- placing it in the current cycle would be the guess that made the old
+    values useless.
+    """
+    examined = changed = known = 0
+    rows = conn.execute(
+        "SELECT id, start_year, start_term, description_excerpt, hiring_cycle, "
+        "first_seen_at FROM jobs"
+    ).fetchall()
+    for row in rows:
+        examined += 1
+        # The year we first saw the posting bounds what its start can be. A
+        # 2026 advertisement does not begin in 2000, and without this bound a
+        # stray four-digit number in a long excerpt produced exactly that.
+        try:
+            reference_year = int(str(row["first_seen_at"])[:4])
+        except (TypeError, ValueError):
+            reference_year = None
+        derived = market_cycle.derive(
+            start_year=row["start_year"],
+            start_term=row["start_term"],
+            text=row["description_excerpt"],
+            reference_year=reference_year,
+        )
+        label = derived["market_cycle_label"]
+        if label != market_cycle.UNKNOWN:
+            known += 1
+        stored = None if label == market_cycle.UNKNOWN else label
+        if (row["hiring_cycle"] or None) != stored:
+            changed += 1
+        conn.execute(
+            "UPDATE jobs SET hiring_cycle=?, hiring_cycle_reason=?, "
+            "expected_start_year=?, market_cycle_start_year=? WHERE id=?",
+            (stored, derived["market_cycle_reason"], derived["expected_start_year"],
+             derived["market_cycle_start_year"], row["id"]),
+        )
+    return {"examined": examined, "changed": changed, "known": known}
+
+def _rederive_visa_from_held_text(conn):
+    """Re-run the visa classifier over stored text. Writes no new evidence.
+
+    Only the text we already captured is used. A row whose excerpt is a
+    120-character listing blurb stays `unknown`, which is the truthful answer:
+    we have not read that posting.
+    """
+    examined = changed = evidence = 0
+    rows = conn.execute(
+        "SELECT id, title_raw, department, description_excerpt, "
+        "COALESCE(visa_status,'unknown') AS visa_status, visa_text FROM jobs"
+    ).fetchall()
+    for row in rows:
+        examined += 1
+        combined = " ".join(
+            item for item in (row["title_raw"], row["department"] or "",
+                              row["description_excerpt"] or "") if item
+        )
+        verdict = classify_visa(combined)
+        pathways = ",".join(verdict["pathways"]) or None
+        if verdict["status"] == row["visa_status"] and not verdict["evidence"]:
+            conn.execute("UPDATE jobs SET visa_pathways=? WHERE id=?", (pathways, row["id"]))
+            continue
+        if verdict["status"] != row["visa_status"]:
+            changed += 1
+        if verdict["evidence"] and not row["visa_text"]:
+            evidence += 1
+        conn.execute(
+            "UPDATE jobs SET visa_status=?, visa_text=COALESCE(?, visa_text), "
+            "visa_pathways=? WHERE id=?",
+            (verdict["status"], verdict["evidence"], pathways, row["id"]),
+        )
+    return {"examined": examined, "changed": changed, "evidence": evidence}
+
+def _backfill_detail_attempt_backoff(conn):
+    """Give pre-backoff unfinished attempts an attempt count and a due time.
+
+    A challenged or refused posting recorded before the backoff was added has
+    attempt_count=0 and no next_retry_at, so the queue treats it as due
+    immediately -- putting the postings a board just refused at the front of
+    the next run. Counting the attempt that produced the row and scheduling
+    from it is the honest reconstruction: the attempt did happen.
+    """
+    from services.faculty_jobs_detail_enrichment import TERMINAL_STATUSES, _next_retry
+    placeholders = ",".join("?" * len(TERMINAL_STATUSES))
+    rows = conn.execute(f"""
+        SELECT source_id, source_job_id, attempted_at, attempt_count
+        FROM job_detail_fetches
+        WHERE status NOT IN ({placeholders})
+          AND (attempt_count IS NULL OR attempt_count = 0 OR next_retry_at IS NULL)
+    """, TERMINAL_STATUSES).fetchall()
+    for row in rows:
+        attempts = max(1, int(row["attempt_count"] or 0) or 1)
+        conn.execute("""
+            UPDATE job_detail_fetches
+            SET attempt_count=?, last_attempt_at=COALESCE(last_attempt_at, attempted_at),
+                next_retry_at=?
+            WHERE source_id=? AND source_job_id=?
+        """, (attempts, _next_retry(attempts), row["source_id"], row["source_job_id"]))
+    return {"rows": len(rows)}
+
+
+def _backfill_appointment_types(conn):
+    """Derive appointment_type for preserved rows without touching evidence.
+
+    Reads the retained title only, exactly as ingestion does, so a re-run
+    produces the same answer and no row is rewritten twice.
+    """
+    rows = conn.execute(
+        "SELECT id,title_raw,appointment_type FROM jobs ORDER BY id").fetchall()
+    stats = {"rows": len(rows), "changed": 0}
+    for row in rows:
+        derived = infer_appointment(row["title_raw"])
+        if (row["appointment_type"] or None) == derived:
+            continue
+        conn.execute("UPDATE jobs SET appointment_type=?,updated_at=? WHERE id=?",
+                     (derived, now_utc(), row["id"]))
+        _record_derived_repair_provenance(
+            conn, row["id"], "appointment_type", derived,
+            f"Appointment type derived from preserved title: {row['title_raw']}",
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (
+            now_utc(), "appointment_type_backfill", row["id"],
+            json.dumps({"appointment_type": row["appointment_type"]}, ensure_ascii=False),
+            json.dumps({"appointment_type": derived}, ensure_ascii=False),
+            "Derived the appointment axis (adjunct/visiting/postdoc/full_time) from the "
+            "retained title. track_type answers tenure/permanence and leaves adjunct "
+            "advertisements as unknown, so contingent and continuing roles were "
+            "indistinguishable in the market view. No posting was removed or reclassified.",
+        ))
+        stats["changed"] += 1
+        stats[derived] = stats.get(derived, 0) + 1
+    return stats
+
+
+def _repair_missing_city_from_source_records(conn):
+    """Recover a city the old component filter discarded.
+
+    Only fills a city that is currently NULL, and only from the preserved
+    source record, so nothing already resolved is overwritten and no city is
+    invented where the source never carried one.
+    """
+    rows = conn.execute("""
+        SELECT j.id, j.city, i.official_name AS institution,
+               sjr.structured_extraction AS extraction
+        FROM jobs j
+        LEFT JOIN institutions i ON i.id=j.institution_id
+        JOIN job_sources js ON js.job_id=j.id AND js.active=1
+        JOIN source_job_records sjr
+          ON sjr.source_id=js.source_id AND sjr.source_job_id=js.source_job_id
+        WHERE j.city IS NULL
+        ORDER BY j.id
+    """).fetchall()
+    stats = {"candidates": len(rows), "changed": 0}
+    seen = set()
+    for row in rows:
+        if row["id"] in seen:
+            continue
+        try:
+            extraction = json.loads(row["extraction"] or "{}") or {}
+        except (TypeError, ValueError):
+            continue
+        raw = clean_text(extraction.get("location_raw"))
+        if not raw:
+            continue
+        parsed = parse_location(raw, None, row["institution"])
+        city = parsed.get("city")
+        # A bare state token is not a city. Those rows carry no country either
+        # and are a separate, pre-existing gap; they stay Unknown rather than
+        # being filled with a state abbreviation.
+        if not city or (parsed.get("country_code") is None and len(city) <= 3):
+            continue
+        seen.add(row["id"])
+        conn.execute("UPDATE jobs SET city=?,updated_at=? WHERE id=?",
+                     (city, now_utc(), row["id"]))
+        _record_derived_repair_provenance(
+            conn, row["id"], "city", city,
+            f"City recovered from the preserved source location: {raw}",
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (
+            now_utc(), "city_recovered_after_paren_component_fix", row["id"],
+            json.dumps({"city": None}, ensure_ascii=False),
+            json.dumps({"city": city}, ensure_ascii=False),
+            "A location component that is empty once its parenthetical is stripped "
+            "(a detail page's trailing '(US)') was selected as the rightmost city and then "
+            "reduced to nothing. The source value is unchanged and is quoted in the "
+            "provenance row.",
+        ))
+        stats["changed"] += 1
+    return stats
+
+
+def _repair_country_slash_locations(conn):
+    """Parse Country / City values while preserving their raw audit evidence."""
+    stats = {"jobs": 0, "institutions": 0, "identity_conflicts_queued": 0}
+    job_rows = conn.execute("""
+        SELECT j.*,i.official_name AS institution_name
+        FROM jobs j LEFT JOIN institutions i ON i.id=j.institution_id
+        WHERE instr(COALESCE(j.city,''),'/')>0 ORDER BY j.id
+    """).fetchall()
+    for row in job_rows:
+        raw = str(row["city"] or "")
+        prefix = raw.split("/", 1)[0].strip()
+        if not country_code_for(prefix):
+            continue
+        parsed = parse_location(
+            raw, source_region=row["country_code"] or row["country"],
+            institution_text=row["institution_name"],
+            description=row["description_excerpt"], region_is_board_default=False,
+        )
+        old = {key: row[key] for key in (
+            "country", "country_code", "region_group", "state_province", "city",
+            "location_evidence")}
+        new = {key: parsed.get(key) for key in old}
+        if old == new:
+            continue
+        conn.execute("""
+            UPDATE jobs SET country=?,country_code=?,region_group=?,state_province=?,city=?,
+              location_evidence=?,updated_at=? WHERE id=?
+        """, (
+            new["country"], new["country_code"], new["region_group"],
+            new["state_province"], new["city"], new["location_evidence"],
+            now_utc(), row["id"],
+        ))
+        _record_derived_repair_provenance(
+            conn, row["id"], "country", new["country"],
+            f"Country / City parser v3 from preserved derived raw value: {raw}",
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?)
+        """, (
+            now_utc(), "country_slash_location_v3", row["id"],
+            json.dumps(old, ensure_ascii=False), json.dumps(new, ensure_ascii=False),
+            f"Parsed a Country / City display into structured fields; the original value remains in source records and this audit row: {raw}",
+        ))
+        stats["jobs"] += 1
+
+    institution_rows = conn.execute("""
+        SELECT * FROM institutions
+        WHERE is_current=1 AND instr(COALESCE(city,''),'/')>0 ORDER BY id
+    """).fetchall()
+    for row in institution_rows:
+        raw = str(row["city"] or "")
+        prefix = raw.split("/", 1)[0].strip()
+        if not country_code_for(prefix):
+            continue
+        parsed = parse_location(
+            raw, source_region=row["country_code"] or row["country"],
+            institution_text=row["official_name"], region_is_board_default=False,
+        )
+        old = {key: row[key] for key in (
+            "country", "country_code", "region_group", "state_province", "city")}
+        collision = None
+        if parsed.get("country_code") != row["country_code"]:
+            collision = conn.execute("""
+                SELECT id,official_name,is_current FROM institutions
+                WHERE normalized_name=? AND country_code=? AND id<>?
+                ORDER BY is_current DESC,id LIMIT 1
+            """, (row["normalized_name"], parsed.get("country_code"), row["id"])).fetchone()
+        if collision:
+            # Country is part of the institution identity and the legacy
+            # schema keeps that key unique across current and historical rows.
+            # Clean the city, but do not force an entity merge here.
+            parsed["country"] = row["country"]
+            parsed["country_code"] = row["country_code"]
+            parsed["region_group"] = row["region_group"]
+            _entity_resolution_queue(
+                conn, "institution", row["id"], row["official_name"],
+                "Country / City parsing exposed a country identity already held by another institution row; city was cleaned but country reassignment was left for review.",
+                proposed_survivor_id=collision["id"],
+                match_basis="country_slash_identity_collision", confidence=0.95,
+                conflicting_identity={"parsed_country_code": country_code_for(prefix),
+                                      "collision_id": collision["id"]},
+            )
+            stats["identity_conflicts_queued"] += 1
+        new = {key: parsed.get(key) for key in old}
+        if old == new:
+            continue
+        conn.execute("""
+            UPDATE institutions SET country=?,country_code=?,region_group=?,state_province=?,
+              city=?,updated_at=? WHERE id=?
+        """, (
+            new["country"], new["country_code"], new["region_group"],
+            new["state_province"], new["city"], now_utc(), row["id"],
+        ))
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,old_value,new_value,reason)
+            VALUES (?,?,?,?,?)
+        """, (
+            now_utc(), "institution_country_slash_location_v3",
+            json.dumps({"institution_id": row["id"], **old}, ensure_ascii=False),
+            json.dumps({"institution_id": row["id"], **new}, ensure_ascii=False),
+            f"Parsed a Country / City institution display into structured fields; original value retained in this audit row: {raw}",
+        ))
+        stats["institutions"] += 1
+    return stats
 
 
 def _repair_faculty_market_boundary(conn):
@@ -5356,9 +9081,32 @@ def _repair_aacsb_directory_location_evidence(conn):
                 )
 
 
-def _save_aacsb_scan_result(conn, directory_id, scan, checked_at):
+AACSB_COMPLETE_JOB_SCAN_STATUSES = {
+    "jobs_found", "no_current_jobs", "no_eligible_business_faculty_jobs",
+}
+
+
+def _aacsb_site_scan_is_complete(scan):
+    """Return whether one official-site result may affect missing streaks."""
+    status = str(getattr(scan, "job_scan_status", "") or "")
+    if not bool(getattr(scan, "complete", False)):
+        return False, "official-site scan did not establish a complete observation"
+    if bool(getattr(scan, "budget_truncated", False)):
+        return False, "official-site scan was truncated by a page or job budget"
+    if int(getattr(scan, "error_count", 0) or 0):
+        return False, "official-site scan encountered a request or parsing error"
+    if status not in AACSB_COMPLETE_JOB_SCAN_STATUSES:
+        return False, f"job scan status {status or 'unknown'} is not a complete status"
+    return True, f"complete official-site observation with status {status}"
+
+
+def _save_aacsb_scan_result(conn, directory_id, scan, checked_at,
+                            scan_run_id=None, seen_source_job_ids=()):
     from services.faculty_jobs_sources.aacsb import AACSB_SCAN_RULE_VERSION
     jobs = scan.jobs or []
+    complete, reconciliation_reason = _aacsb_site_scan_is_complete(scan)
+    seen_ids = sorted({str(item) for item in seen_source_job_ids if item is not None})
+    seen_json = json.dumps(seen_ids, ensure_ascii=False, separators=(",", ":"))
     conn.execute("""
         UPDATE aacsb_directory_schools SET website_status=?, website_checked_at=?, career_page_url=?, career_page_status=?,
           job_scan_status=?, jobs_found=?, candidates_seen=?,candidates_rejected=?,
@@ -5367,56 +9115,194 @@ def _save_aacsb_scan_result(conn, directory_id, scan, checked_at):
            scan.job_scan_status, len(jobs), int(scan.candidates_seen or 0),
            int(scan.candidates_rejected or 0), AACSB_SCAN_RULE_VERSION,
            checked_at, scan.reason, checked_at, directory_id))
+    directory = conn.execute(
+        "SELECT official_website FROM aacsb_directory_schools WHERE id=?",
+        (directory_id,),
+    ).fetchone()
+    if not directory:
+        return {"reconciliation_complete": complete, "reconciliation_reason": reconciliation_reason}
     conn.execute("""
         INSERT INTO aacsb_scan_history
           (directory_school_id,checked_at,official_website,career_page_url,website_status,career_page_status,
-          job_scan_status,jobs_found,candidates_seen,candidates_rejected,scan_rule_version,response_status,reason)
-        SELECT id,? AS checked_at,official_website,? AS career_page_url,? AS website_status,
-               ? AS career_page_status,? AS job_scan_status,? AS jobs_found,
-               ? AS candidates_seen,? AS candidates_rejected,? AS scan_rule_version,
-               ? AS response_status,? AS reason
-        FROM aacsb_directory_schools WHERE id=?
-    """, (checked_at, scan.career_page_url, scan.website_status, scan.career_page_status,
-           scan.job_scan_status, len(jobs), int(scan.candidates_seen or 0),
-           int(scan.candidates_rejected or 0), AACSB_SCAN_RULE_VERSION,
-           scan.response_status, scan.reason, directory_id))
+           job_scan_status,jobs_found,candidates_seen,candidates_rejected,scan_rule_version,response_status,reason,
+           seen_source_job_ids,reconciliation_complete,reconciliation_reason,scan_run_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (directory_id, checked_at, directory["official_website"], scan.career_page_url,
+           scan.website_status, scan.career_page_status, scan.job_scan_status, len(jobs),
+           int(scan.candidates_seen or 0), int(scan.candidates_rejected or 0),
+           AACSB_SCAN_RULE_VERSION, scan.response_status, scan.reason, seen_json,
+           int(complete), reconciliation_reason, scan_run_id))
+    return {"reconciliation_complete": complete, "reconciliation_reason": reconciliation_reason}
+
+
+def _upsert_aacsb_job_partition(conn, directory_id, source_id, source_job_id,
+                                job_id, scan_run_id, source_url, official_url,
+                                observed_at, scan_status):
+    """Persist one directory-school/source-job identity and revive it safely."""
+    source_job_id = str(source_job_id)
+    policy_false_positive = _aacsb_source_is_known_false_positive(
+        conn, source_id, source_job_id)
+    partition_active = 0 if policy_false_positive else 1
+    partition_missing = AACSB_MISSING_RUNS_BEFORE_INACTIVE if policy_false_positive else 0
+    row = conn.execute(
+        """SELECT id FROM aacsb_job_source_partitions
+           WHERE directory_school_id=? AND source_id=? AND source_job_id=?""",
+        (directory_id, source_id, source_job_id),
+    ).fetchone()
+    if row:
+        conn.execute("""
+            UPDATE aacsb_job_source_partitions SET job_id=?,scan_run_id=?,source_url=?,official_url=?,
+              last_seen_at=?,active=?,consecutive_missing_runs=?,last_scan_status=?,updated_at=?
+            WHERE id=?
+        """, (job_id, scan_run_id, source_url, official_url, observed_at, partition_active,
+               partition_missing, "false_positive" if policy_false_positive else scan_status,
+               observed_at, row["id"]))
+    else:
+        conn.execute("""
+            INSERT INTO aacsb_job_source_partitions
+              (directory_school_id,source_id,source_job_id,job_id,scan_run_id,source_url,official_url,
+               first_seen_at,last_seen_at,active,consecutive_missing_runs,last_scan_status,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?)
+        """, (directory_id, source_id, source_job_id, job_id, scan_run_id, source_url,
+               official_url, observed_at, observed_at, partition_active, partition_missing,
+               "false_positive" if policy_false_positive else scan_status, observed_at, observed_at))
+    conn.execute("""
+        UPDATE job_sources SET active=?,consecutive_missing_runs=?,last_seen=?
+        WHERE source_id=? AND source_job_id=? AND job_id=?
+    """, (partition_active, partition_missing, observed_at, source_id, source_job_id, job_id))
+
+
+def _reconcile_aacsb_job_partitions(conn, directory_id, source_id, scan,
+                                    seen_source_job_ids, scan_run_id,
+                                    checked_at):
+    """Apply three-complete-scan missing streaks to one official site only."""
+    complete, reason = _aacsb_site_scan_is_complete(scan)
+    seen = {str(item) for item in seen_source_job_ids if item is not None}
+    partitions = conn.execute(
+        """SELECT * FROM aacsb_job_source_partitions
+           WHERE directory_school_id=? ORDER BY id""", (directory_id,)
+    ).fetchall()
+    conn.execute(
+        "UPDATE aacsb_job_source_partitions SET last_scan_status=?,updated_at=? "
+        "WHERE directory_school_id=? AND last_scan_status!='false_positive'",
+        (scan.job_scan_status, checked_at, directory_id),
+    )
+    if not complete:
+        return {"reconciled": False, "reason": reason, "seen": len(seen),
+                "missing_marked": 0, "deactivated": 0, "revived": 0}
+
+    missing_marked = newly_deactivated = revived = 0
+    for partition in partitions:
+        source_job_id = str(partition["source_job_id"])
+        if source_job_id in seen:
+            if int(partition["active"] or 0) != 1 or int(partition["consecutive_missing_runs"] or 0):
+                conn.execute("""
+                    UPDATE aacsb_job_source_partitions
+                    SET active=1,consecutive_missing_runs=0,scan_run_id=?,last_seen_at=?,updated_at=?
+                    WHERE id=?
+                """, (scan_run_id, checked_at, checked_at, partition["id"]))
+                conn.execute("""
+                    UPDATE job_sources SET active=1,consecutive_missing_runs=0,last_seen=?
+                    WHERE source_id=? AND source_job_id=?
+                """, (checked_at, source_id, source_job_id))
+                revived += int(partition["active"] or 0) == 0
+            continue
+        if int(partition["active"] or 0) != 1:
+            continue
+        missing = int(partition["consecutive_missing_runs"] or 0) + 1
+        active = int(missing < AACSB_MISSING_RUNS_BEFORE_INACTIVE)
+        conn.execute("""
+            UPDATE aacsb_job_source_partitions
+            SET scan_run_id=?,active=?,consecutive_missing_runs=?,last_scan_status=?,updated_at=?
+            WHERE id=?
+        """, (scan_run_id, active, missing, scan.job_scan_status, checked_at, partition["id"]))
+        conn.execute("""
+            UPDATE job_sources SET active=?,consecutive_missing_runs=?
+            WHERE source_id=? AND source_job_id=?
+        """, (active, missing, source_id, source_job_id))
+        if active:
+            missing_marked += 1
+            continue
+        newly_deactivated += 1
+        remaining = conn.execute(
+            """SELECT COUNT(*) FROM job_sources
+               WHERE job_id=? AND active=1 AND NOT (source_id=? AND source_job_id=?)""",
+            (partition["job_id"], source_id, source_job_id),
+        ).fetchone()[0]
+        if remaining:
+            continue
+        job = conn.execute(
+            "SELECT status,closed_at FROM jobs WHERE id=?", (partition["job_id"],)
+        ).fetchone()
+        if not job or job["status"] == "closed":
+            continue
+        old_value = {"status": job["status"], "source_job_id": source_job_id}
+        new_value = {"status": "closed", "source_job_id": source_job_id}
+        conn.execute(
+            """UPDATE jobs SET status='closed',closed_at=COALESCE(closed_at,?),
+               verification_note=?,updated_at=? WHERE id=?""",
+            (checked_at, "All observed source links are inactive after three complete AACSB official-site missing runs.", checked_at, partition["job_id"]),
+        )
+        conn.execute("""
+            INSERT INTO faculty_job_repair_audit
+              (observed_at,action,job_id,source_id,source_job_id,old_value,new_value,reason)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (checked_at, "aacsb_job_source_deactivation", partition["job_id"], source_id,
+               source_job_id, json.dumps(old_value, ensure_ascii=False),
+               json.dumps(new_value, ensure_ascii=False),
+               "AACSB official-site partition was absent in three complete scans and had no other active source link."))
+    conn.execute("""
+        INSERT INTO faculty_job_repair_audit
+          (observed_at,action,job_id,source_id,old_value,new_value,reason)
+        VALUES (?,?,?,?,?,?,?)
+    """, (checked_at, "aacsb_job_partition_reconciliation", None, source_id,
+           str(len(partitions)), json.dumps({"seen": len(seen), "deactivated": newly_deactivated}, ensure_ascii=False),
+           f"Reconciled one AACSB official-site partition after a {reason}; incomplete, blocked, robots and error scans do not advance missing streaks."))
+    return {"reconciled": True, "reason": reason, "seen": len(seen),
+            "missing_marked": missing_marked, "deactivated": newly_deactivated,
+            "revived": revived}
 
 
 # A roster record has to be absent from this many complete runs before it is
 # deactivated. Mirrors the job-source rule: one empty or partial observation is
 # not evidence that something is gone.
 AACSB_MISSING_RUNS_BEFORE_INACTIVE = 3
-# A run only counts for reconciliation if it observed close to the whole roster.
-# The directory's reported total and its parseable /accredited/ rows differ by a
-# known handful, so exact equality would never hold.
-AACSB_SNAPSHOT_COMPLETENESS = 0.9
 
 
 def _aacsb_snapshot_is_complete(observed, reported_total, max_records, max_pages_used,
-                                pages_fetched):
+                                pages_fetched, metadata=None):
     """Whether this run saw enough of the roster to judge what is missing.
 
     A bounded run -- ``--max-pages 2`` while testing, or a run cut short by an
     HTTP error -- observes a slice, and treating that slice as the world would
     deactivate a thousand accredited schools. Reconciliation is refused unless
-    the run was unbounded and came close to the directory's own reported total.
+    the client explicitly marked the run complete, reached natural pagination,
+    reported no errors, and observed at least the endpoint's raw total.
     """
-    if max_records is not None:
+    if not isinstance(metadata, dict):
+        return False, "AACSB client completeness metadata is missing"
+    if max_records is not None or metadata.get("max_records") is not None:
         return False, "run was limited by max_records"
-    if pages_fetched < max_pages_used:
-        # Stopping before the page budget means the pagination ended naturally,
-        # which is the normal complete case.
-        pass
     if not reported_total:
         return False, "directory did not report a total to compare against"
-    if observed < reported_total * AACSB_SNAPSHOT_COMPLETENESS:
-        return False, (f"observed {observed} of {reported_total} reported records, "
-                       f"below the {int(AACSB_SNAPSHOT_COMPLETENESS * 100)}% completeness bar")
-    return True, f"observed {observed} of {reported_total} reported records"
+    if metadata.get("complete") is not True:
+        return False, "AACSB client marked the roster observation incomplete"
+    if metadata.get("pagination_natural_end") is not True:
+        return False, "directory pagination did not reach a natural end"
+    if metadata.get("page_budget_exhausted"):
+        return False, "directory pagination exhausted its page budget"
+    if int(metadata.get("error_count") or 0):
+        return False, "AACSB roster observation contains request errors"
+    raw_observed = metadata.get("raw_results_observed")
+    if raw_observed is None or int(raw_observed) < int(reported_total):
+        return False, (f"raw observed {raw_observed or 0} of {reported_total} reported records; "
+                       "the full roster was not observed")
+    return True, (f"client-complete roster: {raw_observed} raw records observed versus "
+                  f"{reported_total} reported; {observed} accredited records retained")
 
 
 def _reconcile_aacsb_snapshot(conn, seen_directory_ids, reported_total, max_records,
-                              max_pages_used, pages_fetched):
+                              max_pages_used, pages_fetched, metadata=None):
     """Retire roster rows this run did not see, after enough complete runs.
 
     Without this the roster only ever grows: a school that loses accreditation,
@@ -5429,7 +9315,7 @@ def _reconcile_aacsb_snapshot(conn, seen_directory_ids, reported_total, max_reco
     seen = {int(item) for item in seen_directory_ids if item is not None}
     observed = len(seen)
     complete, reason = _aacsb_snapshot_is_complete(
-        observed, reported_total, max_records, max_pages_used, pages_fetched)
+        observed, reported_total, max_records, max_pages_used, pages_fetched, metadata)
     if not complete:
         return {"reconciled": False, "reason": reason, "observed": observed,
                 "missing_marked": 0, "deactivated": 0, "revived": 0}
@@ -5438,6 +9324,7 @@ def _reconcile_aacsb_snapshot(conn, seen_directory_ids, reported_total, max_reco
     # A record seen again clears its miss streak; a record that had been
     # deactivated and reappears is revived, because the roster is the authority.
     revived = 0
+    newly_deactivated = 0
     for row in conn.execute(
             "SELECT id, active, consecutive_missing_runs FROM aacsb_directory_schools").fetchall():
         if row["id"] in seen:
@@ -5451,6 +9338,7 @@ def _reconcile_aacsb_snapshot(conn, seen_directory_ids, reported_total, max_reco
             continue
         missing = int(row["consecutive_missing_runs"] or 0) + 1
         active = 1 if missing < AACSB_MISSING_RUNS_BEFORE_INACTIVE else 0
+        newly_deactivated += int(active == 0 and row["active"] == 1)
         conn.execute(
             "UPDATE aacsb_directory_schools SET consecutive_missing_runs=?, active=?, updated_at=? "
             "WHERE id=?", (missing, active, now, row["id"]))
@@ -5458,17 +9346,15 @@ def _reconcile_aacsb_snapshot(conn, seen_directory_ids, reported_total, max_reco
     missing_marked = conn.execute(
         "SELECT COUNT(*) FROM aacsb_directory_schools WHERE consecutive_missing_runs>0 AND active=1"
     ).fetchone()[0]
-    deactivated = conn.execute(
-        "SELECT COUNT(*) FROM aacsb_directory_schools WHERE active=0").fetchone()[0]
     conn.execute("""
         INSERT INTO faculty_job_repair_audit (observed_at,action,job_id,old_value,new_value,reason)
         VALUES (?,?,?,?,?,?)
-    """, (now, "aacsb_snapshot_reconciliation", None, str(observed), str(deactivated),
+    """, (now, "aacsb_snapshot_reconciliation", None, str(observed), str(newly_deactivated),
           f"Reconciled the AACSB roster against a complete run ({reason}). Rows absent from "
           f"{AACSB_MISSING_RUNS_BEFORE_INACTIVE} consecutive complete runs are set active=0; "
           "nothing is deleted and a reappearing row is revived."))
     return {"reconciled": True, "reason": reason, "observed": observed,
-            "missing_marked": missing_marked, "deactivated": deactivated, "revived": revived}
+            "missing_marked": missing_marked, "deactivated": newly_deactivated, "revived": revived}
 
 
 def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_details=True,
@@ -5482,6 +9368,7 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
     """
     from services.faculty_jobs_sources.aacsb import AACSB_SCAN_RULE_VERSION
     db_path = db_path or FACULTY_DB_PATH
+    _require_guarded_production_write(db_path)
     ensure_faculty_jobs_tables(db_path)
     with _FACULTY_UPDATE_LOCK:
         conn = _connect(db_path)
@@ -5514,7 +9401,8 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
 
             with conn:
                 reconciliation = _reconcile_aacsb_snapshot(
-                    conn, directory_ids, total, max_records, max_pages, pages_fetched)
+                    conn, directory_ids, total, max_records, max_pages, pages_fetched,
+                    directory_meta)
             if progress:
                 progress("AACSB reconciliation: " + (
                     f"{reconciliation['deactivated']} inactive, "
@@ -5552,11 +9440,14 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
                 with conn:
                     if _sync_aacsb_school_entity(conn, directory_id):
                         linked += 1
+            with conn:
+                accreditation_state = _refresh_aacsb_accreditation_state(conn)
 
             websites_checked = 0
             jobs_found = 0
             candidates_seen = candidates_rejected = 0
             inserted = updated = merged = source_errors = 0
+            website_reconciled = website_deactivated = 0
             if scan_websites:
                 rows = [conn.execute("SELECT * FROM aacsb_directory_schools WHERE id=?", (directory_id,)).fetchone() for directory_id in directory_ids]
                 rows = [row for row in rows if row and row["official_website"]]
@@ -5570,21 +9461,39 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
                         )
                         checked = now_utc()
                         with conn:
-                            _save_aacsb_scan_result(conn, row["id"], scan, checked)
+                            seen_source_job_ids = []
                             for job in scan.jobs or []:
                                 try:
                                     normalized = normalize_source_job(job, "Global")
                                     _job_id, action = _upsert_job(conn, source_id, job, normalized, started)
+                                    if not _aacsb_source_is_known_false_positive(
+                                            conn, source_id, job.source_job_id):
+                                        seen_source_job_ids.append(job.source_job_id)
+                                    _upsert_aacsb_job_partition(
+                                        conn, row["id"], source_id, job.source_job_id, _job_id,
+                                        run_id, job.source_url, normalized.get("official_url"),
+                                        checked, scan.job_scan_status,
+                                    )
                                     if action == "inserted": inserted += 1
                                     elif action == "merged": merged += 1
                                     else: updated += 1
                                 except Exception as exc:
                                     source_errors += 1
                                     LOG.warning("AACSB official job failed school=%s error=%s", row["institution_name"], _safe_error(exc))
+                            _save_aacsb_scan_result(
+                                conn, row["id"], scan, checked, run_id, seen_source_job_ids,
+                            )
+                            partition_reconciliation = _reconcile_aacsb_job_partitions(
+                                conn, row["id"], source_id, scan, seen_source_job_ids,
+                                run_id, checked,
+                            )
+                            website_reconciled += int(partition_reconciliation["reconciled"])
+                            website_deactivated += int(partition_reconciliation["deactivated"])
                         websites_checked += 1
                         jobs_found += len(scan.jobs or [])
                         candidates_seen += int(scan.candidates_seen or 0)
                         candidates_rejected += int(scan.candidates_rejected or 0)
+                        source_errors += int(scan.error_count or 0)
                     except Exception as exc:
                         source_errors += 1
                         with conn:
@@ -5599,11 +9508,14 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
                       websites_checked=?,jobs_found=?,candidates_seen=?,candidates_rejected=?,
                       directory_results_reported=?,directory_results_observed=?,
                       non_accredited_results_excluded=?,directory_observation_complete=?,
+                      directory_pagination_natural_end=?,directory_metadata_json=?,
                       error_count=?,error_summary=? WHERE id=?
                 """, (finished, pages_fetched, len(records), len(directory_ids), details_fetched, websites_checked, jobs_found,
                        candidates_seen, candidates_rejected,
                        directory_meta.get("reported_results"), directory_meta.get("raw_results_observed"),
                        directory_meta.get("non_accredited_results_excluded"), int(bool(directory_meta.get("complete"))),
+                       int(bool(directory_meta.get("pagination_natural_end"))),
+                       json.dumps(directory_meta, ensure_ascii=False, sort_keys=True),
                        source_errors,
                        f"{source_errors} bounded per-school errors" if source_errors else None, run_id))
                 conn.execute("""
@@ -5619,11 +9531,14 @@ def update_aacsb_directory(db_path=None, max_pages=110, max_records=None, fetch_
                 "non_accredited_results_excluded": directory_meta.get("non_accredited_results_excluded"),
                 "directory_observation_complete": bool(directory_meta.get("complete")),
                 "records_upserted": len(directory_ids), "linked_business_schools": linked,
+                "aacsb_accreditation_state": accreditation_state,
                 "details_fetched": details_fetched, "websites_checked": websites_checked,
                 "jobs_found": jobs_found, "items_inserted": inserted, "items_updated": updated,
                 "items_merged": merged, "candidates_seen": candidates_seen,
                 "candidates_rejected": candidates_rejected,
                 "snapshot_reconciliation": reconciliation,
+                "website_partition_reconciled": website_reconciled,
+                "website_partition_deactivated": website_deactivated,
                 "errors": source_errors, "updated_at": finished,
             }
         except Exception as exc:
@@ -5651,6 +9566,7 @@ def scan_aacsb_official_websites(db_path=None, max_schools=25, offset=0,
     """
     from services.faculty_jobs_sources.aacsb import AACSB_SCAN_RULE_VERSION
     db_path = db_path or FACULTY_DB_PATH
+    _require_guarded_production_write(db_path)
     ensure_faculty_jobs_tables(db_path)
     with _FACULTY_UPDATE_LOCK:
         conn = _connect(db_path)
@@ -5681,7 +9597,10 @@ def scan_aacsb_official_websites(db_path=None, max_schools=25, offset=0,
         try:
             from services.faculty_jobs_sources.aacsb import AACSBDirectoryClient
             client = AACSBDirectoryClient(timeout=timeout, max_pages=2, delay=delay)
+            with conn:
+                accreditation_state = _refresh_aacsb_accreditation_state(conn)
             websites_checked = jobs_found = candidates_seen = candidates_rejected = inserted = updated = merged = errors = 0
+            website_reconciled = website_deactivated = 0
             for index, row in enumerate(rows, 1):
                 try:
                     scan = client.scan_official_site(
@@ -5690,21 +9609,39 @@ def scan_aacsb_official_websites(db_path=None, max_schools=25, offset=0,
                     )
                     checked = now_utc()
                     with conn:
-                        _save_aacsb_scan_result(conn, row["id"], scan, checked)
+                        seen_source_job_ids = []
                         for job in scan.jobs or []:
                             try:
                                 normalized = normalize_source_job(job, "Global")
                                 _job_id, action = _upsert_job(conn, source_id, job, normalized, started)
+                                if not _aacsb_source_is_known_false_positive(
+                                        conn, source_id, job.source_job_id):
+                                    seen_source_job_ids.append(job.source_job_id)
+                                _upsert_aacsb_job_partition(
+                                    conn, row["id"], source_id, job.source_job_id, _job_id,
+                                    run_id, job.source_url, normalized.get("official_url"),
+                                    checked, scan.job_scan_status,
+                                )
                                 if action == "inserted": inserted += 1
                                 elif action == "merged": merged += 1
                                 else: updated += 1
                             except Exception as exc:
                                 errors += 1
                                 LOG.warning("AACSB official job failed school=%s error=%s", row["institution_name"], _safe_error(exc))
+                        _save_aacsb_scan_result(
+                            conn, row["id"], scan, checked, run_id, seen_source_job_ids,
+                        )
+                        partition_reconciliation = _reconcile_aacsb_job_partitions(
+                            conn, row["id"], source_id, scan, seen_source_job_ids,
+                            run_id, checked,
+                        )
+                        website_reconciled += int(partition_reconciliation["reconciled"])
+                        website_deactivated += int(partition_reconciliation["deactivated"])
                     websites_checked += 1
                     jobs_found += len(scan.jobs or [])
                     candidates_seen += int(scan.candidates_seen or 0)
                     candidates_rejected += int(scan.candidates_rejected or 0)
+                    errors += int(scan.error_count or 0)
                 except Exception as exc:
                     errors += 1
                     checked = now_utc()
@@ -5742,8 +9679,11 @@ def scan_aacsb_official_websites(db_path=None, max_schools=25, offset=0,
                 "ok": True, "source": "aacsb_official", "records_seen": len(rows),
                 "offset": start_offset, "websites_checked": websites_checked,
                 "jobs_found": jobs_found, "items_inserted": inserted,
+                "aacsb_accreditation_state": accreditation_state,
                 "items_updated": updated, "items_merged": merged,
                 "candidates_seen": candidates_seen, "candidates_rejected": candidates_rejected,
+                "website_partition_reconciled": website_reconciled,
+                "website_partition_deactivated": website_deactivated,
                 "scan_rule_version": AACSB_SCAN_RULE_VERSION,
                 "stale_or_unchecked_remaining": int(stale_remaining or 0),
                 "errors": errors,
@@ -5763,7 +9703,7 @@ def scan_aacsb_official_websites(db_path=None, max_schools=25, offset=0,
 
 def list_aacsb_directory(db_path=None, query=None, limit=50, offset=0):
     from services.faculty_jobs_sources.aacsb import AACSB_SCAN_RULE_VERSION
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     query = query or {}
     conn = _connect(db_path)
     try:
@@ -5796,7 +9736,7 @@ def list_aacsb_directory(db_path=None, query=None, limit=50, offset=0):
         start = max(0, int(offset))
         rows = conn.execute(f"""
             SELECT d.*, bs.official_name AS linked_school_name,
-                   (SELECT COUNT(*) FROM jobs j WHERE j.school_id=d.linked_business_school_id AND j.derived_quality='accepted' AND j.faculty_market_eligible=1 AND j.business_scope IN ('business_school','business_discipline') AND j.status IN ('open','likely_open','closing_soon')) AS current_openings
+                   (SELECT COUNT(*) FROM jobs j WHERE j.school_id=d.linked_business_school_id AND {default_market_where("j")}) AS current_openings
             FROM aacsb_directory_schools d
             LEFT JOIN business_schools bs ON bs.id=d.linked_business_school_id
             WHERE {where}
@@ -5817,7 +9757,7 @@ def list_aacsb_directory(db_path=None, query=None, limit=50, offset=0):
 
 def build_aacsb_directory_summary(db_path=None):
     from services.faculty_jobs_sources.aacsb import AACSB_SCAN_RULE_VERSION
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         def count(sql, args=()):
@@ -5840,10 +9780,8 @@ def build_aacsb_directory_summary(db_path=None):
         source = conn.execute("SELECT id FROM sources WHERE name='aacsb_official'").fetchone()
         accepted_jobs = quarantined_jobs = 0
         if source:
-            accepted_jobs = count("""SELECT COUNT(DISTINCT js.job_id) FROM job_sources js JOIN jobs j ON j.id=js.job_id
-                                    WHERE js.source_id=? AND j.derived_quality='accepted'
-                                      AND j.faculty_market_eligible=1
-                                      AND j.business_scope IN ('business_school','business_discipline')""", (source["id"],))
+            accepted_jobs = count(f"""SELECT COUNT(DISTINCT js.job_id) FROM job_sources js JOIN jobs j ON j.id=js.job_id
+                                    WHERE js.source_id=? AND {default_market_where('j')}""", (source["id"],))
             quarantined_jobs = count("""SELECT COUNT(DISTINCT js.job_id) FROM job_sources js JOIN jobs j ON j.id=js.job_id
                                       WHERE js.source_id=? AND j.derived_quality='quarantined'""", (source["id"],))
         return {"ok": True, "summary": {
@@ -5904,7 +9842,7 @@ def build_aacsb_directory_summary(db_path=None):
 
 def build_aacsb_directory_filters(db_path=None):
     """Return the centralized country vocabulary plus observed roster counts."""
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         observed = [dict(row) for row in conn.execute(
@@ -5930,7 +9868,7 @@ def _discipline_observed_coverage(conn, filtered_where, active_where, args):
         "COUNT(*) AS jobs, "
         "SUM(CASE WHEN f.salary_min IS NOT NULL THEN 1 ELSE 0 END) AS salary_known, "
         "SUM(CASE WHEN f.deadline_date IS NOT NULL OR f.deadline_mode IN ('open_until_filled','rolling') THEN 1 ELSE 0 END) AS deadline_known, "
-        "SUM(CASE WHEN f.school_id IS NOT NULL AND EXISTS (SELECT 1 FROM school_evidence se WHERE se.school_id=f.school_id) THEN 1 ELSE 0 END) AS school_evidence, "
+        "SUM(CASE WHEN f.school_id IS NOT NULL AND EXISTS (SELECT 1 FROM school_evidence se WHERE se.school_id=f.school_id AND se.is_current=1) THEN 1 ELSE 0 END) AS school_evidence, "
         "COUNT(DISTINCT f.country_code) AS geographies "
         "FROM (" + _job_select() + " WHERE " + active_where + ") f "
         "GROUP BY f.discipline_primary ORDER BY jobs DESC, discipline"
@@ -5955,13 +9893,19 @@ def _discipline_observed_coverage(conn, filtered_where, active_where, args):
 
 
 def build_job_market_analytics(db_path=None, query=None):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         clauses, args = _query_conditions(query)
         scope = _requested_scope(query)
         filtered_where = " AND ".join(clauses) if clauses else "1=1"
-        active_where = " AND ".join([filtered_where, "j.status IN ('open','likely_open','closing_soon')"])
+        # One predicate for the overview and every grouping. Previously the
+        # groupings applied the broad business predicate whatever the scope,
+        # so an audit view's total and its breakdowns disagreed by 1,100 rows.
+        scope_active = active_sql(scope, "j")
+        active_where = (" AND ".join([filtered_where, scope_active])
+                        if filtered_where != "1=1" else scope_active)
+        scope_totals = scope_counts(conn, scope, _job_select(), filtered_where, args)
         def grouped(column):
             return _group_counts_filtered(conn, column, active_where, args)
         weeks = [dict(row) for row in conn.execute(
@@ -5984,6 +9928,8 @@ def build_job_market_analytics(db_path=None, query=None):
         )
         return {"ok": True, "analytics": {
             "scope": scope,
+            "active_filter": active_filter_definition(scope),
+            "active_filter_sql": scope_totals["active_filter_sql"],
             "overview": build_faculty_job_summary(db_path, query)["summary"],
             "by_discipline": grouped("discipline_primary"), "by_region": grouped("region_group"),
             "by_country": grouped("country"), "by_state_province": grouped("state_province"),
@@ -5995,7 +9941,22 @@ def build_job_market_analytics(db_path=None, query=None):
             "source_coverage_history": history_rows, "history_status": history_status,
             "history_note": history_note,
             "coverage": _coverage(conn, filtered_where, args),
-            "interpretation_note": "Counts are observed postings in the enabled-source coverage, not an estimate of the whole academic labor market. A new source or wider crawl can raise counts without implying market growth.",
+            # The SQL actually used, per scope. Reporting the broad business
+            # predicate for every scope told readers the strict view included
+            # business_discipline and that the audit view was limited to
+            # business scopes; neither was true.
+            "scope": scope,
+            "catalogue_records": scope_totals["catalogue_records"],
+            "active_jobs": scope_totals["active_jobs"],
+            "inactive_by_status": scope_totals["inactive_by_status"],
+            "active_filter_sql": scope_totals["active_filter_sql"],
+            "catalogue_filter_sql": scope_totals["catalogue_filter_sql"],
+            "interpretation_note": (
+                "Counts are observed postings from active source links, including "
+                "preserved disabled/opt-in/manual snapshots; they are not an estimate "
+                "of the whole academic labor market. A new source or wider crawl can "
+                "raise counts without implying market growth."
+            ),
             "updated_at": now_utc(),
         }}
     finally:
@@ -6021,17 +9982,34 @@ def export_faculty_jobs_csv(db_path=None, query=None, include_private=False):
             break
         offset += len(page)
     output = io.StringIO()
-    fields = ["institution", "business_school", "title", "rank", "career_stage", "discipline", "city", "state_province", "country", "contract", "salary", "deadline", "school_tier", "university_level", "official_url", "first_seen", "last_seen", "status"]
+    fields = ["institution", "business_school", "title", "rank", "career_stage", "discipline", "city", "state_province", "country", "contract", "appointment_type", "faculty_market_role", "faculty_market_eligible", "business_scope", "salary", "salary_min", "salary_max", "salary_currency", "salary_period", "deadline", "deadline_mode", "deadline_evidence",
+        "visa_status", "visa_pathways", "visa_text", "school_tier", "university_level", "official_url", "first_seen", "last_seen", "status"]
+    evidence_fields = ["carnegie_unitid", "carnegie_year", "teaching_proxy", "carnegie_institutional_classification",
+                       "carnegie_source_url", "carnegie_match_method", "observed_status", "status_as_of", "status_basis", "freshness"]
+    fields.extend(evidence_fields)
+    fields.extend(["position_types", "posting_kind", "actions", "discipline_needs_verification", "last_verified_at", "timing_hard_deadline", "timing_review_date", "timing_recruitment_mode", "last_attempt_at"])
+    requirement_columns = [f"requirement_{name}_{part}" for name in requirements.FIELDS
+                           for part in ("value", "status", "quote", "source_url", "source_kind", "captured_at", "content_hash")]
+    fields.extend(requirement_columns)
     if include_private:
         fields.extend(["fit_score", "application_state", "notes"])
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
     for job in jobs:
-        row = {"institution": job.get("institution_name"), "business_school": job.get("business_school_name"), "title": job.get("title_raw"), "rank": job.get("rank_normalized"), "career_stage": job.get("career_stage"), "discipline": job.get("discipline_primary"), "city": job.get("city"), "state_province": job.get("state_province"), "country": job.get("country"), "contract": job.get("track_type"), "salary": job.get("salary_raw"), "deadline": job.get("deadline_date") or job.get("deadline_mode"), "school_tier": job.get("school_tier"), "university_level": job.get("university_level"), "official_url": job.get("official_url"), "first_seen": job.get("first_seen_at"), "last_seen": job.get("last_seen_at"), "status": job.get("status")}
+        row = {"institution": job.get("institution_name"), "business_school": job.get("business_school_name"), "title": job.get("title_raw"), "rank": job.get("rank_normalized"), "career_stage": job.get("career_stage"), "discipline": job.get("discipline_primary"), "city": job.get("city"), "state_province": job.get("state_province"), "country": job.get("country"), "contract": job.get("track_type"), "appointment_type": job.get("appointment_type"), "faculty_market_role": job.get("faculty_market_role"), "faculty_market_eligible": job.get("faculty_market_eligible"), "business_scope": job.get("business_scope"), "salary": job.get("salary_raw"), "salary_min": job.get("salary_min"), "salary_max": job.get("salary_max"), "salary_currency": job.get("salary_currency"), "salary_period": job.get("salary_period"), "deadline": job.get("deadline_date") or job.get("deadline_mode"), "deadline_mode": job.get("deadline_mode"), "deadline_evidence": job.get("deadline_evidence"), "visa_status": job.get("visa_status"), "visa_pathways": job.get("visa_pathways"), "visa_text": job.get("visa_text"), "school_tier": job.get("school_tier"), "university_level": job.get("university_level"), "official_url": job.get("official_url"), "first_seen": job.get("first_seen_at"), "last_seen": job.get("last_seen_at"), "status": job.get("status")}
         if include_private:
             row["fit_score"] = (job.get("fit") or {}).get("score")
             row["application_state"] = (job.get("personal_state") or {}).get("state")
             row["notes"] = (job.get("personal_state") or {}).get("notes")
+        row.update({key: job.get(key) for key in evidence_fields})
+        row.update(position_types="|".join(job.get("position_types", [])), posting_kind=job.get("posting_kind"), actions="|".join(job.get("actions", [])),
+                   discipline_needs_verification=job.get("discipline_needs_verification"))
+        row.update(last_verified_at=job.get("last_verified_at"), last_attempt_at=job.get("timing", {}).get("last_attempt_at"))
+        row.update({"timing_" + name: job.get("timing", {}).get(name) for name in ("hard_deadline", "review_date", "recruitment_mode")})
+        req = job.get("requirements") or {}
+        for name, item in (req.get("fields") or {}).items():
+            for part in ("value", "status", "quote", "source_url", "source_kind", "captured_at", "content_hash"):
+                row[f"requirement_{name}_{part}"] = item.get(part) if part in {"value", "status", "quote"} else req.get(part)
         writer.writerow(row)
     return output.getvalue()
 
@@ -6046,7 +10024,7 @@ def save_profile_payload(payload):
 
 
 def list_my_applications(db_path=None):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         rows = conn.execute(_job_select() + " JOIN user_job_state ujs ON ujs.job_id=j.id ORDER BY ujs.priority DESC,ujs.updated_at DESC").fetchall()
@@ -6162,11 +10140,16 @@ def save_scope_override(db_path, job_id, payload):
 # Saved searches are a deliberately small local alert inbox.  They do not
 # send email, call a SaaS service, or expose profile/application state.
 _SAVED_SEARCH_KEYS = (
+    "position_type", "action_view", "posting_kind",
+    "career_view", "source", "exclude_source", "ever_source", "visa_stance", "visa_status", "appointment_type", "include_contingent",
     "q", "scope", "region", "country", "state_province", "discipline", "rank",
     "career_stage", "track", "status", "school_tier", "university_level",
     "posted_after", "closing_before", "salary_known", "sort",
 )
 _SAVED_SEARCH_VALUE_LIMITS = {
+    "position_type": 100, "action_view": 30, "posting_kind": 30,
+    "career_view": 30, "source": 500, "exclude_source": 500, "ever_source": 500,
+    "visa_stance": 40, "visa_status": 200, "appointment_type": 100, "include_contingent": 10,
     "q": 200, "scope": 40, "region": 80, "country": 80, "state_province": 100,
     "discipline": 100, "rank": 100, "career_stage": 80, "track": 100,
     "status": 40, "school_tier": 40, "university_level": 40,
@@ -6200,11 +10183,23 @@ def _sanitize_saved_search_query(query):
                 text = "business"
             else:
                 raise ValueError("saved search scope must be business, business_school, or all")
+        elif key == "career_view":
+            text = text.lower()
+            career_view_sql(text)
+        elif key == "position_type":
+            text = text.lower()
+            career_actions.position_filter(text)
+        elif key == "action_view":
+            text = text.lower()
+            career_actions.action_sql(text)
+        elif key == "posting_kind":
+            text = text.lower()
+            career_actions.posting_kind_filter(text)
         elif key == "country":
-            code = country_code_for(text)
-            if not code:
+            codes = [country_code_for(value) for value in _filter_values(text)]
+            if not all(codes):
                 raise ValueError("saved search country must be a supported display name or ISO code")
-            text = code
+            text = ",".join(dict.fromkeys(codes))
         elif key in {"posted_after", "closing_before"}:
             try:
                 date.fromisoformat(text)
@@ -6218,7 +10213,7 @@ def _sanitize_saved_search_query(query):
                 text = "no"
             else:
                 raise ValueError("saved search salary_known must be yes or no")
-        elif key == "sort" and text not in {"newest", "closing_soon", "salary", "school_tier"}:
+        elif key == "sort" and text not in {"market_priority", "newest", "closing_soon", "salary", "school_tier"}:
             raise ValueError("saved search sort is not supported")
         result[key] = text
     result.setdefault("scope", "business")
@@ -6232,7 +10227,7 @@ def _saved_search_matches(conn, query):
 
 
 def list_saved_searches(db_path=None):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         rows = conn.execute("SELECT * FROM saved_searches ORDER BY updated_at DESC, id DESC").fetchall()
@@ -6354,7 +10349,7 @@ def run_saved_search_alerts(db_path=None, search_id=None):
 
 
 def list_saved_search_alerts(db_path=None, search_id=None, unread_only=False, limit=100):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         clauses = []
@@ -6422,7 +10417,7 @@ def mark_saved_search_alerts_seen(db_path, alert_ids):
 
 
 def list_possible_duplicates(db_path=None, include_resolved=False, limit=100, offset=0):
-    ensure_faculty_jobs_tables(db_path)
+    _require_current_schema(db_path)
     conn = _connect(db_path)
     try:
         bounded = max(1, min(200, int(limit)))

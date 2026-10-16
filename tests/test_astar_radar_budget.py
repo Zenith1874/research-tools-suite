@@ -6,6 +6,7 @@ both a print and an online ISSN) to rediscover the same refusal, and the run was
 still written to astar_update_logs with success=1.
 """
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -186,6 +187,31 @@ class UpdateLogHonestyTests(unittest.TestCase):
         self.assertIsNone(log['error_message'])
         self.assertFalse(result['openalex_budget_exhausted'])
         self.assertEqual('[]', log['warnings'])
+
+    def test_daily_mode_reconciles_both_providers_for_every_journal(self):
+        def complete(journal, *args, **kwargs):
+            self.assertTrue(kwargs['complete'])
+            kwargs['coverage'].update({provider: {'status': 'COMPLETE', 'expected': 0, 'observed': 0}
+                                       for provider in ('crossref', 'openalex')})
+            return [], 'crossref+openalex', None
+        result = self.run_update(complete)
+        self.assertTrue(result['all_source_queries_complete'])
+        report = Path(result['raw_response_directory']) / 'source_coverage.json'
+        saved = json.loads(report.read_text(encoding='utf-8'))
+        self.assertEqual(5, len(saved['coverage']))
+        self.assertTrue(saved['all_source_queries_complete'])
+        self.assertEqual(report.resolve().parent.parent.parent, Path(self.dir.name).resolve())
+
+    def test_daily_provider_failure_is_separate_from_operational_success(self):
+        def partial(journal, *args, **kwargs):
+            kwargs['coverage'].update({'crossref': {'status': 'COMPLETE'},
+                                       'openalex': {'status': 'WAITING_BUDGET'}})
+            return [], 'crossref', 'openalex: daily budget exhausted'
+        result = self.run_update(partial)
+        self.assertFalse(result['all_source_queries_complete'])
+        saved = json.loads((Path(result['raw_response_directory']) / 'source_coverage.json').read_text(encoding='utf-8'))
+        self.assertFalse(saved['all_source_queries_complete'])
+        self.assertEqual(5, len(saved['coverage']))
 
 
 if __name__ == '__main__':

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /portfolio-analytics
+
+# This file is a policy for compliant crawlers. Enforcement for abusive or
+# disguised traffic belongs at Cloudflare (Access/WAF/rate limiting).

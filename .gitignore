@@ -101,3 +101,8 @@ data/research_evidence/
 
 # 私有迁移执行产物只能写到仓库外；仓库内若误生成则保持忽略
 outputs/private-migration*/
+
+# Official source captures, full publications and refresh audit snapshots stay local.
+# Publish code/curated facts, not the source books or provider CSV archives.
+/outputs/macro_refresh_*/
+/outputs/macro_completeness/

@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,19 +38,20 @@ class P2FixtureTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _jobs(self):
+        deadline = (date.today() + timedelta(days=60)).strftime("%d %B %Y")
         return [
             SourceJob(
                 source="ais", source_job_id="p2-a", source_url="https://board.example/p2-a",
                 official_url="https://example.edu/jobs/p2-a", title_raw="Assistant Professor of Finance",
                 institution_raw="Example University", location_raw="New York, NY",
-                description_excerpt="Tenure-track. Application deadline: 30 September 2026. Salary: $100,000 per year.",
+                description_excerpt=f"Tenure-track. Application deadline: {deadline}. Salary: $100,000 per year.",
                 posted_date_raw="Posting date: 1 August 2026", captured_at="2026-08-23T00:00:00Z",
             ),
             SourceJob(
                 source="ais", source_job_id="p2-b", source_url="https://board.example/p2-b",
                 official_url="https://example.edu/jobs/p2-b", title_raw="Assistant Professor of Marketing",
                 institution_raw="Example University", location_raw="Boston, MA",
-                description_excerpt="Tenure-track. Application deadline: 30 September 2026. Salary: $101,000 per year.",
+                description_excerpt=f"Tenure-track. Application deadline: {deadline}. Salary: $101,000 per year.",
                 posted_date_raw="Posting date: 1 August 2026", captured_at="2026-08-23T00:00:00Z",
             ),
         ]
@@ -130,7 +132,17 @@ class P2FixtureTests(unittest.TestCase):
         sources = build_faculty_job_sources(self.db)["sources"]
         self.assertIn("field_coverage", sources[0])
         self.assertIn("deadline_or_rolling", sources[0]["field_coverage"])
-        analytics = build_job_market_analytics(self.db)["analytics"]
+        # "confirmed" is reserved for evidence a person or the source asserted;
+        # these are what our own rules accepted, which is a weaker claim.
+        self.assertIn("rule_accepted_jobs", sources[0])
+        self.assertIn("review_only_jobs", sources[0])
+        self.assertIn("acceptance_rate_percent", sources[0])
+        self.assertNotIn("precision_proxy_percent", sources[0],
+                         "acceptance is not precision; nothing was checked against truth")
+        self.assertIn("completeness_state", sources[0])
+        self.assertIn("scan_outcomes", sources[0])
+        self.assertIn("whole academic labor market", build_faculty_job_sources(self.db)["interpretation"])
+        analytics = build_job_market_analytics(self.db, {'scope': 'business'})["analytics"]
         self.assertTrue(analytics["discipline_observed_coverage"])
         self.assertIn("interpretation", analytics["discipline_observed_coverage"][0])
         self.assertIn("insufficient_history", analytics["history_status"])

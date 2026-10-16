@@ -10,7 +10,9 @@ import os
 import re
 import time
 
-import requests
+import requests  # noqa: F401  (保留给同模块其它调用方)
+
+from services import deepseek_client
 
 DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 PROMPT_VERSION = 'aim-v1'
@@ -87,23 +89,8 @@ def prompt_hash(profiles):
 def extract_one(article, profiles, model='deepseek-v4-flash', timeout=90, retries=2):
     sys, user = build_messages(article, profiles)
     # v4-flash 默认走"思考模式"(慢+多 token);批量抽取用非思考模式,等价于旧 deepseek-chat。
-    body = {'model': model, 'max_tokens': 1600, 'temperature': 0.0,
-            'thinking': {'type': 'disabled'},
-            'response_format': {'type': 'json_object'},
-            'messages': [{'role': 'system', 'content': sys},
-                         {'role': 'user', 'content': user}]}
-    last = None
-    for attempt in range(retries + 1):
-        try:
-            r = requests.post(DEEPSEEK_URL, headers={
-                'Authorization': f"Bearer {os.environ['DEEPSEEK_API_KEY']}",
-                'Content-Type': 'application/json'}, json=body, timeout=timeout)
-            r.raise_for_status()
-            text = r.json()['choices'][0]['message']['content']
-            m = re.search(r'\{.*\}', text, re.DOTALL)
-            return json.loads(m.group(0)) if m else None
-        except Exception as e:
-            last = e
-            if attempt < retries:
-                time.sleep(1.5 * (attempt + 1))
-    raise last
+    # 重试与请求构造都交给 services/deepseek_client
+    text = deepseek_client.chat(sys, user, model=model, max_tokens=1600,
+                                temperature=0.0, timeout=timeout, retries=retries)
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    return json.loads(m.group(0)) if m else None

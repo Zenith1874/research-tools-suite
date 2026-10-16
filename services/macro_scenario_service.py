@@ -124,6 +124,17 @@ SERIES_CATALOG = (
         "table": "housing_national_observations", "frequency": "quarterly", "mode": "level",
         "unit": "index", "interpretation": "数值上行代表BIS实际房价指数更高。",
     },
+    {
+        "code": "CN_IND_PROFIT_YTD_YOY", "name": "工业利润累计同比（官方）", "category": "企业经营",
+        "table": "china_macro_observations", "frequency": "monthly", "mode": "rate",
+        "unit": "%", "calendar_bridge_month": 2,
+        "interpretation": "官方可比口径累计同比；不是单月利润、现金流或企业因果模型。",
+    },
+    {
+        "code": "CN_CAPACITY_UTILIZATION", "name": "工业产能利用率", "category": "企业经营",
+        "table": "china_macro_observations", "frequency": "quarterly", "mode": "rate",
+        "unit": "%", "interpretation": "官方产能利用率；不以工业产量增长替代。",
+    },
 )
 
 
@@ -586,6 +597,28 @@ def build_macro_scenario_payload(db_path, indicator=None, horizon=DEFAULT_HORIZO
         conn.execute('PRAGMA query_only=ON')
         row_map = {code: _rows_for_config(conn, config)
                    for code, config in configs.items()}
+        gaps = []
+        for item in GAP_CATALOG:
+            gap = dict(item)
+            mapping = {'CN_INDUSTRIAL_PROFIT': 'CN_IND_PROFIT_YTD_YOY',
+                       'CN_CAPACITY_UTILIZATION': 'CN_CAPACITY_UTILIZATION'}
+            implemented = row_map.get(mapping.get(item['code'])) or []
+            if implemented:
+                gap.update(status='implemented_with_data', n_obs=len(implemented),
+                           latest_period=implemented[-1]['period'],
+                           reason='已接入官方序列，推演能否计算仍由连续样本门槛决定。',
+                           next_step='检查历史缺期和统计口径，不用估值补成官方数据。')
+            if item['code'] == 'CN_BANK_NIM_NPL':
+                try:
+                    bank_count = conn.execute("SELECT COUNT(*) FROM china_macro_observations "
+                                              "WHERE indicator_code='CN_BANK_NIM_YTD' AND value IS NOT NULL").fetchone()[0]
+                except sqlite3.OperationalError:
+                    bank_count = 0
+                if bank_count:
+                    gap.update(status='partial_coverage',n_obs=bank_count,
+                               reason='已核验2026Q1/Q2官方银行监管表；更早连续历史和自动图片识别尚未完成。',
+                               next_step='继续逐版本核验官方图片；季度不足12期不做统计定位或长期推演。')
+            gaps.append(gap)
     catalog = [_catalog_entry(config, row_map[config["code"]])
                for config in SERIES_CATALOG]
     selected_code = indicator or DEFAULT_INDICATOR
@@ -596,7 +629,7 @@ def build_macro_scenario_payload(db_path, indicator=None, horizon=DEFAULT_HORIZO
     return {
         "success": True, "data_status": "scenario",
         "generated_at": datetime.now().isoformat(),
-        "selected": selected, "catalog": catalog, "gaps": list(GAP_CATALOG),
+        "selected": selected, "catalog": catalog, "gaps": gaps,
         "parameters": {"horizon": horizon, "simulations": simulations, "seed": seed},
         "methodology": {
             "status_vocabulary": ["scenario", "derived", "official", "cache", "missing", "insufficient_sample"],

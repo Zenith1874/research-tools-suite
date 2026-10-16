@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from services.faculty_jobs_service import (
+    FACULTY_JOBS_SCHEMA_VERSION,
     add_evidence,
     build_faculty_job_detail,
     build_faculty_job_summary,
@@ -28,12 +29,13 @@ class FakeAdapter:
     name = 'ais'
     adapter_name = 'ais'
 
-    def __init__(self, responses=None, error=False, name=None):
+    def __init__(self, responses=None, error=False, name=None, coverage_complete=None):
         if name:
             self.name = name
             self.adapter_name = name
         self.responses = list(responses or [])
         self.error = error
+        self.coverage_complete = coverage_complete
         self.timeout = 5
         self.max_pages = 1
 
@@ -41,7 +43,10 @@ class FakeAdapter:
         if self.error:
             raise RuntimeError('fixture source failed')
         jobs = self.responses.pop(0) if self.responses else []
-        return AdapterResponse(jobs=list(jobs), pages_fetched=1)
+        return AdapterResponse(
+            jobs=list(jobs), pages_fetched=1,
+            coverage_complete=self.coverage_complete,
+        )
 
 
 def fixture_job(source_id='1', title='Assistant Professor of Management', institution='Example University', location='New York, NY'):
@@ -78,7 +83,7 @@ class FacultyJobSchemaTests(unittest.TestCase):
     def test_public_payload_omits_private_state_and_detail_keeps_provenance(self):
         result = update_faculty_jobs(self.db, source_names=['ais'], adapters=[FakeAdapter([[fixture_job()]])])
         self.assertTrue(result['ok'])
-        payload = build_faculty_jobs_payload(self.db, {'limit': 10})
+        payload = build_faculty_jobs_payload(self.db, {'scope': 'business', 'limit': 10})
         self.assertEqual(1, payload['pagination']['total'])
         job = payload['jobs'][0]
         self.assertEqual('business_discipline', job['business_scope'])
@@ -91,7 +96,7 @@ class FacultyJobSchemaTests(unittest.TestCase):
 
         saved = create_application(self.db, job['id'], {'state': 'Saved', 'notes': 'local only'})
         self.assertTrue(saved['ok'])
-        public_again = build_faculty_jobs_payload(self.db, {'limit': 10})['jobs'][0]
+        public_again = build_faculty_jobs_payload(self.db, {'scope': 'business', 'limit': 10})['jobs'][0]
         self.assertNotIn('notes', public_again)
         private = list_my_applications(self.db)['applications'][0]
         self.assertEqual('local only', private['personal_state']['notes'])
@@ -104,8 +109,14 @@ class FacultyJobSchemaTests(unittest.TestCase):
             fixture_job('technical', 'Product Manager, Money'),
         ]
         update_faculty_jobs(self.db, source_names=['ais'], adapters=[FakeAdapter([jobs])])
-        business = build_faculty_jobs_payload(self.db, {'limit': 20})
+        default_view = build_faculty_jobs_payload(self.db, {'limit': 20})
+        business = build_faculty_jobs_payload(self.db, {'scope': 'business', 'limit': 20})
         all_jobs = build_faculty_jobs_payload(self.db, {'scope': 'all', 'limit': 20})
+        # The default is explicit business-school evidence. This posting names
+        # a business discipline but no established school, so it is in the
+        # broader view and not in the default one.
+        self.assertEqual('business_school', default_view['meta']['scope'])
+        self.assertEqual(0, default_view['pagination']['total'])
         self.assertEqual('business', business['meta']['scope'])
         self.assertEqual(1, business['pagination']['total'])
         self.assertEqual(3, all_jobs['pagination']['total'])
@@ -244,6 +255,26 @@ class FacultyJobSchemaTests(unittest.TestCase):
             adapters=[FakeAdapter([[job]], name='inside_higher_ed')],
         )
         conn = sqlite3.connect(self.db)
+        # Current ingestion rejects the later collaborator immediately. Seed
+        # the historical pre-rule state explicitly so this remains a migration
+        # regression test rather than requiring the live resolver to recreate
+        # the defect that migration 33 is meant to remove.
+        institution_id = conn.execute(
+            'SELECT institution_id FROM jobs'
+        ).fetchone()[0]
+        now = '2026-08-24T00:00:00Z'
+        legacy_school_id = conn.execute(
+            """INSERT INTO business_schools
+               (institution_id,official_name,normalized_name,created_at,updated_at)
+               VALUES (?,?,?,?,?)""",
+            (institution_id, 'Tuck School of Business',
+             'tuck school of business', now, now),
+        ).lastrowid
+        conn.execute(
+            "UPDATE jobs SET school_id=?,business_scope='business_school',"
+            "school_evidence_context='structured_posting'",
+            (legacy_school_id,),
+        )
         self.assertIsNotNone(conn.execute('SELECT school_id FROM jobs').fetchone()[0])
         conn.execute('DELETE FROM faculty_job_migrations WHERE version=33')
         conn.commit()
@@ -330,12 +361,12 @@ class FacultyJobSchemaTests(unittest.TestCase):
             ),
         ]
         update_faculty_jobs(self.db, source_names=['ais'], adapters=[FakeAdapter([jobs])])
-        self.assertEqual(0, build_faculty_jobs_payload(self.db, {'limit': 10})['pagination']['total'])
+        self.assertEqual(0, build_faculty_jobs_payload(self.db, {'scope': 'business', 'limit': 10})['pagination']['total'])
         self.assertEqual(2, build_faculty_jobs_payload(
             self.db, {'scope': 'all', 'limit': 10},
         )['pagination']['total'])
-        closed = build_faculty_jobs_payload(self.db, {'status': 'closed', 'limit': 10})
-        stale = build_faculty_jobs_payload(self.db, {'status': 'unknown', 'limit': 10})
+        closed = build_faculty_jobs_payload(self.db, {'scope': 'business', 'status': 'closed', 'limit': 10})
+        stale = build_faculty_jobs_payload(self.db, {'scope': 'business', 'status': 'unknown', 'limit': 10})
         self.assertEqual(['Assistant Professor of Management'], [job['title_raw'] for job in closed['jobs']])
         self.assertEqual(['Assistant Professor of Marketing'], [job['title_raw'] for job in stale['jobs']])
 
@@ -392,6 +423,245 @@ class FacultyJobSchemaTests(unittest.TestCase):
             1,
             conn.execute("SELECT COUNT(*) FROM faculty_job_repair_audit WHERE action='source_location_country_replay'").fetchone()[0],
         )
+        conn.close()
+
+    def test_v69_repairs_omitted_us_state_and_retires_empty_country_partition(self):
+        job = SourceJob(
+            source='higheredjobs', source_job_id='boise-id-regression',
+            source_url='https://www.higheredjobs.com/faculty/details.cfm?JobCode=boise-id-regression',
+            title_raw='Assistant Professor of Human Resources Management',
+            institution_raw='Boise State University', location_raw='Boise, ID',
+            description_excerpt='HigherEdJobs category: Human Resources.',
+            captured_at='2026-08-28T23:00:00Z',
+        )
+        update_faculty_jobs(
+            self.db, source_names=['higheredjobs'],
+            adapters=[FakeAdapter([[job]], name='higheredjobs')],
+        )
+        conn = sqlite3.connect(self.db)
+        target_id = conn.execute(
+            "SELECT id FROM institutions WHERE normalized_name='boise state university' "
+            "AND country_code='US' AND is_current=1"
+        ).fetchone()[0]
+        legacy_id = conn.execute(
+            """INSERT INTO institutions
+               (official_name,normalized_name,aliases_json,country,country_code,region_group,
+                city,created_at,updated_at)
+               VALUES ('Boise State University','boise state university','[]','Indonesia','ID',
+                       'Asia','Boise','2026-08-28T23:00:00Z','2026-08-28T23:00:00Z')"""
+        ).lastrowid
+        conn.execute(
+            """UPDATE jobs SET institution_id=?,country='Indonesia',country_code='ID',
+               region_group='Asia',state_province=NULL,city='Boise',
+               location_evidence='location_raw'""",
+            (legacy_id,),
+        )
+        conn.execute('DELETE FROM faculty_job_migrations WHERE version=69')
+        conn.commit()
+        conn.close()
+
+        ensure_faculty_jobs_tables(self.db)
+        conn = sqlite3.connect(self.db)
+        self.assertEqual(
+            (target_id, 'United States', 'US', 'United States', 'ID', 'Boise'),
+            conn.execute(
+                'SELECT institution_id,country,country_code,region_group,state_province,city FROM jobs'
+            ).fetchone(),
+        )
+        self.assertEqual(
+            (0, target_id),
+            conn.execute(
+                'SELECT is_current,merged_into_id FROM institutions WHERE id=?', (legacy_id,),
+            ).fetchone(),
+        )
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM source_job_records').fetchone()[0])
+        self.assertEqual(
+            1,
+            conn.execute(
+                "SELECT COUNT(*) FROM faculty_job_repair_audit "
+                "WHERE action='source_location_country_replay'"
+            ).fetchone()[0],
+        )
+        self.assertEqual(FACULTY_JOBS_SCHEMA_VERSION,
+                         conn.execute('PRAGMA user_version').fetchone()[0],
+                         'user_version must track the migration ledger')
+        conn.close()
+
+    def test_v69_merges_only_the_campus_specific_cuhk_shenzhen_partition(self):
+        job = SourceJob(
+            source='poms', source_job_id='cuhk-shenzhen-regression',
+            source_url='https://example.edu/jobs/cuhk-shenzhen-regression',
+            title_raw='Assistant Professor Positions in Operations Management',
+            institution_raw='Chinese University of Hong Kong, Shenzhen',
+            description_excerpt=(
+                'Position: Assistant Professor Positions in Operations Management. '
+                'University/employer: Chinese University of Hong Kong, Shenzhen.'
+            ),
+            captured_at='2026-08-28T23:00:00Z',
+        )
+        update_faculty_jobs(
+            self.db, source_names=['poms'],
+            adapters=[FakeAdapter([[job]], name='poms')],
+        )
+        conn = sqlite3.connect(self.db)
+        target_id = conn.execute(
+            "SELECT id FROM institutions WHERE normalized_name=? AND country_code='CN'",
+            ('chinese university of hong kong shenzhen',),
+        ).fetchone()[0]
+        conn.execute("UPDATE institutions SET city='Shenzhen' WHERE id=?", (target_id,))
+        legacy_id = conn.execute(
+            """INSERT INTO institutions
+               (official_name,normalized_name,aliases_json,country,country_code,region_group,
+                created_at,updated_at)
+               VALUES ('Chinese University of Hong Kong, Shenzhen',
+                       'chinese university of hong kong shenzhen','[]','Hong Kong','HK','Asia',
+                       '2026-08-28T23:00:00Z','2026-08-28T23:00:00Z')"""
+        ).lastrowid
+        conn.execute(
+            """UPDATE jobs SET institution_id=?,country='Hong Kong',country_code='HK',
+               region_group='Asia',state_province=NULL,city='Hong Kong',
+               location_evidence='institution_entity'""",
+            (legacy_id,),
+        )
+        conn.execute('DELETE FROM faculty_job_migrations WHERE version=69')
+        conn.commit()
+        conn.close()
+
+        ensure_faculty_jobs_tables(self.db)
+        conn = sqlite3.connect(self.db)
+        self.assertEqual(
+            (target_id, 'China', 'CN', 'Asia', 'Shenzhen', 'known_institution_identity'),
+            conn.execute(
+                'SELECT institution_id,country,country_code,region_group,city,location_evidence FROM jobs'
+            ).fetchone(),
+        )
+        self.assertEqual(
+            (0, target_id),
+            conn.execute(
+                'SELECT is_current,merged_into_id FROM institutions WHERE id=?', (legacy_id,),
+            ).fetchone(),
+        )
+        self.assertEqual(
+            1,
+            conn.execute(
+                "SELECT COUNT(*) FROM faculty_job_repair_audit "
+                "WHERE action='known_campus_country_repair'"
+            ).fetchone()[0],
+        )
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM source_job_records').fetchone()[0])
+        conn.close()
+
+    def test_v70_clears_country_display_from_city_without_losing_source_record(self):
+        job = SourceJob(
+            source='ais', source_job_id='country-work-mode-regression',
+            source_url='https://academiccareers.example/job/country-work-mode-regression',
+            title_raw='Assistant Professor of Management',
+            institution_raw='Example University',
+            location_raw='California, United States (remote)',
+            captured_at='2026-08-28T23:00:00Z',
+        )
+        update_faculty_jobs(
+            self.db, source_names=['ais'], adapters=[FakeAdapter([[job]])],
+        )
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE jobs SET city='United States',state_province='CA',"
+            "location_evidence='source_location_replay'"
+        )
+        conn.execute('DELETE FROM faculty_job_migrations WHERE version=70')
+        conn.commit()
+        conn.close()
+
+        ensure_faculty_jobs_tables(self.db)
+        conn = sqlite3.connect(self.db)
+        self.assertEqual(
+            (None, 'CA', 'US'),
+            conn.execute('SELECT city,state_province,country_code FROM jobs').fetchone(),
+        )
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM source_job_records').fetchone()[0])
+        self.assertEqual(
+            1,
+            conn.execute(
+                "SELECT COUNT(*) FROM faculty_job_repair_audit "
+                "WHERE action='source_location_country_replay'"
+            ).fetchone()[0],
+        )
+        self.assertEqual(FACULTY_JOBS_SCHEMA_VERSION,
+                         conn.execute('PRAGMA user_version').fetchone()[0],
+                         'user_version must track the migration ledger')
+        conn.close()
+
+    def test_v71_collapses_flattened_multiple_locations_without_state_guess(self):
+        job = SourceJob(
+            source='ais', source_job_id='multiple-location-regression',
+            source_url='https://academiccareers.example/job/multiple-location-regression',
+            title_raw='Assistant Professor of Management',
+            institution_raw='Example University',
+            location_raw=(
+                'Multiple Locations New York, New York, United States '
+                'Washington, Dist. Columbia, United States (hybrid)'
+            ),
+            captured_at='2026-08-28T23:00:00Z',
+        )
+        update_faculty_jobs(
+            self.db, source_names=['ais'], adapters=[FakeAdapter([[job]])],
+        )
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE jobs SET city='Multiple Locations New York',state_province='DC',"
+            "location_evidence='source_location_replay'"
+        )
+        conn.execute('DELETE FROM faculty_job_migrations WHERE version=71')
+        conn.commit()
+        conn.close()
+
+        ensure_faculty_jobs_tables(self.db)
+        conn = sqlite3.connect(self.db)
+        self.assertEqual(
+            ('Multiple Locations', None, 'US', 'location_raw_multiple'),
+            conn.execute(
+                'SELECT city,state_province,country_code,location_evidence FROM jobs'
+            ).fetchone(),
+        )
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM source_job_records').fetchone()[0])
+        self.assertEqual(FACULTY_JOBS_SCHEMA_VERSION,
+                         conn.execute('PRAGMA user_version').fetchone()[0],
+                         'user_version must track the migration ledger')
+        conn.close()
+
+    def test_v72_retains_shared_state_for_multiple_locations(self):
+        job = SourceJob(
+            source='higheredjobs', source_job_id='multiple-location-one-state',
+            source_url='https://www.higheredjobs.com/faculty/details.cfm?JobCode=multiple-location-one-state',
+            title_raw='Adjunct Faculty - Information Technology',
+            institution_raw='Example University', location_raw='Multiple Locations, MO',
+            captured_at='2026-08-28T23:00:00Z',
+        )
+        update_faculty_jobs(
+            self.db, source_names=['higheredjobs'],
+            adapters=[FakeAdapter([[job]], name='higheredjobs')],
+        )
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "UPDATE jobs SET city='Multiple Locations',state_province=NULL,"
+            "location_evidence='location_raw_multiple'"
+        )
+        conn.execute('DELETE FROM faculty_job_migrations WHERE version=72')
+        conn.commit()
+        conn.close()
+
+        ensure_faculty_jobs_tables(self.db)
+        conn = sqlite3.connect(self.db)
+        self.assertEqual(
+            ('Multiple Locations', 'MO', 'US', 'location_raw_multiple'),
+            conn.execute(
+                'SELECT city,state_province,country_code,location_evidence FROM jobs'
+            ).fetchone(),
+        )
+        self.assertEqual(1, conn.execute('SELECT COUNT(*) FROM source_job_records').fetchone()[0])
+        self.assertEqual(FACULTY_JOBS_SCHEMA_VERSION,
+                         conn.execute('PRAGMA user_version').fetchone()[0],
+                         'user_version must track the migration ledger')
         conn.close()
 
     def test_location_replay_does_not_relabel_an_already_correct_job(self):
@@ -571,9 +841,13 @@ class FacultyJobSchemaTests(unittest.TestCase):
     def test_country_display_name_and_iso_code_share_filtered_summary(self):
         job = fixture_job('uk-filter', 'Assistant Professor of Finance', location='London, UK')
         update_faculty_jobs(self.db, source_names=['ais'], adapters=[FakeAdapter([[job]])])
-        by_name = build_faculty_jobs_payload(self.db, {'country': 'United Kingdom', 'limit': 20})
-        by_code = build_faculty_jobs_payload(self.db, {'country': 'GB', 'limit': 20})
-        summary = build_faculty_job_summary(self.db, {'country': 'GB'})['summary']
+        # A business-discipline posting: read it in the view that contains it.
+        by_name = build_faculty_jobs_payload(
+            self.db, {'scope': 'business', 'country': 'United Kingdom', 'limit': 20})
+        by_code = build_faculty_jobs_payload(
+            self.db, {'scope': 'business', 'country': 'GB', 'limit': 20})
+        summary = build_faculty_job_summary(
+            self.db, {'scope': 'business', 'country': 'GB'})['summary']
         self.assertEqual(1, by_name['pagination']['total'])
         self.assertEqual(1, by_code['pagination']['total'])
         self.assertEqual(1, summary['active_jobs'])
@@ -618,7 +892,9 @@ class FacultyJobSchemaTests(unittest.TestCase):
         conn.close()
         save_scope_override(self.db, medicine_id, {'action': 'include', 'reason': 'Manual review found an explicit business faculty context.'})
         save_scope_override(self.db, business_id, {'action': 'exclude', 'reason': 'Manual review excluded this posting from the local market view.'})
-        payload = build_faculty_jobs_payload(self.db, {'limit': 20})
+        default_payload = build_faculty_jobs_payload(self.db, {'scope': 'business', 'limit': 20})
+        self.assertEqual([business_id], [job['id'] for job in default_payload['jobs']])
+        payload = build_faculty_jobs_payload(self.db, {'scope': 'business', 'limit': 20, 'include_overrides': '1'})
         self.assertEqual([medicine_id], [job['id'] for job in payload['jobs']])
         conn = sqlite3.connect(self.db)
         self.assertEqual('non_business', conn.execute('SELECT business_scope FROM jobs WHERE id=?', (medicine_id,)).fetchone()[0])
@@ -739,7 +1015,7 @@ class FacultyJobLifecycleTests(unittest.TestCase):
             db = Path(temp) / 'faculty_jobs.db'
             ensure_faculty_jobs_tables(db)
             job = fixture_job()
-            adapter = FakeAdapter([[job], [], [], []])
+            adapter = FakeAdapter([[job], [], [], []], coverage_complete=True)
             update_faculty_jobs(db, source_names=['ais'], adapters=[adapter])
             update_faculty_jobs(db, source_names=['ais'], adapters=[adapter])
             update_faculty_jobs(db, source_names=['ais'], adapters=[adapter])

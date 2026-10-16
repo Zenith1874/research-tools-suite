@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -20,9 +21,11 @@ import re
 import sqlite3
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import date, datetime
+from decimal import Decimal
 from urllib.parse import quote, urljoin
 
 import requests
@@ -31,6 +34,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from services.china_macro_service import connect, ensure_china_macro_tables
+from services.safe_account_service import ACCOUNT_INDICATORS, update_safe_accounts
+from services.mofcom_fdi_bulletin_service import FDI_ANNUAL_INDICATORS, sync_mofcom_fdi_annual
 
 
 UA = {'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -83,6 +88,8 @@ def _meta(name, unit, frequency='monthly'):
 
 
 EXTERNAL_INDICATORS = {}
+EXTERNAL_INDICATORS.update(ACCOUNT_INDICATORS)
+EXTERNAL_INDICATORS.update(FDI_ANNUAL_INDICATORS)
 for currency, unit in (('CNY', '亿元'), ('USD', '亿美元')):
     for subject, label in (('TRADE', '货物进出口总额'), ('EXPORT', '货物出口'),
                            ('IMPORT', '货物进口')):
@@ -193,7 +200,7 @@ def _observation(code, period, value, source_name, source_type, source_url,
     }
 
 
-def upsert_external_observations(conn, rows):
+def upsert_external_observations(conn, rows, commit=True):
     now, count = datetime.now().isoformat(), 0
     for row in rows:
         if not row:
@@ -230,11 +237,68 @@ def upsert_external_observations(conn, rows):
             int(bool(row.get('release_date_not_provided'))),
             row.get('release_date_reason'), now))
         count += cur.rowcount
-    conn.commit()
+    if commit:conn.commit()
     return count
 
 
 # ── 海关总署：双币种贸易 ──────────────────────────────────────────────────────
+
+def parse_gacc_q3_government_relay(html, period, source_url):
+    """Read the inspected national September/YTD CNY statements, never USD or balances.
+
+    This is an explicitly labelled government relay, not the GACC original table.
+    The article's stated2026 data year and publication metadata govern the period.
+    """
+    if period!='2026-09' or source_url!='https://gxt.hunan.gov.cn/gxt/xxgk_71033/gzdt/rdjj/202610/t20261015_34081504.html':
+        raise ValueError('Use the reviewed national2026Q3 government-relay profile.')
+    soup=BeautifulSoup(html,'html.parser');content=soup.select_one('#j-show-body')
+    published=soup.find('meta',attrs={'name':'PubDate'})
+    if content is None or published is None:raise ValueError('The exact article body and publication date are required.')
+    published_text=published.get('content','')
+    if not re.match(r'^2026-10-\d{2}',published_text):raise ValueError('The relay publication year/month does not corroborate the data period.')
+    text=re.sub(r'\s+','',unicodedata.normalize('NFKC',content.get_text(' ',strip=True)))
+    if ('海关总署' not in text or '国新办' not in text
+            or '介绍2026年前三季度我国货物贸易进出口情况' not in text
+            or '10月14日' not in text):
+        raise ValueError('Explicit national scope, data year and release-event date are required.')
+    cumulative=re.search(r'据海关统计,今年前三季度,我国货物贸易([^。]+)。',text)
+    monthly=re.search(r'9月份进出口([^。]+)。其中,([^。]+)。',text)
+    if not cumulative or not monthly:raise ValueError('Do not bridge cumulative and monthly statements or infer missing components.')
+    amount=r'([\d,]+(?:\.\d+)?)(万亿元|亿元)'
+    change=r'(?:同比)?(增长|下降)(\d+(?:\.\d+)?)%'
+    trade_ytd=re.search(r'今年前三季度我国货物贸易进出口'+amount+','+change,text)
+    if not trade_ytd:raise ValueError('One explicit national cumulative total and its published rate are required.')
+    specs=[('TRADE','YTD',trade_ytd)]
+    for subject,label in [('EXPORT','出口'),('IMPORT','进口')]:
+        match=re.search(label+amount+','+change,cumulative[1])
+        if not match:raise ValueError('A cumulative component is absent: '+subject)
+        specs.append((subject,'YTD',match))
+    total=re.search(r'^'+amount+r',[^。]*?,'+change,monthly[1])
+    if not total:raise ValueError('One explicit monthly total and rate are required.')
+    specs.append(('TRADE','MONTH',total))
+    for subject,label in [('EXPORT','出口'),('IMPORT','进口')]:
+        match=re.search(label+amount+','+change,monthly[2])
+        if not match:raise ValueError('A monthly component is absent: '+subject)
+        specs.append((subject,'MONTH',match))
+    rows=[]
+    for subject,kind,match in specs:
+        value=float(Decimal(match[1].replace(',',''))*(Decimal(10000) if match[2]=='万亿元' else Decimal(1)))
+        rate=float(match[4])*(-1 if match[3]=='下降' else 1)
+        notes=('政府官网转引海关发布会数据，非海关原始总值表；当月与累计分别取原文；'
+               '金额原单位='+match[2]+'，仅按金额量纲转为亿元，未做汇率换算；保留新闻稿公布精度；'
+               '同比为原文公布值，不由两年金额直除；relay_published_at='+published_text+'; statement='+match[0])
+        for code,number in [(f'CN_GACC_{subject}_CNY_{kind}',value),(f'CN_GACC_{subject}_CNY_{kind}_YOY',rate)]:
+            row=_observation(code,period,number,'海关总署（湖南省工信厅官网转引）','gacc_trade',source_url,
+                '9月进出口首破5万亿元 装备制造业贡献近9成出口增量',notes,
+                data_status='official_relayed',release_date='2026-10-14',parser_version='gacc-government-relay-20261015',
+                source_page_created_date='2026-10-15' if soup.find('meta',attrs={'name':'others','content':re.compile('页面生成时间 2026-10-15')}) else None,
+                release_date_reason='资料发布会日期据转载正文10月14日及明确2026资料年；转载发布日与生成日另记，不冒充已取得海关原稿。')
+            rows.append(row)
+    values={r['indicator_code']:r['value'] for r in rows}
+    for kind in ('MONTH','YTD'):
+        if not math.isclose(values[f'CN_GACC_TRADE_CNY_{kind}'],values[f'CN_GACC_EXPORT_CNY_{kind}']+values[f'CN_GACC_IMPORT_CNY_{kind}'],abs_tol=100,rel_tol=0):
+            raise ValueError('Published rounded total and components do not reconcile at news precision.')
+    return rows
 
 _MONTHS = {name: index for index, name in enumerate(
            ('jan', 'feb', 'mar', 'apr', 'may', 'jun',
@@ -978,7 +1042,7 @@ def _mofcom_period(text):
         # “2025年全国吸收外资……”这类不带月份的年度发布才回落到 12 月；
         # 不能用可选月份正则，否则“一季度”会先被裸年份吞掉并误记为全年。
         match = re.search(r'(20\d{2})年(?=[，,:：]?(?:全年)?(?:全国|我国).{0,18}'
-                          r'(?:吸收外资|外商投资|全行业对外直接投资))',
+                          r'(?:吸收外资|实际使用外资|外商投资|全行业对外直接投资))',
                           compact)
         return f'{match.group(1)}-12' if match else None
     quarter_months = {'一季度': 3, '上半年': 6, '前三季度': 9, '全年': 12}
@@ -988,7 +1052,15 @@ def _mofcom_period(text):
 
 
 def parse_mofcom_fdi_text(title, summary='', source_url=''):
-    period = _mofcom_period(summary) or _mofcom_period(title)
+    title_period, body_period = _mofcom_period(title), _mofcom_period(summary)
+    # A headline's statistical year must not be replaced by a later comparison
+    # such as "较2022年全年" inside a 2023 annual release.
+    period = title_period or body_period
+    title_compact = re.sub(r'\s+', '', title or '')
+    if (title_period and body_period and title_period[:4] == body_period[:4]
+            and title_period.endswith('-12') and not body_period.endswith('-12')
+            and not re.search(r'全年|\d{1,2}月|季度|半年|前\d+个月', title_compact)):
+        period = body_period
     text = re.sub(r'\s+', '', summary or '')
     title_text = re.sub(r'\s+', '', title or '')
     # 年末发布常在同一篇正文先列全年累计、后列“12月当月”。YTD 指标只能读取
@@ -1006,10 +1078,16 @@ def parse_mofcom_fdi_text(title, summary='', source_url=''):
     if amount:
         values['CN_MOFCOM_FDI_CNY_YTD'] = float(amount.group(1))
     yoy = re.search(
-        r'实际使用外资(?:金额)?[\d.]+亿元(?:人民币)?，?(?:同比|比上年)'
+        r'实际使用外资(?:金额)?[\d.]+亿元(?:人民币)?，?(?:按可比口径)?(?:同比|比上年)'
         r'(增长|下降)([\d.]+)%', cumulative_text)
     if yoy:
         values['CN_MOFCOM_FDI_CNY_YTD_YOY'] = _signed(yoy.group(1), yoy.group(2))
+    # Only a directly printed USD clause is accepted; never derive it from CNY.
+    usd = re.search(r'(?:折合|以美元计(?:为)?)([\d.]+)亿美元，?(?:同比)?'
+                    r'(增长|下降)([\d.]+)%', cumulative_text)
+    if usd:
+        values['CN_MOFCOM_FDI_USD_YTD'] = float(usd[1])
+        values['CN_MOFCOM_FDI_USD_YTD_YOY'] = _signed(usd[2], usd[3])
     firms = re.search(
         r'新设立外商投资企业(\d+)家，?(?:同比|比上年)(增长|下降)([\d.]+)%',
         cumulative_text)
@@ -1018,7 +1096,7 @@ def parse_mofcom_fdi_text(title, summary='', source_url=''):
         values['CN_MOFCOM_FDI_NEW_FIRMS_YTD_YOY'] = _signed(firms.group(2), firms.group(3))
     return [_observation(code, period, value, '商务部', 'mofcom_fdi', source_url,
                          title, '商务部吸收外资官方发布；累计口径')
-            for code, value in values.items() if value is not None]
+            for code, value in values.items() if value is not None and period]
 
 
 def parse_mofcom_odi_text(title, summary='', source_url=''):
@@ -1170,6 +1248,34 @@ def _mofcom_api_rows(session=None):
     return rows, errors
 
 
+def quarantine_mofcom_period_mismatches(conn, rows):
+    """Retain complete old rows before excluding an independently verified wrong period."""
+    conn.execute('''CREATE TABLE IF NOT EXISTS mofcom_period_corrections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, previous_row_json TEXT NOT NULL,
+        correct_period TEXT NOT NULL, correction_reason TEXT NOT NULL, corrected_at TEXT NOT NULL)''')
+    expected = {(row['indicator_code'], row['source_url']): row['period'] for row in rows
+                if row and row.get('source_type') in ('mofcom_fdi', 'mofcom_odi')
+                and row.get('source_url') not in (MOFCOM_DATA_URL, '')}
+    corrected = 0
+    for (code, url), period in expected.items():
+        aliases = {url, url.replace('http://', 'https://', 1), url.replace('https://', 'http://', 1)}
+        placeholders = ','.join('?' for _ in aliases)
+        old_rows = conn.execute('SELECT * FROM china_macro_observations WHERE indicator_code=? '
+                                f'AND source_url IN ({placeholders}) AND period<>? AND value IS NOT NULL',
+                                (code, *sorted(aliases), period)).fetchall()
+        for old in old_rows:
+            reason = f'Official release reporting period is {period}; original row and value retained.'
+            conn.execute('INSERT INTO mofcom_period_corrections '
+                         '(previous_row_json,correct_period,correction_reason,corrected_at) VALUES (?,?,?,?)',
+                         (json.dumps(dict(old), ensure_ascii=False), period, reason,
+                          datetime.now().astimezone().isoformat()))
+            conn.execute('UPDATE china_macro_observations SET original_value=COALESCE(original_value,value),'
+                         "value=NULL,data_status='invalidated_source_period',missing_reason=? WHERE id=?",
+                         (reason, old['id']))
+            corrected += 1
+    return corrected
+
+
 def update_mofcom_investment(conn, full_history=False, session=None):
     session = session or _new_session()
     rows, errors = _mofcom_api_rows(session)
@@ -1203,19 +1309,12 @@ def update_mofcom_investment(conn, full_history=False, session=None):
         errors.append(f'对外投资合作司列表: {exc}')
     # 一篇商务部官方文章只对应一个累计统计期。若此前把发布日期年份或季度误作
     # 全年，仅清理同 code + 同 source_url 的错误期重复；绝不按模块清空旧数据。
-    valid_periods = {}
-    for row in rows:
-        if (row and row.get('source_type') in ('mofcom_fdi', 'mofcom_odi')
-                and row.get('source_url') not in (MOFCOM_DATA_URL, '')):
-            valid_periods[(row['indicator_code'], row['source_url'])] = row['period']
-    corrected = 0
-    for (code, url), period in valid_periods.items():
-        cur = conn.execute('''DELETE FROM china_macro_observations
-                              WHERE indicator_code=? AND source_url=? AND period<>?''',
-                           (code, url, period))
-        corrected += cur.rowcount
+    corrected = quarantine_mofcom_period_mismatches(conn, rows)
     conn.commit()
-    return {'records_upserted': upsert_external_observations(conn, rows),
+    count = upsert_external_observations(conn, rows)
+    annual = sync_mofcom_fdi_annual(conn)
+    return {'records_upserted': count + annual['records_changed'],
+            'annual_bulletin': annual,
             'observations_parsed': len(rows), 'period_rows_corrected': corrected,
             'errors': errors}
 
@@ -1232,14 +1331,17 @@ def update_china_external(db_path, full_history=False, start_year=None, sleep_se
         safe_reserves = update_safe_reserves(conn, full_history=full_history, session=session)
         mofcom = update_mofcom_investment(conn, full_history, session)
         gacc = update_gacc_trade(conn, start, max_gacc_pages, sleep_seconds, session)
+    accounts=update_safe_accounts(db_path,session=session)
     total = sum(item.get('records_upserted', 0) for item in
-                (safe, safe_reserves, mofcom, gacc))
+                (safe, safe_reserves, mofcom, gacc, accounts))
     errors = (safe.get('errors', []) + safe_reserves.get('errors', []) +
-              mofcom.get('errors', []) + gacc.get('errors', []))
+              mofcom.get('errors', []) + gacc.get('errors', []) +
+              [f'SAFE accounts: {item}' for item in accounts.get('errors',[])])
     return {
         'success': total > 0 or not errors, 'started_at': started,
         'finished_at': datetime.now().isoformat(), 'records_upserted': total,
         'start_year': start, 'full_history': bool(full_history),
         'safe': safe, 'safe_reserves': safe_reserves,
+        'safe_accounts': accounts,
         'mofcom': mofcom, 'gacc': gacc, 'errors': errors,
     }

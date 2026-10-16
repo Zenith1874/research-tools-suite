@@ -1,0 +1,54 @@
+async (page) => {
+  // Live production validation; no route fulfillment and no update requests.
+  const receipt={mode:'live_production',url:page.url(),checked_at:new Date().toISOString(),checks:{},errors:[]};
+  const prefix='safe-accounts-'+new Date().toISOString().replace(/[^0-9]/g,'');
+  page.on('pageerror',error=>receipt.errors.push(error.message));
+  const check=(name,condition,detail)=>{
+    receipt.checks[name]={pass:Boolean(condition),detail};
+    if(!condition)throw new Error(name+': '+JSON.stringify(detail));
+  };
+  await page.reload();
+  await page.locator('.tabs').waitFor({timeout:60000});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.locator('.tabs').getByRole('button',{name:'外资与跨境资金',exact:true}).click();
+  await page.getByRole('button',{name:'全部',exact:true}).click();
+  const payload=await (await page.request.get('http://127.0.0.1:5001/api/china-macro/data')).json();
+  check('loaded_registry',payload.data_quality.registered_series===380,payload.data_quality.registered_series);
+  const capital=payload.groups.find(group=>group.code==='capital');
+  check('eight_new_charts',capital.charts.filter(chart=>chart.code.startsWith('safe_bop_')||chart.code.startsWith('safe_iip_')).length===8,capital.charts.length);
+  const chart=title=>page.locator('.chart-grid .chart').filter({has:page.locator('.chart-title').filter({hasText:title})});
+  const flow=chart('国际收支经常账户结构（单季）');
+  const annual=chart('国际收支经常与金融账户（年度）');
+  const stock=chart('国际投资资产、负债与净头寸（季末，美元）');
+  const last=code=>payload.series[code].at(-1);
+  check('latest_q2_control',last('CN_SAFE_BOP_CA_USD_Q').period==='2026-06'&&Math.abs(last('CN_SAFE_BOP_CA_USD_Q').value-1937.2430266602)<1e-8,last('CN_SAFE_BOP_CA_USD_Q'));
+  check('flow_cny_unit',(await flow.innerText()).includes('单位：亿元'),await flow.locator('.chart-sub').allTextContents());
+  check('stock_usd_only',(await stock.innerText()).includes('单位：亿美元'),await stock.locator('.chart-sub').allTextContents());
+  check('quarter_break_marker',await stock.locator('.method-break[data-period="2017-12"]').count()===1,'Official survey revision at 2017 year-end');
+  const paths=await stock.locator('.series-segment').evaluateAll(items=>items.map(item=>({code:item.dataset.series,start:item.dataset.start,end:item.dataset.end})));
+  check('no_line_crosses_revision',paths.length===6&&paths.every(item=>!(item.start<'2017-12'&&item.end>='2017-12')),paths);
+  await stock.screenshot({path:`output/playwright/${prefix}-iip.png`});
+  await page.getByRole('button',{name:'美元',exact:true}).click();
+  check('flow_usd_unit',(await flow.innerText()).includes('单位：亿美元'),await flow.locator('.chart-sub').allTextContents());
+  check('annual_1950_history',(await annual.locator('svg text').allTextContents()).includes('1950'),await annual.locator('svg text').allTextContents());
+  check('no_stock_currency_conversion',(await stock.innerText()).includes('单位：亿美元')&&await stock.locator('.series-segment').count()===6,'Stock remains official USD after currency toggle');
+  await flow.screenshot({path:`output/playwright/${prefix}-bop.png`});
+  const inputs=page.locator('input[type=month]');
+  await inputs.nth(0).fill('2025-03');
+  await inputs.nth(1).fill('2026-06');
+  const limited=await flow.locator('.series-segment').evaluateAll(items=>items.map(item=>({start:item.dataset.start,end:item.dataset.end})));
+  check('free_period_filter',limited.length===5&&limited.every(item=>item.start>='2025-03'&&item.end<='2026-06'),limited);
+  check('break_outside_period_hidden',await stock.locator('.method-break').count()===0,'2017 revision marker not drawn outside selected interval');
+  const downloadPromise=page.waitForEvent('download');
+  await page.getByRole('button',{name:'导出当前板块 CSV',exact:true}).click();
+  const download=await downloadPromise;
+  await download.saveAs(`output/playwright/${prefix}-capital.csv`);
+  check('csv_export',Boolean(await download.path()),download.suggestedFilename());
+  await page.setViewportSize({width:390,height:844});
+  const sizes=await page.evaluate(()=>({width:innerWidth,body:document.documentElement.scrollWidth}));
+  check('mobile_no_overflow',sizes.body<=sizes.width+1,sizes);
+  check('no_page_errors',receipt.errors.length===0,receipt.errors);
+  receipt.artifacts=[`${prefix}-iip.png`,`${prefix}-bop.png`,`${prefix}-capital.csv`];
+  receipt.status='passed';
+  return receipt;
+}

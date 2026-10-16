@@ -47,6 +47,57 @@ from research_catalog_expansion import (                 # noqa: E402
     DOMAIN_THEORIES, EXPANDED_CONSTRUCTS,
 )
 from research_catalog_sources import SOURCE_OVERRIDES, source_works_for  # noqa: E402
+from research_catalog_deep_dives import DEEP_DIVES                      # noqa: E402
+from research_catalog_deep_dives_strategy import STRATEGY_DIVES        # noqa: E402
+from research_catalog_deep_dives_behavior import BEHAVIOR_DIVES        # noqa: E402
+from research_catalog_deep_dives_constructs import CONSTRUCT_DIVES     # noqa: E402
+from research_catalog_deep_dives_methods import METHOD_DIVES           # noqa: E402
+from research_catalog_deep_dives_theories_b2 import THEORY_DIVES_B2    # noqa: E402
+from research_catalog_deep_dives_constructs_b2 import CONSTRUCT_DIVES_B2  # noqa: E402
+from research_catalog_deep_dives_methods_b2 import METHOD_DIVES_B2     # noqa: E402
+from research_catalog_deep_dives_theories_b3 import THEORY_DIVES_B3    # noqa: E402
+from research_catalog_deep_dives_constructs_b3 import CONSTRUCT_DIVES_B3  # noqa: E402
+from research_catalog_deep_dives_methods_b3 import METHOD_DIVES_B3     # noqa: E402
+from research_catalog_deep_dives_theories_b4 import THEORY_DIVES_B4    # noqa: E402
+from research_catalog_deep_dives_constructs_b4 import CONSTRUCT_DIVES_B4  # noqa: E402
+from research_catalog_deep_dives_constructs_b5 import CONSTRUCT_DIVES_B5  # noqa: E402
+from research_catalog_deep_dives_constructs_b6 import CONSTRUCT_DIVES_B6  # noqa: E402
+from research_catalog_deep_dives_constructs_b7 import CONSTRUCT_DIVES_B7  # noqa: E402
+from research_catalog_deep_dives_constructs_b8 import CONSTRUCT_DIVES_B8  # noqa: E402
+from research_catalog_deep_dives_constructs_b9 import CONSTRUCT_DIVES_B9  # noqa: E402
+from research_catalog_deep_dives_constructs_b10 import CONSTRUCT_DIVES_B10  # noqa: E402
+from research_catalog_deep_dives_methods_b4 import METHOD_DIVES_B4     # noqa: E402
+from research_catalog_deep_dives_methods_b5 import METHOD_DIVES_B5     # noqa: E402
+from research_catalog_deep_dives_theories_b5 import THEORY_DIVES_B5    # noqa: E402
+from research_catalog_deep_dives_theories_b6 import THEORY_DIVES_B6    # noqa: E402
+from research_catalog_deep_dives_theories_b7 import THEORY_DIVES_B7    # noqa: E402
+from research_catalog_deep_dives_theories_b8 import THEORY_DIVES_B8    # noqa: E402
+from research_catalog_deep_dives_theories_b9 import THEORY_DIVES_B9    # noqa: E402
+from research_catalog_deep_dives_theories_b10 import THEORY_DIVES_B10   # noqa: E402
+from research_catalog_deep_dives_theories_b11 import THEORY_DIVES_B11   # noqa: E402
+from research_catalog_deep_dives_theories_b12 import THEORY_DIVES_B12   # noqa: E402
+from research_catalog_deep_dives_theories_b13 import THEORY_DIVES_B13   # noqa: E402
+from research_catalog_deep_dives_theories_b14 import THEORY_DIVES_B14   # noqa: E402
+from research_catalog_deep_dives_theories_b15 import THEORY_DIVES_B15   # noqa: E402
+from research_catalog_deep_dives_theories_b16 import THEORY_DIVES_B16   # noqa: E402
+from research_catalog_disciplines import apply_disciplines      # noqa: E402
+
+# Batches are separate modules only for file size; they merge into one map per
+# entity kind. Adding a batch is one import and one entry here.
+DEEP_DIVES = dict(DEEP_DIVES, **STRATEGY_DIVES, **BEHAVIOR_DIVES,
+                  **THEORY_DIVES_B2, **THEORY_DIVES_B3, **THEORY_DIVES_B4,
+                  **THEORY_DIVES_B5, **THEORY_DIVES_B6, **THEORY_DIVES_B7,
+                  **THEORY_DIVES_B8, **THEORY_DIVES_B9, **THEORY_DIVES_B10,
+                  **THEORY_DIVES_B11, **THEORY_DIVES_B12, **THEORY_DIVES_B13,
+                  **THEORY_DIVES_B14, **THEORY_DIVES_B15,
+                  **THEORY_DIVES_B16)
+CONSTRUCT_DIVES = dict(CONSTRUCT_DIVES, **CONSTRUCT_DIVES_B2, **CONSTRUCT_DIVES_B3,
+                       **CONSTRUCT_DIVES_B4, **CONSTRUCT_DIVES_B5,
+                       **CONSTRUCT_DIVES_B6, **CONSTRUCT_DIVES_B7,
+                       **CONSTRUCT_DIVES_B8, **CONSTRUCT_DIVES_B9,
+                       **CONSTRUCT_DIVES_B10)
+METHOD_DIVES = dict(METHOD_DIVES, **METHOD_DIVES_B2, **METHOD_DIVES_B3,
+                    **METHOD_DIVES_B4, **METHOD_DIVES_B5)
 
 # Keep the original source modules readable and append the expansion packs
 # before the single reference-integrity check at the end of this file.
@@ -307,6 +358,31 @@ THEORIES = [
       rel=['social-exchange-theory', 'social-cognitive-theory'],
       works=[W('Tajfel & Turner', 1979, 'An integrative theory of intergroup conflict', 'The Social Psychology of Intergroup Relations'),
              W('Ashforth & Mael', 1989, 'Social identity theory and the organization', 'Academy of Management Review')]),
+
+    T('attachment-theory', 'Attachment Theory', '依恋理论', None,
+      ['OB / HR', 'Marketing', 'Management / Strategy'], 1969,
+      'A behavioural system regulates proximity to figures who serve as a safe haven under threat and a secure base for exploration, and repeated experience of their availability forms working models that shape later relationships.',
+      '依恋行为系统调节个体与依恋对象之间的接近程度——该对象在威胁下充当安全港、在探索时充当安全基地；关于其可得性的反复经验形成内部工作模型，塑造日后的各种关系。',
+      tags=['attachment theory', 'attachment style', 'adult attachment', 'brand attachment'],
+      kw=['attachment', 'secure base', 'safe haven', 'attachment anxiety', 'attachment avoidance'],
+      core=['trust', 'belongingness', 'affective-commitment'],
+      ante=['social-support', 'leader-support'],
+      mech=['proximity seeking', 'internal working model', 'safe haven', 'secure base'],
+      out=['affective-commitment', 'turnover-intention', 'customer-loyalty', 'brand-equity'],
+      mod=['psychological-safety'],
+      bc=['The theory assumes a figure who can respond and be sought out under threat; a brand cannot, so predictions about separation and protection transfer uncertainly.',
+          'Attachment style is measured for close relationships and applied to workplace and consumption targets it was not validated on.'],
+      crit=['Anxiety and avoidance are frequently collapsed into a secure/insecure split, which discards the distinction that carries the prediction.',
+            'The internal working model is never observed directly in business research and is inferred from the self-report it explains.'],
+      apps=['Leadership', 'Brand Relationships', 'Turnover', 'Consumer Loyalty'],
+      rel=['social-exchange-theory', 'social-identity-theory', 'need-to-belong-theory',
+           'organizational-support-theory', 'leader-member-exchange'],
+      works=[W('Bowlby', 1969, 'Attachment and Loss, Volume 1: Attachment', 'Basic Books'),
+             W('Hazan & Shaver', 1987, 'Romantic love conceptualized as an attachment process',
+               'Journal of Personality and Social Psychology', kind='extension'),
+             W('Thomson, MacInnis & Park', 2005,
+               "The ties that bind: Measuring the strength of consumers' emotional attachments to brands",
+               'Journal of Consumer Psychology', kind='extension')]),
 
     T('social-cognitive-theory', 'Social Cognitive Theory', '社会认知理论', 'SCT',
       ['OB / HR', 'Information Systems', 'Marketing'], 1986,
@@ -1238,6 +1314,23 @@ THEORIES += [
 # international business, and analytics / OR coverage.  Existing entries are
 # retained and annotated with the verified chapter-start page from the scan.
 THEORIES += BOOK_THEORIES + DOMAIN_THEORIES
+
+# Long-form analysis, attached where it has been written.  Coverage is partial by
+# design; `deep_dive_status` records which theories carry one so the page can say
+# so instead of implying an analysis that does not exist.
+def _attach_deep_dives(entities, dives):
+    for _entity in entities:
+        _dive = dives.get(_entity['id'])
+        if _dive:
+            _entity['deep_dive'] = _dive
+            _entity['deep_dive_status'] = _dive['status']
+        else:
+            _entity['deep_dive_status'] = 'not_written'
+
+
+_attach_deep_dives(THEORIES, DEEP_DIVES)
+_attach_deep_dives(CONSTRUCTS, CONSTRUCT_DIVES)
+_attach_deep_dives(METHODS, METHOD_DIVES)
 _BOOK_SOURCE_TEXT = _load_book_source_text_map()
 for _theory in THEORIES:
     for _work in _theory.get('seminal_works', []):
@@ -1447,6 +1540,14 @@ def main():
                 _override = SOURCE_OVERRIDES.get((_kind, _entity['id'], _work.get('title')))
                 if _override:
                     _work.update(_override)
+    # Discipline tags. Methods had none at all, which left the Methods tab's
+    # discipline filter returning zero rows for every discipline; theories and
+    # constructs were under-tagged where the work spans channels. See
+    # scripts/research_catalog_disciplines.py for what is corpus-corroborated and
+    # what is editorial judgement.
+    _disc_changes = apply_disciplines(
+        catalog["theories"], catalog["constructs"], catalog["methods"])
+
     OUT.write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + chr(10), encoding='utf-8')
 
     from collections import Counter
@@ -1460,6 +1561,9 @@ def main():
     print('constructs %d' % len(CONSTRUCTS))
     print('methods    %d  %s' % (len(METHODS), dict(categories)))
     print('theory disciplines %s' % dict(disciplines))
+    print('disciplines: set on %d methods; %d theories/constructs extended by %d tags'
+          % (_disc_changes['methods_set'], _disc_changes['entities_extended'],
+             _disc_changes['disciplines_added']))
     print('wrote', OUT)
 
 

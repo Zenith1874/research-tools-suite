@@ -2,6 +2,7 @@
 import unittest
 
 from services.faculty_jobs_normalizer import (
+    classify_business_scope,
     canonical_key,
     classify_disciplines,
     normalize_source_job,
@@ -9,7 +10,6 @@ from services.faculty_jobs_normalizer import (
     parse_deadline,
     parse_location,
     parse_salary,
-    classify_business_scope,
     classify_faculty_market_role,
     hiring_cycle,
     hiring_cycle_reason,
@@ -33,6 +33,19 @@ class FacultyJobNormalizerTests(unittest.TestCase):
         self.assertEqual('GB', location['country_code'])
         self.assertEqual('United Kingdom', location['country'])
         self.assertEqual('Europe', location['region_group'])
+
+    def test_board_default_is_not_posting_country_or_region_evidence(self):
+        source_job = SourceJob(
+            source='ais', source_job_id='85721994',
+            source_url='https://academiccareers.aisnet.org/job/85721994',
+            title_raw='Management of Information Systems Professor (open rank) at NovaSBE',
+            institution_raw='Unknown institution',
+        )
+        location = normalize_source_job(source_job, 'United States')
+        self.assertIsNone(location['country_code'])
+        self.assertIsNone(location['country'])
+        self.assertEqual('Other', location['region_group'])
+        self.assertEqual('source_region_only_unknown_country', location['location_evidence'])
 
     def test_unambiguous_city_hint_overrides_broad_source_fallback(self):
         location = parse_location('Dublin', 'GB')
@@ -141,6 +154,86 @@ class FacultyJobNormalizerTests(unittest.TestCase):
         self.assertEqual('HK', location['country_code'])
         self.assertEqual('Hong Kong', location['city'])
 
+    def test_city_state_prefix_beats_broader_country_suffix(self):
+        location = parse_location('Macau, China', 'Global')
+        self.assertEqual('MO', location['country_code'])
+        self.assertEqual('Macau SAR', location['country'])
+        self.assertEqual('Macau', location['city'])
+
+    def test_country_work_mode_suffix_is_not_a_city(self):
+        california = parse_location('California, United States (remote)')
+        self.assertEqual('US', california['country_code'])
+        self.assertEqual('CA', california['state_province'])
+        self.assertIsNone(california['city'])
+
+        washington = parse_location('Washington, Dist. Columbia, United States (on-site)')
+        self.assertEqual('US', washington['country_code'])
+        self.assertEqual('DC', washington['state_province'])
+        self.assertEqual('Washington', washington['city'])
+
+    def test_city_and_state_may_share_the_same_name(self):
+        location = parse_location('New York, New York, United States (on-site)')
+        self.assertEqual('US', location['country_code'])
+        self.assertEqual('NY', location['state_province'])
+        self.assertEqual('New York', location['city'])
+
+    def test_flattened_multiple_locations_do_not_choose_one_state(self):
+        location = parse_location(
+            'Multiple Locations New York, New York, United States '
+            'Washington, Dist. Columbia, United States (hybrid)'
+        )
+        self.assertEqual('US', location['country_code'])
+        self.assertIsNone(location['state_province'])
+        self.assertEqual('Multiple Locations', location['city'])
+        self.assertEqual('location_raw_multiple', location['location_evidence'])
+
+    def test_multiple_locations_retain_one_shared_state(self):
+        california = parse_location(
+            'Multiple Locations Alameda County, California, United States '
+            'Sacramento, California, United States (hybrid)'
+        )
+        self.assertEqual('CA', california['state_province'])
+        self.assertEqual('Multiple Locations', california['city'])
+
+        missouri = parse_location('Multiple Locations, MO')
+        self.assertEqual('MO', missouri['state_province'])
+        self.assertEqual('Multiple Locations', missouri['city'])
+
+    def test_country_slash_city_is_structured_without_losing_raw_evidence(self):
+        paris = parse_location('France / Paris', 'Global')
+        self.assertEqual('FR', paris['country_code'])
+        self.assertEqual('Paris', paris['city'])
+        self.assertEqual('France / Paris', paris['location_raw'])
+        self.assertEqual('location_raw_country_slash', paris['location_evidence'])
+
+        hanoi = parse_location('Viet Nam / Hanoi', 'Global')
+        self.assertEqual('VN', hanoi['country_code'])
+        self.assertEqual('Vietnam', hanoi['country'])
+        self.assertEqual('Hanoi', hanoi['city'])
+
+        multi = parse_location('France / Lyon / Paris', 'Global')
+        self.assertEqual('Lyon', multi['city'])
+        self.assertEqual('France / Lyon / Paris', multi['location_raw'])
+
+    def test_non_country_slashes_are_not_rewritten_as_country_city(self):
+        location = parse_location('College of Medicine/Office of Health Sciences', 'US')
+        self.assertEqual('College of Medicine/Office of Health Sciences', location['city'])
+
+    def test_organizational_and_campus_prefixes_do_not_become_the_city(self):
+        location = parse_location(
+            'College of Business, Main Campus, Portales, NM', 'United States',
+        )
+        self.assertEqual('US', location['country_code'])
+        self.assertEqual('NM', location['state_province'])
+        self.assertEqual('Portales', location['city'])
+
+        campus = parse_location('Gresham Campus, OR', 'United States')
+        self.assertEqual('OR', campus['state_province'])
+        self.assertEqual('Gresham', campus['city'])
+
+        prefixed = parse_location('Main Campus - Portales, NM', 'United States')
+        self.assertEqual('Portales', prefixed['city'])
+
     def test_rank_cycle_and_generic_portal_contracts(self):
         normalized = normalize_source_job(SourceJob(
             source='test', source_job_id='rank', source_url='https://board.example/rank',
@@ -182,6 +275,24 @@ class FacultyJobNormalizerTests(unittest.TestCase):
         self.assertEqual(EARLY, w1.career_stage)
         self.assertEqual(MID, w2.career_stage)
         self.assertEqual(SENIOR, w3.career_stage)
+
+    def test_multi_rank_precedence_is_independent_of_title_word_order(self):
+        for title in (
+            'Assistant / Associate Professor in Finance',
+            'Associate or Full Professor of Management',
+            'Assistant, Associate or Full Professor of Accounting',
+            'Assistant Professor / Associate Professor / Professor',
+        ):
+            self.assertEqual('Open Rank', map_rank('US', title).rank_normalized, title)
+
+    def test_lecturer_is_not_rewritten_as_assistant_professor_outside_uk(self):
+        self.assertEqual('Lecturer', map_rank('US', 'Lecturer in Marketing').rank_normalized)
+        self.assertEqual('Lecturer / Senior Lecturer', map_rank(
+            'AU', 'Lecturer / Senior Lecturer in Information Systems').rank_normalized)
+
+    def test_discipline_between_assistant_and_professor_keeps_assistant_rank(self):
+        self.assertEqual('Assistant Professor', map_rank(
+            'US', 'Assistant Accounting Professor').rank_normalized)
 
     def test_department_evidence_outranks_description_evidence(self):
         classification = classify_disciplines('Information Systems', 'Assistant Professor', 'Marketing and strategy')
@@ -229,12 +340,31 @@ class FacultyJobNormalizerTests(unittest.TestCase):
             ('Postmaster Research Associate - Transportation', 'staff_role'),
             ('Faculty Job Openings', 'listing_page'),
             ('Faculty (Full-Time)', 'listing_page'),
-            ('Faculty Positions in Biological and Chemical Engineering', 'listing_page'),
+            ('Faculty Positions in Various Departments', 'listing_page'),
             ("Dean's Message", 'listing_page'),
         ):
             result = classify_faculty_market_role(title)
             self.assertEqual(0, result['eligible'], title)
             self.assertEqual(role, result['role'], title)
+
+        # A named field makes it one advertisement rather than a directory of
+        # them, so the role gate accepts it. Whether it belongs in *this*
+        # market is a separate question with a separate gate: engineering and
+        # nursing are kept out by business scope, which is where that judgement
+        # belongs. Deciding it in the role gate also discarded
+        # "Faculty Positions in Finance", which is a real posting.
+        for title, scope in (
+            ('Faculty Positions in Biological and Chemical Engineering', 'non_business'),
+            ('Faculty Positions in Nursing', 'non_business'),
+            ('Faculty Positions in Finance', 'business_discipline'),
+        ):
+            result = classify_faculty_market_role(title)
+            self.assertEqual('faculty', result['role'], title)
+            self.assertEqual(1, result['eligible'], title)
+            self.assertEqual(
+                scope,
+                classify_business_scope(title=title, department=None, description=None)['scope'],
+                title)
 
         professor = classify_faculty_market_role('Research Assistant Professor of Finance')
         self.assertEqual(1, professor['eligible'])

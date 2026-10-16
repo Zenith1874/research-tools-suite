@@ -15,7 +15,7 @@
 .hero{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap}.hero h1{font-size:23px;margin:0 0 7px}.sub,.muted{color:var(--muted);font-size:12px;line-height:1.7}.actions,.controls,.switches{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .btn,.select,input[type=month]{border:1px solid var(--bd);background:var(--panel2);color:var(--text);border-radius:7px;min-height:35px;padding:7px 11px;font:inherit;font-size:12px}.btn{cursor:pointer}.btn:hover,.btn.active{border-color:var(--blue);background:rgba(79,143,255,.14)}.btn.primary{border-color:rgba(79,143,255,.65);background:rgba(79,143,255,.18)}.btn:disabled{opacity:.5;cursor:wait}
 .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:15px 0;background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:11px}.control-label{font-size:10px;color:var(--muted);margin-right:2px}.check{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:5px}
-.tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:7px;margin:14px 0}.tab{border:1px solid var(--bd);background:var(--panel);color:var(--dim);border-radius:8px;padding:10px 8px;cursor:pointer;text-align:center;font-size:12px}.tab.active{border-color:var(--blue);color:#fff;background:rgba(79,143,255,.15)}
+.tabs{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:7px;margin:14px 0}.tab{border:1px solid var(--bd);background:var(--panel);color:var(--dim);border-radius:8px;padding:10px 8px;cursor:pointer;text-align:center;font-size:12px}.tab.active{border-color:var(--blue);color:#fff;background:rgba(79,143,255,.15)}
 .notice{border:1px solid rgba(244,173,69,.38);background:rgba(244,173,69,.07);border-radius:8px;padding:9px 12px;margin:8px 0;color:#f6d9a9;font-size:11px;line-height:1.65}.notice.error{border-color:rgba(255,100,124,.5);color:#ffc2cb;background:rgba(255,100,124,.08)}
 .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin:14px 0}.kpi{background:var(--panel);border:1px solid var(--bd);border-radius:9px;padding:12px;min-width:0}.kpi-label{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kpi-value{font-size:21px;font-weight:760;margin:6px 0;font-variant-numeric:tabular-nums}.kpi-meta{font-size:9.5px;color:var(--muted);line-height:1.5}.badge{display:inline-block;border:1px solid rgba(37,211,154,.5);color:#aef2d6;border-radius:4px;padding:1px 5px;font-size:9px;margin-left:4px}.badge.derived{border-color:rgba(169,133,255,.55);color:#d4c3ff}.badge.missing{border-color:rgba(255,100,124,.55);color:#ffc2cb}
 .section-head{margin:18px 0 10px}.section-head h2{font-size:17px;margin:0 0 5px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.chart{background:var(--panel);border:1px solid var(--bd);border-radius:10px;padding:12px;min-width:0}.chart-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.chart-title{font-size:13px;color:var(--dim)}.chart-sub{font-size:9.5px;color:var(--muted);line-height:1.55;margin-top:3px}.chart-svg{width:100%;height:225px;display:block;cursor:crosshair}.legend{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}.legend button{border:1px solid transparent;background:transparent;color:var(--dim);font-size:10px;padding:2px 5px;cursor:pointer;border-radius:4px}.legend button.off{opacity:.38;text-decoration:line-through}.legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:4px;vertical-align:middle}.tip{position:absolute;z-index:5;top:8px;transform:translateX(-50%);pointer-events:none;background:rgba(7,17,31,.97);border:1px solid var(--bd);border-radius:7px;padding:7px 9px;font-size:10px;line-height:1.6;white-space:nowrap;box-shadow:0 6px 20px rgba(0,0,0,.25)}.tip b{color:var(--dim)}
@@ -25,40 +25,137 @@
 </head>
 <body><div id="root"></div>
 <script type="text/babel">
-const {useEffect,useMemo,useState}=React;
+const {useEffect,useMemo,useRef,useState}=React;
 const COLORS=['#4f8fff','#ff647c','#f4ad45','#25d39a','#a985ff','#14d9d1','#8ecb5b','#ff8b55'];
-function fmt(value,digits=1){if(value===null||value===undefined||Number.isNaN(Number(value)))return '—';const abs=Math.abs(Number(value));const d=abs>=10000?0:abs>=100?1:digits;return Number(value).toLocaleString('zh-CN',{maximumFractionDigits:d,minimumFractionDigits:0})}
+function fmt(value,digits){if(value===null||value===undefined||Number.isNaN(Number(value)))return '—';const abs=Math.abs(Number(value));const d=digits??(abs>=10000?0:1);return Number(value).toLocaleString('zh-CN',{maximumFractionDigits:d,minimumFractionDigits:0})}
+function axisDigits(span){if(!Number.isFinite(span)||span<=0)return 1;return Math.max(1,Math.min(6,Math.ceil(-Math.log10(span/2))))}
+function axisTickValues(min,max,digits){
+  const scale=10**digits;
+  const candidates=[Math.ceil(min*scale)/scale,Math.round((min+max)/2*scale)/scale,Math.floor(max*scale)/scale];
+  return [...new Set(candidates)].filter(value=>value>=min&&value<=max).sort((a,b)=>a-b);
+}
+function chartDomain(values,threshold,axisMode){
+  const finite=values.filter(value=>value!==null&&value!==undefined&&typeof value!=='boolean').map(Number).filter(Number.isFinite);
+  if(threshold!==null&&threshold!==undefined&&Number.isFinite(Number(threshold)))finite.push(Number(threshold));
+  if(!finite.length)return null;
+  const actualMin=Math.min(...finite),actualMax=Math.max(...finite);
+  if(actualMin===0&&actualMax===0)return [0,1];
+  let min=axisMode==='zero'?Math.min(0,actualMin):actualMin,max=axisMode==='zero'?Math.max(0,actualMax):actualMax;
+  if(min===max){const margin=Math.max(1,Math.abs(min)*.05);min-=margin;max+=margin}
+  const pad=(max-min)*.08;min-=pad;max+=pad;
+  if(actualMin>=0)min=Math.max(0,min);
+  if(actualMax<=0)max=Math.min(0,max);
+  return [min,max];
+}
 function periodIndex(period){const match=String(period||'').match(/^(\d{4})(?:-(\d{2}))?/);return match?Number(match[1])*12+Number(match[2]||12)-1:null}
 function resolvedCode(code,currency){return code.replaceAll('{currency}',currency)}
 function resolvedUnit(unit,currency){return unit.replace('{currency_unit}',currency==='CNY'?'亿元':'亿美元')}
-function segments(rows,frequency){const output=[];let current=[];const maxGap=frequency==='annual'?12:frequency==='quarterly'?4:1;(rows||[]).forEach(row=>{const idx=periodIndex(row.period);const prev=current.length?periodIndex(current[current.length-1].period):null;if(prev!==null&&idx-prev>maxGap){if(current.length)output.push(current);current=[]}current.push(row)});if(current.length)output.push(current);return output}
-const STATUS_LABELS={official:'一手官方',official_revised:'一手官方·修订',official_reprinted:'官方表重刊',official_relayed:'官方数据转引',derived:'派生',missing:'缺失'};
+function segments(rows,frequency,breaks=[]){
+  const output=[];let current=[];
+  const maxGap=frequency==='annual'?12:frequency==='quarterly'?3:1;
+  const cutoffs=breaks.map(periodIndex).filter(value=>value!==null);
+  const flush=()=>{if(current.length)output.push(current);current=[]};
+  (rows||[]).forEach(row=>{
+    const idx=periodIndex(row.period);
+    if(idx===null||row.value===null||row.value===undefined||!Number.isFinite(Number(row.value))){flush();return}
+    const prev=current.length?periodIndex(current[current.length-1].period):null;
+    if(prev!==null&&(idx-prev>maxGap||cutoffs.some(cutoff=>prev<cutoff&&idx>=cutoff)))flush();
+    current.push(row)
+  });
+  flush();return output
+}
+const STATUS_LABELS={official:'一手官方',official_revised:'一手官方·修订',official_preliminary:'官方初步',official_reprinted:'官方表重刊',official_relayed:'官方数据转引',derived:'派生',missing:'缺失'};
 function statusLabel(status){return STATUS_LABELS[status]||status||'缺失'}
 function sourceTiming(row){const release=row&&row.release_date||'未提供';const releaseNote=row&&row.release_date_not_provided?'（来源未提供）':'';const retrieved=row&&row.retrieved_at||'未提供';return `来源发布日期：${release}${releaseNote} · 获取时间：${retrieved}`}
+function bankingGroup(group,payload){
+  if(group.code!=='banking')return group;
+  const extras=[
+    {code:'bank_roa',title:'商业银行资产利润率（监管披露）',series:['CN_BANK_ROA_YTD'],unit:'%'},
+    {code:'bank_roe',title:'商业银行资本利润率（监管披露）',series:['CN_BANK_ROE_YTD'],unit:'%'},
+    {code:'bank_liquidity_ratio',title:'商业银行流动性比例（季末）',series:['CN_BANK_LIQUIDITY_RATIO'],unit:'%'},
+    {code:'bank_loan_deposit',title:'商业银行存贷款比例（人民币境内）',series:['CN_BANK_LOAN_DEPOSIT_RATIO'],unit:'%',note:'境内监管口径；不使用贷款/存款总量自行重算。'}
+  ];
+  const ids=new Set(group.charts.map(chart=>chart.code));
+  const periods=(payload.series.CN_BANK_NPL_RATIO||[]).map(row=>row.period).sort();
+  const span=periods.length?`${periods[0]}—${periods[periods.length-1]}`:'暂无有效观测';
+  const charts=[...group.charts,...extras.filter(chart=>!ids.has(chart.code))].map(chart=>chart.code==='bank_capital'?{...chart,breaks:[...new Set([...(chart.breaks||[]),'2024-03'])]}:chart);
+  return {...group,charts,
+    description:`商业银行法人口径监管统计；当前已核验覆盖 ${span}，缺期见覆盖表。累计盈利与季末风险分图；2024起资本新规，不生成风险总分。`};
+}
+function capitalGroup(group,payload){
+  if(group.code!=='capital')return group;
+  const extras=[
+    {code:'fdi_annual_usd',title:'实际使用外资长期历史（公报年度，美元）',series:['CN_MOFCOM_FDI_USD_ANNUAL'],unit:'亿美元',note:'公报年度原值，1983年起；含金融领域年度统计，不与早期非金融月报拼接，不由人民币换算。'},
+    {code:'fdi_annual_firms',title:'新设外商投资企业长期历史（公报年度）',series:['CN_MOFCOM_FDI_NEW_FIRMS_ANNUAL'],unit:'家',note:'公报年度原值；1979—1982合并块保留在来源记录，不拆成年份。'}
+  ];
+  const ids=new Set(group.charts.map(chart=>chart.code));
+  const charts=[...group.charts,...extras.filter(chart=>!ids.has(chart.code)&&chart.series.some(code=>(payload.series[code]||[]).length))]
+    .map(chart=>chart.code==='fdi_odi'?{...chart,
+      series_breaks:{...(chart.series_breaks||{}),CN_MOFCOM_FDI_CNY_YTD:['2022-05'],CN_MOFCOM_FDI_USD_YTD:['2022-05']},
+      note:'FDI实际金额自2022-05纳入银行、证券、保险领域，跨该点断线；ODI不沿用这一断点。与非金融ODI仅作规模并列，不计算净额。'}:chart.code==='fdi_odi_yoy'?{...chart,note:'同比采用官方可比口径，不从累计金额直除反推；与金额线的口径断点分开处理。'}:chart);
+  return {...group,charts};
+}
+function employmentGroup(group,payload){
+  if(group.code!=='employment')return group;
+  const legacy=(payload.series.CN_INCOME_URBAN||[]).some(row=>row.period==='2013'&&row.value===26955&&/(?:1768637|1898455)\.html$/.test(row.source_url||''));
+  if(!legacy)return group;
+  return {...group,charts:group.charts.map(chart=>chart.code!=='income_distribution'?chart:{...chart,
+    series_breaks:{...(chart.series_breaks||{}),CN_INCOME_URBAN:[...new Set([...(chart.series_breaks?.CN_INCOME_URBAN||[]),'2014'])]},
+    note:'2013年城镇收入26955元为旧城镇住户调查口径；2014起为城乡一体化调查。保留原值，城镇线在2014处断开，不据此跨口径计算增速。'})};
+}
+function annualComparabilityGroup(group,payload){
+  const book='P020240417553133577139.pdf';
+  const bookRow=(code,year,page)=>(payload.series[code]||[]).some(row=>row.period===String(year)&&(row.source_url||'').endsWith(book+'#page='+page));
+  const ages=['CN_POP_60_PLUS','CN_POP_65_PLUS'].filter(code=>bookRow(code,2020,32));
+  const urban=(payload.series.CN_URBANIZATION_RATE||[]).some(row=>row.period==='2020'&&(row.source_url||'').endsWith('t20260603_1963868.html'));
+  const representative=['CN_INCOME_URBAN','CN_INCOME_RURAL','CN_CONSUMPTION_PC'].some(code=>bookRow(code,2000,98));
+  return {...group,charts:group.charts.map(original=>{const chart={...original};let extra=null;
+    if(chart.code==='aging_population'&&ages.length){chart.series_breaks={...(chart.series_breaks||{})};ages.forEach(code=>chart.series_breaks[code]=[...new Set([...(chart.series_breaks[code]||[]),'2020'])]);extra='2020为普查校准年末统计表值，与早期公报初步估计版本不同；2020处断线，不跨口径计算增幅。'}
+    else if(chart.code==='urbanization'&&urban){chart.series_breaks={...(chart.series_breaks||{}),CN_URBANIZATION_RATE:[...new Set([...(chart.series_breaks?.CN_URBANIZATION_RATE||[]),'2020'])]};extra='2020为官方回顾列示的普查校准年度基准，与早期公报估计不同；2020处断线，不与普查时点或年末总人口机械拼接为官方城镇人数。'}
+    else if(representative&&chart.code==='income_distribution')extra='新增2000城乡收入为旧住户调查历史代表点，手册未列2001—2012，相关线不补年；全国平均收入线原有年鉴回溯数据另有来源，保持原记录。';
+    else if(representative&&chart.code==='resident_consumption')extra='2000仅为旧住户调查历史代表点，2001—2012本表未列，不插值；2013起为全国住户调查，不能把代表点误称连续全史。';
+    if(extra&&!(chart.note||'').includes(extra))chart.note=((chart.note||'')+' '+extra).trim();return chart;})};
+}
+function seriesComparabilityNote(chart,code,row){
+  if((row.source_url||'').endsWith('P020240417553133577139.pdf#page=98'))return row.period==='2000'?'2000为旧住户调查历史代表点；2001—2012未列、不插值；2013起全国住户调查，不跨调查或缺年计算同比。':'2013起全国住户调查口径；不以旧城镇调查或农村纯收入替代；历史代表点不等于连续全史。';
+  return chart.series_breaks?.[code]?.length?(chart.note||''):'';
+}
+function observationDigits(code){return String(code||'').startsWith('CN_BANK_')||code==='CN_URBANIZATION_RATE'?2:1}
 function LineChart({definition,payload,currency,startIndex,endIndex,axisMode}){
   const [hidden,setHidden]=useState({}),[hover,setHover]=useState(null);
+  const chartRef=useRef(null),[chartWidth,setChartWidth]=useState(720);
   const unit=resolvedUnit(definition.unit,currency);
-  const dataSeries=definition.series.map((template,index)=>{const code=resolvedCode(template,currency);const meta=payload.metrics[code]||{name:code,frequency:'monthly'};const rows=(payload.series[code]||[]).filter(row=>{const idx=periodIndex(row.period);return idx!==null&&(startIndex===null||idx>=startIndex)&&(endIndex===null||idx<=endIndex)});return{code,name:meta.name,frequency:meta.frequency,rows,color:COLORS[index%COLORS.length]}}).filter(item=>item.rows.length);
+  const dataSeries=definition.series.map((template,index)=>{const code=resolvedCode(template,currency);const meta=payload.metrics[code]||{name:code,frequency:'monthly'};const rows=(payload.series[code]||[]).filter(row=>{const idx=periodIndex(row.period);return idx!==null&&row.value!==null&&row.value!==undefined&&Number.isFinite(Number(row.value))&&(startIndex===null||idx>=startIndex)&&(endIndex===null||idx<=endIndex)});return{code,name:meta.name,frequency:meta.frequency,rows,color:COLORS[index%COLORS.length]}}).filter(item=>item.rows.length);
   const visible=dataSeries.filter(item=>!hidden[item.code]);
-  if(!dataSeries.length)return <div className="chart"><div className="chart-title">{definition.title}</div><div className="empty" style={{marginTop:10}}>所选期间没有可用数据。</div></div>;
+  useEffect(()=>{
+    const element=chartRef.current;if(!element)return;
+    const resize=()=>setChartWidth(Math.max(240,element.clientWidth-24));
+    resize();const observer=new ResizeObserver(resize);observer.observe(element);
+    return()=>observer.disconnect();
+  },[dataSeries.length,visible.length]);
+  if(!dataSeries.length)return <div className="chart" ref={chartRef}><div className="chart-title">{definition.title}</div><div className="empty" style={{marginTop:10}}>所选期间没有可用数据。</div></div>;
   const trendVisible=visible.filter(item=>item.rows.length>=2),singleVisible=visible.filter(item=>item.rows.length===1);
-  if(!visible.length)return <div className="chart"><div className="chart-head"><div className="chart-title">{definition.title}</div><div className="chart-sub">单位：{unit}</div></div><div className="empty" style={{marginTop:10}}>全部序列已隐藏，点击下方图例恢复。</div><div className="legend">{dataSeries.map(item=><button key={item.code} className="off" onClick={()=>setHidden(current=>({...current,[item.code]:false}))}><i style={{background:item.color}}/>{item.name}</button>)}</div></div>;
-  if(!trendVisible.length)return <div className="chart"><div className="chart-head"><div><div className="chart-title">{definition.title}</div>{(definition.subtitle||definition.note)&&<div className="chart-sub">{definition.subtitle||definition.note}</div>}</div><div className="chart-sub">单位：{unit}</div></div><div className="empty" style={{marginTop:10}}>当前筛选范围内可比观测少于 2 期，暂不绘制趋势图；请查看下方覆盖表。{singleVisible.length&&<div style={{marginTop:6}}>单点序列：{singleVisible.map(item=>item.name).join('、')}</div>}</div><div className="legend">{dataSeries.map(item=><button key={item.code} className={hidden[item.code]?'off':''} onClick={()=>setHidden(current=>({...current,[item.code]:!current[item.code]}))}><i style={{background:item.color}}/>{item.name}{item.rows.length<2?' · 仅1期':''}</button>)}</div></div>;
+  if(!visible.length)return <div className="chart" ref={chartRef}><div className="chart-head"><div className="chart-title">{definition.title}</div><div className="chart-sub">单位：{unit}</div></div><div className="empty" style={{marginTop:10}}>全部序列已隐藏，点击下方图例恢复。</div><div className="legend">{dataSeries.map(item=><button key={item.code} className="off" onClick={()=>setHidden(current=>({...current,[item.code]:false}))}><i style={{background:item.color}}/>{item.name}</button>)}</div></div>;
+  if(!trendVisible.length)return <div className="chart" ref={chartRef}><div className="chart-head"><div><div className="chart-title">{definition.title}</div>{(definition.subtitle||definition.note)&&<div className="chart-sub">{definition.subtitle||definition.note}</div>}</div><div className="chart-sub">单位：{unit}</div></div><div className="empty" style={{marginTop:10}}>当前筛选范围内可比观测少于 2 期，暂不绘制趋势图；请查看下方覆盖表。{singleVisible.length&&<div style={{marginTop:6}}>单点序列：{singleVisible.map(item=>item.name).join('、')}</div>}</div><div className="legend">{dataSeries.map(item=><button key={item.code} className={hidden[item.code]?'off':''} onClick={()=>setHidden(current=>({...current,[item.code]:!current[item.code]}))}><i style={{background:item.color}}/>{item.name}{item.rows.length<2?' · 仅1期':''}</button>)}</div></div>;
   const allRows=trendVisible.flatMap(item=>item.rows.map(row=>({...row,code:item.code})));
-  const W=760,H=225,L=58,R=16,T=18,B=27;const xValues=allRows.map(row=>periodIndex(row.period));let minX=Math.min(...xValues),maxX=Math.max(...xValues);if(minX===maxX){minX-=1;maxX+=1}
-  let vals=allRows.map(row=>Number(row.value)).filter(Number.isFinite);if(definition.threshold!==null&&definition.threshold!==undefined)vals.push(Number(definition.threshold));let minY=Math.min(...vals),maxY=Math.max(...vals);if(axisMode==='zero'){minY=Math.min(0,minY);maxY=Math.max(0,maxY)}if(minY===maxY){minY-=1;maxY+=1}const pad=(maxY-minY)*.08;minY-=pad;maxY+=pad;
+  const W=chartWidth,H=225,R=16,T=18,B=27;const xValues=allRows.map(row=>periodIndex(row.period));let minX=Math.min(...xValues),maxX=Math.max(...xValues);if(minX===maxX){minX-=1;maxX+=1}
+  const [minY,maxY]=chartDomain(allRows.map(row=>row.value),definition.threshold,axisMode);
+  const tickDigits=unit==='家'?0:axisDigits(maxY-minY);
+  const tickValues=axisTickValues(minY,maxY,tickDigits);
+  const L=Math.max(64,Math.min(125,Math.max(0,...tickValues.map(value=>fmt(value,tickDigits).length))*8+10));
   const sx=x=>L+(W-L-R)*(x-minX)/(maxX-minX),sy=y=>T+(H-T-B)*(1-(y-minY)/(maxY-minY));
   const path=rows=>rows.map((row,index)=>`${index?'L':'M'}${sx(periodIndex(row.period)).toFixed(1)},${sy(Number(row.value)).toFixed(1)}`).join(' ');
   const dates=[...new Set(allRows.map(row=>row.period))].sort();const onMove=event=>{const rect=event.currentTarget.getBoundingClientRect();const x=(event.clientX-rect.left)/rect.width*W;const target=minX+(Math.max(L,Math.min(W-R,x))-L)/(W-L-R)*(maxX-minX);let best=dates[0],dist=Infinity;dates.forEach(p=>{const d=Math.abs(periodIndex(p)-target);if(d<dist){dist=d;best=p}});setHover(best)};
-  const hx=hover?sx(periodIndex(hover)):null;const tipLeft=hx===null?0:Math.max(10,Math.min(90,hx/W*100));
-  return <div className="chart"><div className="chart-head"><div><div className="chart-title">{definition.title}</div>{(definition.subtitle||definition.note)&&<div className="chart-sub">{definition.subtitle||definition.note}</div>}{singleVisible.length>0&&<div className="chart-sub">当前范围内仅 1 期的序列未绘制趋势：{singleVisible.map(item=>item.name).join('、')}。</div>}</div><div className="chart-sub">单位：{unit}</div></div>
+  const hx=hover?sx(periodIndex(hover)):null;const tipStyle=hx!==null&&hx>W/2?{right:8,left:'auto'}:{left:8,right:'auto'};
+  return <div className="chart" ref={chartRef}><div className="chart-head"><div style={{minWidth:0}}><div className="chart-title">{definition.title}</div>{(definition.subtitle||definition.note)&&<div className="chart-sub">{definition.subtitle||definition.note}</div>}{singleVisible.length>0&&<div className="chart-sub">当前范围内仅 1 期的序列未绘制趋势：{singleVisible.map(item=>item.name).join('、')}。</div>}</div><div className="chart-sub" style={{flexShrink:0,whiteSpace:'nowrap'}}>单位：{unit}</div></div>
     <div style={{position:'relative'}}><svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="chart-svg" onMouseMove={onMove} onMouseLeave={()=>setHover(null)}>
-      {[minY,(minY+maxY)/2,maxY].map((value,index)=><g key={index}><line x1={L} x2={W-R} y1={sy(value)} y2={sy(value)} stroke="rgba(34,50,75,.7)" strokeWidth=".7"/><text x={L-7} y={sy(value)+3} textAnchor="end" fill="#8ea0b8" fontSize="9">{fmt(value)}</text></g>)}
-      {definition.threshold!==null&&definition.threshold!==undefined&&<g><line x1={L} x2={W-R} y1={sy(definition.threshold)} y2={sy(definition.threshold)} stroke="#f4ad45" strokeDasharray="5,4" strokeWidth="1"/><text x={W-R-2} y={sy(definition.threshold)-4} textAnchor="end" fill="#f4ad45" fontSize="9">荣枯线 {definition.threshold}</text></g>}
-      {trendVisible.map(item=>segments(item.rows,item.frequency).map((part,index)=><path key={item.code+'-'+index} d={path(part)} fill="none" stroke={item.color} strokeWidth="1.8"/>))}
+      {tickValues.map((value,index)=><g key={index} className="axis-tick" data-value={value}><line x1={L} x2={W-R} y1={sy(value)} y2={sy(value)} stroke="rgba(34,50,75,.7)" strokeWidth=".7"/><text x={L-7} y={sy(value)+4} textAnchor="end" fill="#8ea0b8" fontSize="13">{fmt(value,tickDigits)}</text></g>)}
+      {definition.threshold!==null&&definition.threshold!==undefined&&<g><line x1={L} x2={W-R} y1={sy(definition.threshold)} y2={sy(definition.threshold)} stroke="#f4ad45" strokeDasharray="5,4" strokeWidth="1"/><text x={W-R-2} y={sy(definition.threshold)-4} textAnchor="end" fill="#f4ad45" fontSize="13">荣枯线 {definition.threshold}</text></g>}
+      {[...new Set([...(definition.breaks||[]),...Object.values(definition.series_breaks||{}).flat()])].filter(period=>periodIndex(period)>minX&&periodIndex(period)<=maxX).map(period=><g key={period} className="method-break" data-period={period}><line x1={sx(periodIndex(period))} x2={sx(periodIndex(period))} y1={T} y2={H-B} stroke="#f4ad45" strokeDasharray="2,5" strokeWidth=".8"/><text x={Math.min(W-R-4,sx(periodIndex(period))+4)} y={T+13} textAnchor={sx(periodIndex(period))>W-155?'end':'start'} fill="#f4ad45" fontSize="13">口径修订 {period}</text></g>)}
+      {trendVisible.map(item=>segments(item.rows,item.frequency,[...(definition.breaks||[]),...((definition.series_breaks||{})[item.code]||[])]).map((part,index)=><g key={item.code+'-'+index}><path className="series-segment" data-series={item.code} data-start={part[0].period} data-end={part[part.length-1].period} d={path(part)} fill="none" stroke={item.color} strokeWidth="1.8"/>{part.length===1&&<circle cx={sx(periodIndex(part[0].period))} cy={sy(Number(part[0].value))} r="2" fill={item.color}/>}</g>))}
       {hover&&<line x1={hx} x2={hx} y1={T} y2={H-B} stroke="#a8b6c8" strokeWidth=".7" strokeDasharray="3,3"/>}
-      <text x={L} y={H-7} fill="#8ea0b8" fontSize="9">{dates[0]}</text><text x={W-R} y={H-7} textAnchor="end" fill="#8ea0b8" fontSize="9">{dates[dates.length-1]}</text>
-    </svg>{hover&&<div className="tip" style={{left:tipLeft+'%'}}><b>{hover}</b>{trendVisible.map(item=>{const row=item.rows.find(value=>value.period===hover);return row?<div key={item.code}><span style={{color:item.color}}>●</span> {item.name}：{fmt(row.value)} {unit}</div>:null})}</div>}</div>
+      <text x={L} y={H-7} fill="#8ea0b8" fontSize="13">{dates[0]}</text><text x={W-R} y={H-7} textAnchor="end" fill="#8ea0b8" fontSize="13">{dates[dates.length-1]}</text>
+    </svg>{hover&&<div className="tip" style={{...tipStyle,transform:'none',whiteSpace:'normal',maxWidth:'calc(100% - 16px)',boxSizing:'border-box'}}><b>{hover}</b>{trendVisible.map(item=>{const row=item.rows.find(value=>value.period===hover);return row?<div key={item.code}><span style={{color:item.color}}>●</span> {item.name}：{fmt(row.value,observationDigits(item.code))} {unit}</div>:null})}</div>}</div>
     <div className="legend">{dataSeries.map(item=><button key={item.code} className={hidden[item.code]?'off':''} onClick={()=>setHidden(current=>({...current,[item.code]:!current[item.code]}))}><i style={{background:item.color}}/>{item.name}{item.rows.length<2?' · 仅1期':''}</button>)}</div>
   </div>
 }
@@ -71,16 +168,17 @@ function App(){
   const latestIndex=useMemo(()=>{if(!payload)return null;const values=Object.values(payload.series).flat().map(row=>periodIndex(row.period)).filter(value=>value!==null);return values.length?Math.max(...values):null},[payload]);
   let startIndex=start?periodIndex(start):null,endIndex=end?periodIndex(end):null;if(!start&&years&&latestIndex!==null)startIndex=latestIndex-years*12+1;
   if(!payload)return <div className="wrap"><div className={message?'notice error':'empty'}>{message||'正在加载中国宏观数据…'}</div></div>;
-  const group=payload.groups.find(item=>item.code===groupCode)||payload.groups[0];const groupCodes=new Set(group.charts.flatMap(chart=>chart.series.map(code=>resolvedCode(code,currency))));const coverage=payload.coverage.filter(row=>groupCodes.has(row.code));
-  const cardCodes={growth:['CN_GDP_Q_REAL_YOY','CN_IP_YOY'],demand:['CN_RETAIL_YOY','CN_FAI_YTD_YOY'],prices:['CN_CPI_YOY','CN_PMI_MFG'],employment:['CN_UNEMP_SURVEY','CN_EMPLOYED_YOY_DERIVED','CN_DISPOSABLE_INCOME_YOY_DERIVED'],demography:['CN_BIRTHS','CN_MARRIAGES','CN_DIVORCES_TOTAL_DERIVED'],trade:[`CN_GACC_EXPORT_${currency}_MONTH_YOY`,`CN_GACC_IMPORT_${currency}_MONTH_YOY`],capital:[`CN_MOFCOM_FDI_${currency}_YTD_YOY`,`CN_SAFE_XB_NET_${currency}`]}[groupCode]||[];
+  const group=annualComparabilityGroup(employmentGroup(capitalGroup(bankingGroup(payload.groups.find(item=>item.code===groupCode)||payload.groups[0],payload),payload),payload),payload);const groupCodes=new Set(group.charts.flatMap(chart=>chart.series.map(code=>resolvedCode(code,currency))));const coverage=payload.coverage.filter(row=>groupCodes.has(row.code));
+  const cardCodes={growth:['CN_GDP_Q_REAL_YOY','CN_IP_YOY'],enterprise:['CN_IND_PROFIT_YTD_YOY','CN_IND_REVENUE_YTD_YOY','CN_IND_PROFIT_MARGIN_YTD','CN_CAPACITY_UTILIZATION'],banking:['CN_BANK_NPL_RATIO','CN_BANK_NIM_YTD','CN_BANK_PROVISION_COVERAGE','CN_BANK_CAPITAL_ADEQUACY'],demand:['CN_RETAIL_YOY','CN_FAI_YTD_YOY'],prices:['CN_CPI_YOY','CN_CPI_CORE_YOY','CN_PMI_MFG'],employment:['CN_UNEMP_SURVEY','CN_EMPLOYED_YOY_DERIVED','CN_DISPOSABLE_INCOME_YOY_DERIVED'],demography:['CN_BIRTHS','CN_MARRIAGES','CN_DIVORCES_TOTAL'],trade:[`CN_GACC_EXPORT_${currency}_MONTH_YOY`,`CN_GACC_IMPORT_${currency}_MONTH_YOY`],capital:[`CN_MOFCOM_FDI_${currency}_YTD_YOY`,`CN_SAFE_XB_NET_${currency}`]}[groupCode]||[];
   const activeCards=cardCodes.map(code=>{const rows=payload.series[code]||[],row=rows[rows.length-1],meta=payload.metrics[code]||{name:code,unit:''};return row?{code,label:meta.name,value:row.value,unit:row.unit||meta.unit,period:row.period,data_status:row.data_status,evidence_tier:row.evidence_tier,source_name:row.source_name,source_url:row.source_url,release_date:row.release_date,retrieved_at:row.retrieved_at,release_date_not_provided:row.release_date_not_provided}:{code,label:meta.name,value:null,unit:meta.unit,period:null,data_status:'missing',evidence_tier:'缺失'}});
-  function exportCsv(){const rows=[];group.charts.forEach(chart=>chart.series.forEach(template=>{const code=resolvedCode(template,currency),meta=payload.metrics[code]||{name:code,unit:''};(payload.series[code]||[]).forEach(row=>{const idx=periodIndex(row.period);if((startIndex===null||idx>=startIndex)&&(endIndex===null||idx<=endIndex))rows.push([code,meta.name,row.period,row.value,row.unit||meta.unit,row.data_status,row.evidence_tier||statusLabel(row.data_status),row.source_name,row.source_url,row.release_date||'',row.retrieved_at||'',row.release_date_not_provided??'',row.release_date_reason||''])})}));const esc=value=>'"'+String(value??'').replaceAll('"','""')+'"';const csv='\ufeff'+[['indicator_code','indicator_name','period','value','unit','data_status','evidence_tier','source_name','source_url','release_date','retrieved_at','release_date_not_provided','release_date_reason'],...rows].map(row=>row.map(esc).join(',')).join('\r\n');const link=document.createElement('a');link.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));link.download=`china_macro_${group.code}_${currency}.csv`;link.click();URL.revokeObjectURL(link.href)}
+  function exportCsv(){const rows=[];group.charts.forEach(chart=>chart.series.forEach(template=>{const code=resolvedCode(template,currency),meta=payload.metrics[code]||{name:code,unit:''};(payload.series[code]||[]).forEach(row=>{const idx=periodIndex(row.period);if((startIndex===null||idx>=startIndex)&&(endIndex===null||idx<=endIndex))rows.push([code,meta.name,row.period,row.value,row.unit||meta.unit,row.data_status,row.evidence_tier||statusLabel(row.data_status),row.source_name,row.source_url,row.release_date||'',row.retrieved_at||'',row.release_date_not_provided??'',row.release_date_reason||'',seriesComparabilityNote(chart,code,row)])})}));const esc=value=>'"'+String(value??'').replaceAll('"','""')+'"';const csv='\ufeff'+[['indicator_code','indicator_name','period','value','unit','data_status','evidence_tier','source_name','source_url','release_date','retrieved_at','release_date_not_provided','release_date_reason','series_comparability_note'],...rows].map(row=>row.map(esc).join(',')).join('\r\n');const link=document.createElement('a');link.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));link.download=`china_macro_${group.code}_${currency}.csv`;link.click();URL.revokeObjectURL(link.href)}
   return <div className="wrap"><div className="hero"><div><h1>中国宏观经济、人口与家庭</h1><div className="sub">国家统计局 + 民政部 + 海关总署 + 商务部 + 国家外汇管理局 · 经核验整理快照 · 来源层级逐行标注 · 缺失不插值</div></div><div className="actions"><button className="btn primary" disabled={busy} onClick={update}>{busy?'同步中…':'同步本地整理快照'}</button><label className="check"><input type="checkbox" checked={fullHistory} onChange={event=>setFullHistory(event.target.checked)}/> 海关/商务部历史回填（2015起）</label><button className="btn" onClick={exportCsv}>导出当前板块 CSV</button></div></div>
     {message&&<div className={message.includes('失败')?'notice error':'notice'}>{message}</div>}
     <div className="toolbar"><div className="controls"><span className="control-label">期间</span>{[3,5,10,null].map(value=><button key={String(value)} className={'btn '+(years===value&&!start?'active':'')} onClick={()=>{setYears(value);setStart('');setEnd('')}}>{value?value+'年':'全部'}</button>)}<input type="month" value={start} onChange={event=>{setStart(event.target.value);setYears(null)}}/><span className="muted">至</span><input type="month" value={end} onChange={event=>setEnd(event.target.value)}/></div><div className="switches"><span className="control-label">币种</span>{payload.currency_options.map(item=><button key={item.code} className={'btn '+(currency===item.code?'active':'')} onClick={()=>setCurrency(item.code)}>{item.label}</button>)}<span className="control-label">纵轴</span><button className={'btn '+(axisMode==='auto'?'active':'')} onClick={()=>setAxisMode('auto')}>自动</button><button className={'btn '+(axisMode==='zero'?'active':'')} onClick={()=>setAxisMode('zero')}>从零</button></div></div>
     <div className="tabs">{payload.groups.map(item=><button key={item.code} className={'tab '+(item.code===group.code?'active':'')} onClick={()=>setGroupCode(item.code)}>{item.title}</button>)}</div>
     <div className="section-head"><h2>{group.title}</h2><div className="sub">{group.description}</div></div>
-    {!!activeCards.length&&<div className="kpis">{activeCards.map(card=><div className="kpi" key={card.code}><div className="kpi-label" title={card.label}>{card.label}<span className={'badge '+(card.data_status||'missing')}>{statusLabel(card.data_status)}</span></div><div className="kpi-value">{fmt(card.value)} <span style={{fontSize:11}}>{card.unit||''}</span></div><div className="kpi-meta">{card.period||'暂无'} · {card.evidence_tier||'缺失'} · {card.source_name||'—'}{card.source_url&&<> · <a href={card.source_url} target="_blank" rel="noreferrer" style={{color:'#9ec3ff'}}>原文</a></>}<br/>{sourceTiming(card)}</div></div>)}</div>}
+    {payload.data_quality&&<details className="source-panel"><summary>当前板块完整度：{[...groupCodes].filter(code=>payload.data_quality.indicators[code]?.n_obs>0).length} / {[...groupCodes].filter(code=>payload.data_quality.indicators[code]).length} 条原始序列已有数据 · 点击查看缺口</summary><div className="table-wrap"><table><thead><tr><th>指标</th><th>观测数</th><th>最新资料期</th><th>区间内缺期数</th><th>缺期示例</th></tr></thead><tbody>{[...groupCodes].map(code=>payload.data_quality.indicators[code]).filter(Boolean).map(row=><tr key={row.code}><td>{row.name}</td><td>{row.n_obs}</td><td>{row.end_period||'缺失'}</td><td>{row.internal_gap_count??'不按日历日判缺'}</td><td>{row.n_obs===0?'尚未取得真实值':row.n_obs===1?'仅1期，不形成趋势':row.missing_periods.join('、')||'实际观测区间内无缺期'}</td></tr>)}</tbody></table></div><div className="muted">仅核对首次实际观测至最新观测；不代表更早历史完整。1—2月合并不补1月，日周频不把休市日判为缺失。</div></details>}
+    {!!activeCards.length&&<div className="kpis">{activeCards.map(card=><div className="kpi" key={card.code}><div className="kpi-label" title={card.label}>{card.label}<span className={'badge '+(card.data_status||'missing')}>{statusLabel(card.data_status)}</span></div><div className="kpi-value">{fmt(card.value,observationDigits(card.code))} <span style={{fontSize:11}}>{card.unit||''}</span></div><div className="kpi-meta">{card.period||'暂无'} · {card.evidence_tier||'缺失'} · {card.source_name||'—'}{card.source_url&&<> · <a href={card.source_url} target="_blank" rel="noreferrer" style={{color:'#9ec3ff'}}>原文</a></>}<br/>{sourceTiming(card)}</div></div>)}</div>}
     <div className="chart-grid">{group.charts.map(chart=><LineChart key={chart.code+'-'+currency} definition={chart} payload={payload} currency={currency} startIndex={startIndex} endIndex={endIndex} axisMode={axisMode}/>)}</div>
     <div className="source-panel"><div className="source-head"><h3>当前板块数据覆盖与来源</h3><span className="muted">{coverage.length} 条序列</span></div><div className="table-wrap"><table><thead><tr><th>指标</th><th>频率</th><th>单位</th><th>起点</th><th>最新资料期</th><th>N</th><th>状态</th><th>证据层级</th><th>最新来源</th><th>来源发布日期</th><th>获取时间</th></tr></thead><tbody>{coverage.map(row=><tr key={row.code}><td title={row.code}>{row.name}</td><td>{row.frequency}</td><td>{row.unit}</td><td>{row.start_period}</td><td>{row.end_period}</td><td>{row.n_obs}</td><td>{statusLabel(row.latest_status)}</td><td>{row.latest_source_tier||'未分类'}</td><td>{row.source_url?<a href={row.source_url} target="_blank" rel="noreferrer">{row.source_name||'原文'}</a>:'—'}</td><td>{row.latest_release_date||'未提供'}</td><td>{row.latest_retrieved_at||'未提供'}</td></tr>)}</tbody></table></div></div>
     <div className="method"><b>口径说明：</b>{payload.warnings.map((warning,index)=><span key={index}>{index?'；':''}{warning}</span>)}。<br/><b>本地同步时间：</b>{payload.local_sync_at||payload.updated_at||'—'}；<b>来源发布日期/获取时间：</b>按序列在上表逐行显示，未提供时保留“未提供”。本页是数据观察层；相关不代表因果，跨体系数值不机械相减。</div>

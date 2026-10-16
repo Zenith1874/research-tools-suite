@@ -19,11 +19,13 @@ from bs4 import BeautifulSoup
 
 from .base import (
     AdapterResponse,
+    CrawlBudgetExhaustedError,
     SourceAdapter,
     SourceJob,
     absolute_url,
     dedupe_source_jobs,
     now_utc,
+    reported_result_total,
     visible_text,
 )
 
@@ -311,6 +313,39 @@ def _label_value(text, label):
     return re.sub(r"\s+", " ", match.group(1)).strip(" ,;:-") if match else None
 
 
+# A university named inside running prose. Every token before the keyword, and
+# every token in a trailing ``of``/``at`` phrase, has to be capitalised -- that
+# is what makes the match stop at the first ordinary word (``invites``,
+# ``consistently``, ``is seeking``) instead of running to the end of the
+# sentence.
+_UNIVERSITY_NAME_RE = re.compile(
+    r"(?:(?!School\b|Department\b|Faculty\b)[A-Z][\w&.'’-]*,\s+(?=The\s+(?:State\s+)?University\b))?"
+    r"(?:[A-Z][\w&.'’-]*\s+){0,5}"
+    r"(?:University|College|Institute|Polytechnic)"
+    r"(?:\s+of\s+[A-Z][\w&.'’-]*(?:\s+[A-Z][\w&.'’-]*){0,3})?"
+    r"(?:\s+at\s+[A-Z][\w&.'’-]*(?:\s+[A-Z][\w&.'’-]*){0,3})?"
+)
+
+
+def _university_name(text):
+    """Pull a university's name out of a sentence, or return nothing.
+
+    The clause fallback below used to return a whole clause when it merely
+    *contained* the word University. That is how the institution field came to
+    hold "The Accounting and Information Systems Department of Rutgers Business
+    School, Rutgers, The State University of New Jersey, is seeking a
+    full-time, tenure-track Assistant Professor" -- which matched no entity, so
+    a posting whose employer the board printed plainly showed on the site as
+    "Unknown institution".
+
+    Returning nothing is the better failure. An unresolved institution is
+    honestly unknown; a sentence in that field is a wrong answer that also
+    guarantees the row can never match an entity.
+    """
+    match = _UNIVERSITY_NAME_RE.search(" ".join(str(text or "").split()))
+    return (match.group(0).strip(" ,:-") or None) if match else None
+
+
 def _detail_institution(organization, description):
     """Prefer an explicit university named in a school description."""
     organization = " ".join(str(organization or "").split()).strip(" ,;:-")
@@ -333,8 +368,9 @@ def _detail_institution(organization, description):
             return parent_match.group(1).strip(" ,:-")[:180]
     for clause in re.split(r"[.;]", description):
         candidate = re.split(r"\bpart\s+of\b", clause, maxsplit=1, flags=re.I)[-1].strip(" ,:-")
-        if re.search(r"\b(?:University|College|Institute|Polytechnic)\b", candidate, re.I):
-            return candidate[:180]
+        named = _university_name(candidate)
+        if named:
+            return named
     # A board may expose only a school brand (for example ``emlyon business
     # school``).  Keep that text as school evidence, but do not promote it to
     # a university/institution without an explicit parent entity.
@@ -362,6 +398,28 @@ def _detail_application_url(soup, source_url):
     return None
 
 
+# How much of a detail page's text we keep. The previous 2,000 characters held
+# a posting's opening -- school, rank, research area -- and stopped before the
+# part that states work authorization, language requirements and sponsorship,
+# which postings put at the end next to the EEO paragraph. Every body-derived
+# field was therefore near zero regardless of how good its parser was.
+# How much of a posting's text to keep. The cap exists so a parse failure
+# cannot dump an entire page of navigation into the field -- it is a runaway
+# guard, not a storage budget.
+#
+# It has now been raised twice for the same reason, and the second time there
+# was direct evidence. At 8,000, 57 stored postings were cut off, losing
+# 175,655 characters between them; re-extracting them from the raw archive
+# changed the visa verdict on six, and four of those turned out to say plainly
+# that sponsorship is NOT available -- the single sentence a candidate who
+# needs sponsorship most needs to see. Work-authorisation wording sits at the
+# end of a posting, so a tail-truncating cap loses exactly the wrong sentence.
+#
+# The longest real posting observed is 16,948 characters. 50,000 leaves room
+# for the ones we have not seen while still bounding a runaway parse.
+DETAIL_TEXT_LIMIT = 50000
+
+
 def _parse_public_detail(html, source, detail_url):
     """Parse only structured/labeled fields from a public board detail page."""
     soup = BeautifulSoup(html, "html.parser")
@@ -370,7 +428,7 @@ def _parse_public_detail(html, source, detail_url):
     description = _markup_text(schema.get("description")) if schema else None
     if not description:
         description = _label_value(page_text, "Description")
-    description = description or page_text[:2000]
+    description = description or page_text[:DETAIL_TEXT_LIMIT]
     organization = None
     if schema and isinstance(schema.get("hiringOrganization"), dict):
         organization = schema["hiringOrganization"].get("name")
@@ -446,7 +504,7 @@ def _parse_public_detail(html, source, detail_url):
         "school": school,
         "department": " ".join(str(department or "").split()).strip() or None,
         "location": " ".join(str(location or "").split()).strip() or None,
-        "description": description[:2000] if description else None,
+        "description": description[:DETAIL_TEXT_LIMIT] if description else None,
         "posted": _iso_day_month_year(str(posted).strip()) if posted else None,
         "deadline": str(deadline).strip() if deadline else None,
         "valid_through": str((schema or {}).get("validThrough") or "").strip() or None,
@@ -520,6 +578,7 @@ def _enrich_public_details(adapter, response, parser, budget):
     jobs = list(response.jobs)
     used = 0
     errors = 0
+    throttled = None
     for index, job in enumerate(jobs):
         if used >= budget:
             break
@@ -529,19 +588,35 @@ def _enrich_public_details(adapter, response, parser, budget):
             if parsed:
                 jobs[index] = _merge_public_detail(job, parsed)
             used += 1
+        except CrawlBudgetExhaustedError as exc:
+            # Stop enriching rather than asking once per remaining job: the
+            # origin declared a pace this run cannot keep.
+            throttled = str(exc)
+            break
         except Exception:
             errors += 1
         if used < budget:
             time.sleep(max(0.0, float(getattr(adapter, "detail_delay", 0.35))))
     notes = list(response.notes or [])
     notes.append(f"bounded public detail enrichment: {used}/{budget} page(s) attempted")
+    if throttled:
+        notes.append(f"detail enrichment stopped early: {throttled}")
     if errors:
         notes.append(f"{errors} public detail page(s) failed; listing records were retained")
-    return AdapterResponse(dedupe_source_jobs(jobs), pages_fetched=response.pages_fetched + used, notes=notes)
+    return AdapterResponse(dedupe_source_jobs(jobs), pages_fetched=response.pages_fetched + used,
+                           notes=notes, reported_total=response.reported_total,
+                           coverage_complete=response.coverage_complete,
+                           # Detail pages are not listing pages; preserve the
+                           # reach the listing loop actually achieved.
+                           listing_pages=response.listing_pages)
 
 
 class _PagedBoardAdapter(SourceAdapter):
     """Small common page loop for boards with an HTML next-page link."""
+
+    # _fetch_pages follows the next-page link the board itself publishes, so a
+    # second page is genuinely reachable for every adapter built on this base.
+    paginates = True
 
     def _fetch_pages(self, parser):
         jobs = []
@@ -551,7 +626,15 @@ class _PagedBoardAdapter(SourceAdapter):
         notes = []
         while url and pages < self.max_pages and url not in seen_urls and len(jobs) < self.max_items:
             seen_urls.add(url)
-            response = self.request(url)
+            try:
+                response = self.request(url)
+            except CrawlBudgetExhaustedError as exc:
+                # The board asked for a pace we cannot keep inside a run. Stop
+                # and say so; an unread page is not an empty board.
+                if pages == 0:
+                    raise
+                notes.append(f"Stopped after {pages} page(s): {exc}")
+                break
             pages += 1
             soup = BeautifulSoup(response.text, "html.parser")
             page_jobs = parser(soup, response.url)
@@ -563,6 +646,46 @@ class _PagedBoardAdapter(SourceAdapter):
         if len(jobs) > self.max_items:
             jobs = jobs[: self.max_items]
         return AdapterResponse(dedupe_source_jobs(jobs), pages_fetched=pages, notes=notes)
+
+
+def parse_madgex_listing(html, source_name, base_url, page_url=None, max_items=100,
+                         job_path=r"/job/"):
+    """Parse one Madgex-hosted listing page.
+
+    Chronicle, Inside Higher Ed, the AFA career centre and THE Unijobs are all
+    the same hosted product and publish identical ``li.lister__item`` markup, so
+    the parser is shared rather than copied per board: a markup change upstream
+    then has one place to be fixed instead of four that can drift apart.
+
+    ``job_path`` is the one thing tenants do vary -- most use ``/job/`` while
+    THE uses ``/unijobs/listing/`` -- so it is a parameter rather than a reason
+    to fork the parser.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    jobs = []
+    for item in soup.select("li.lister__item"):
+        link = _first_link(item.select_one("h3"), job_path) or _first_link(item, job_path)
+        title = _text(item.select_one("h3"))
+        if not link or not title:
+            continue
+        meta = {}
+        for node in item.select("li.lister__meta-item"):
+            classes = " ".join(node.get("class") or [])
+            meta[classes] = _text(node)
+        description = _text(item.select_one(".lister__description"))
+        employer = next((value for key, value in meta.items() if "recruiter" in key), "")
+        location = next((value for key, value in meta.items() if "location" in key), None)
+        salary = next((value for key, value in meta.items() if "salary" in key), None)
+        url = urljoin(page_url or base_url, str(link.get("href") or "").strip())
+        jobs.append(_job(
+            source_name, url, title, employer or "Unknown institution",
+            location=location, description=description, salary=salary,
+            source_job_id=re.sub(r"^item-", "", str(item.get("id") or ""), flags=re.I) or None,
+            school_context="source_employer",
+        ))
+        if len(jobs) >= max_items:
+            break
+    return dedupe_source_jobs(jobs)
 
 
 class ChronicleAdapter(_PagedBoardAdapter):
@@ -577,31 +700,8 @@ class ChronicleAdapter(_PagedBoardAdapter):
 
     @staticmethod
     def parse_html(html, page_url=None, max_items=100):
-        soup = BeautifulSoup(html, "html.parser")
-        jobs = []
-        for item in soup.select("li.lister__item"):
-            link = item.select_one("h3 a[href*='/job/']") or _first_link(item, r"/job/")
-            title = _text(item.select_one("h3"))
-            if not link or not title:
-                continue
-            meta = {}
-            for node in item.select("li.lister__meta-item"):
-                classes = " ".join(node.get("class") or [])
-                meta[classes] = _text(node)
-            description = _text(item.select_one(".lister__description"))
-            employer = next((value for key, value in meta.items() if "recruiter" in key), "")
-            location = next((value for key, value in meta.items() if "location" in key), None)
-            salary = next((value for key, value in meta.items() if "salary" in key), None)
-            url = urljoin(page_url or ChronicleAdapter.base_url, str(link.get("href") or "").strip())
-            jobs.append(_job(
-                ChronicleAdapter.name, url, title, employer or "Unknown institution",
-                location=location, description=description, salary=salary,
-                source_job_id=re.sub(r"^item-", "", str(item.get("id") or ""), flags=re.I) or None,
-                school_context="source_employer",
-            ))
-            if len(jobs) >= max_items:
-                break
-        return dedupe_source_jobs(jobs)
+        return parse_madgex_listing(html, ChronicleAdapter.name, ChronicleAdapter.base_url,
+                                    page_url, max_items)
 
     def fetch(self):
         response = self._fetch_pages(lambda soup, url: self.parse_html(soup.decode(), url, self.max_items))
@@ -611,6 +711,113 @@ class ChronicleAdapter(_PagedBoardAdapter):
     def parse_detail_html(html, detail_url=None):
         fields = _parse_public_detail(html, ChronicleAdapter.name, detail_url or ChronicleAdapter.base_url)
         return _detail_source_job(ChronicleAdapter.name, detail_url or ChronicleAdapter.base_url, fields) if fields.get("title") else None
+
+
+class AFAFinanceAdapter(_PagedBoardAdapter):
+    """American Finance Association career centre.
+
+    Finance is one of the largest business disciplines and had no association
+    source: FMA answers this fetcher with HTTP 403. AFA runs on the same
+    Madgex platform as Chronicle and Inside Higher Ed, so the shared listing
+    parser reads it unchanged (verified against the live board 2026-08-29:
+    20 cards on page one, with employer, location and salary present).
+    """
+
+    name = "afa_finance"
+    adapter_name = "afa_finance"
+    region = "Global"
+    base_url = "https://careers.afajof.org/jobs/"
+    priority = 18
+    max_items = 100
+    detail_budget = 8
+    detail_delay = 0.35
+
+    @staticmethod
+    def parse_html(html, page_url=None, max_items=100):
+        return parse_madgex_listing(html, AFAFinanceAdapter.name, AFAFinanceAdapter.base_url,
+                                    page_url, max_items)
+
+    def fetch(self):
+        response = self._fetch_pages(
+            lambda soup, url: self.parse_html(soup.decode(), url, self.max_items))
+        return _enrich_public_details(self, response, self.parse_detail_html, self.detail_budget)
+
+    @staticmethod
+    def parse_detail_html(html, detail_url=None):
+        url = detail_url or AFAFinanceAdapter.base_url
+        fields = _parse_public_detail(html, AFAFinanceAdapter.name, url)
+        return _detail_source_job(AFAFinanceAdapter.name, url, fields) if fields.get("title") else None
+
+
+class AMSMarketingAdapter(SourceAdapter):
+    """Academy of Marketing Science job board.
+
+    Marketing had no association source either: AMA answers with HTTP 403.
+    This board is not Madgex; it publishes unclassed card divs and no
+    pagination, printing its own total instead (21 on 2026-08-29), which the
+    coverage record uses to show whether the single page held everything.
+    """
+
+    name = "ams_marketing"
+    adapter_name = "ams_marketing"
+    region = "Global"
+    base_url = "https://amsweb.mcjobboard.net/jobs"
+    priority = 18
+    max_items = 100
+    paginates = False
+
+    @staticmethod
+    def parse_html(html, page_url=None, max_items=100):
+        soup = BeautifulSoup(html, "html.parser")
+        jobs = []
+        seen = set()
+        for link in soup.find_all("a", href=True):
+            match = re.search(r"/jobs?/(\d+)", str(link.get("href") or ""))
+            title = _text(link)
+            if not match or not title or match.group(1) in seen:
+                continue
+            card = link.find_parent(["li", "article", "div"])
+            if card is None:
+                continue
+            values = [value for value in card.stripped_strings if value.strip()]
+            # The card reads: title, employer, "- City, ST", a material-icon
+            # ligature, then the employment type. The icon name is markup, not
+            # content, so it is dropped rather than recorded as a field.
+            rest = [value for value in values[1:]
+                    if value.casefold() not in {"business_center", "place", "schedule"}]
+            employer = rest[0] if rest else "Unknown institution"
+            location = None
+            for value in rest[1:]:
+                cleaned = re.sub(r"^[-–—\s]+", "", value).strip()
+                if cleaned and re.search(r",\s*[A-Za-z]", cleaned):
+                    location = cleaned
+                    break
+            seen.add(match.group(1))
+            jobs.append(_job(
+                AMSMarketingAdapter.name,
+                urljoin(page_url or AMSMarketingAdapter.base_url, str(link.get("href") or "").strip()),
+                title, employer, location=location,
+                description=" ".join(values[:6]) or None,
+                source_job_id=match.group(1), school_context="source_employer",
+            ))
+            if len(jobs) >= max_items:
+                break
+        return dedupe_source_jobs(jobs)
+
+    def fetch(self):
+        response = self.request(self.base_url)
+        soup = BeautifulSoup(response.text, "html.parser")
+        jobs = self.parse_html(response.text, response.url, self.max_items)
+        reported = reported_result_total(soup)
+        notes = []
+        complete = None
+        if reported is not None:
+            complete = len(jobs) >= reported
+            if not complete:
+                notes.append(f"Observed {len(jobs)} of {reported} results the board reports "
+                             "on its single listing page.")
+        return AdapterResponse(jobs, pages_fetched=1, listing_pages=1, notes=notes,
+                               reported_total=reported, coverage_complete=complete)
 
 
 class AAACareerCenterAdapter(_PagedBoardAdapter):
@@ -891,7 +1098,10 @@ class AcademicJobsOnlineAdapter(SourceAdapter):
         notes = ["AcademicJobsOnline listing pages are broad; downstream role and business evidence gates exclude non-business fields."]
         if errors:
             notes.append(f"{errors} bounded public detail page(s) failed; other records were retained.")
-        return AdapterResponse(dedupe_source_jobs(jobs), pages_fetched=1 + len(jobs), notes=notes)
+        # One listing page plus one detail page per job: the second term is
+        # request volume, not pagination reach.
+        return AdapterResponse(dedupe_source_jobs(jobs), pages_fetched=1 + len(jobs),
+                               notes=notes, listing_pages=1)
 
 
 class AKADEUSAdapter(SourceAdapter):

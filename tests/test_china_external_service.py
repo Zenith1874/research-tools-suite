@@ -11,6 +11,7 @@ from services.china_external_service import (
     parse_gacc_article,
     parse_gacc_title,
     parse_mofcom_fdi_text,
+    quarantine_mofcom_period_mismatches,
     parse_mofcom_odi_text,
     parse_safe_wide_rows,
     upsert_external_observations,
@@ -20,6 +21,32 @@ from services.china_macro_service import ensure_china_macro_tables
 
 
 class ChinaExternalParserTests(unittest.TestCase):
+    def test_fdi_headline_year_beats_later_comparison_year(self):
+        rows = parse_mofcom_fdi_text('2023年全国吸收外资1.1万亿元人民币',
+            '2023年，全国新设立外商投资企业53766家，同比增长39.7%；'
+            '实际使用外资金额11339.1亿元人民币，同比下降8.0%。'
+            '高技术产业占比为37.3%，较2022年全年提升1.2个百分点。', 'https://example')
+        self.assertEqual({row['period'] for row in rows}, {'2023-12'})
+        self.assertEqual(next(row['value'] for row in rows if row['indicator_code']=='CN_MOFCOM_FDI_CNY_YTD'), 11339.1)
+
+    def test_fdi_bare_year_title_keeps_explicit_same_year_body_month(self):
+        rows = parse_mofcom_fdi_text('2026年全国吸收外资情况',
+            '2026年1-8月，全国实际使用外资金额5000亿元人民币，同比下降1.0%。')
+        self.assertEqual({row['period'] for row in rows}, {'2026-08'})
+
+    def test_fdi_original_usd_and_comparable_growth_are_not_exchange_rate_conversion(self):
+        rows = parse_mofcom_fdi_text('2022年全国实际使用外资稳定增长',
+            '2022年，全国实际使用外资金额12326.8亿元人民币，按可比口径同比增长6.3%'
+            '（折合1891.3亿美元，增长8%）。')
+        values = {row['indicator_code']: row['value'] for row in rows}
+        self.assertEqual(values['CN_MOFCOM_FDI_CNY_YTD'], 12326.8)
+        self.assertEqual(values['CN_MOFCOM_FDI_CNY_YTD_YOY'], 6.3)
+        self.assertEqual(values['CN_MOFCOM_FDI_USD_YTD'], 1891.3)
+        self.assertEqual(values['CN_MOFCOM_FDI_USD_YTD_YOY'], 8)
+        cny_only = parse_mofcom_fdi_text('2024年全国吸收外资',
+            '实际使用外资金额8262.5亿元人民币，同比下降27.1%。')
+        self.assertFalse(any('USD' in row['indicator_code'] for row in cny_only))
+
     def test_gacc_dual_currency_title_and_table(self):
         self.assertEqual(
             parse_gacc_title("(1) China's Total Export & Import Values, Jul 2026(in CNY)"),
@@ -148,10 +175,35 @@ class ChinaExternalPersistenceTests(unittest.TestCase):
         count = self.conn.execute('SELECT COUNT(*) FROM china_macro_observations').fetchone()[0]
         self.assertEqual(count, 1)
 
+    def test_wrong_year_is_quarantined_with_original_row_not_deleted(self):
+        wrong = parse_mofcom_fdi_text('2022年全国吸收外资11339.1亿元', '',
+                                     'http://www.mofcom.gov.cn/source.html')[0]
+        upsert_external_observations(self.conn, [wrong])
+        correct = parse_mofcom_fdi_text('2023年全国吸收外资11339.1亿元', '',
+                                       'https://www.mofcom.gov.cn/source.html')[0]
+        self.assertEqual(quarantine_mofcom_period_mismatches(self.conn, [correct]), 1)
+        self.conn.commit()
+        old = self.conn.execute('SELECT value,original_value,data_status FROM china_macro_observations '
+                                'WHERE period=?', ('2022-12',)).fetchone()
+        self.assertEqual(tuple(old), (None, 11339.1, 'invalidated_source_period'))
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM mofcom_period_corrections').fetchone()[0], 1)
+        self.assertEqual(quarantine_mofcom_period_mismatches(self.conn, [correct]), 0)
+        upsert_external_observations(self.conn, [correct])
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM china_macro_observations').fetchone()[0], 2)
+
     def test_empty_dashboard_payload_contract(self):
         payload = build_china_macro_payload(self.path)
         self.assertTrue(payload['success'])
-        self.assertEqual(len(payload['groups']), 7)
+        self.assertEqual(payload['ingestion_runtime']['capture_version'],'nbs-release-evidence-v1')
+        self.assertEqual(len(payload['ingestion_runtime']['parser_code_sha256']),64)
+        self.assertEqual({group['code'] for group in payload['groups']},
+            {'growth','enterprise','banking','demand','prices','employment','demography','trade','capital'})
+        capital=next(group for group in payload['groups'] if group['code']=='capital')
+        accounts=[chart for chart in capital['charts'] if chart['code'].startswith(('safe_bop_','safe_iip_'))]
+        self.assertEqual(len(accounts),8)
+        for chart in accounts:
+            self.assertTrue(chart['series'])
+            self.assertIn('unit',chart)
         self.assertIn('currency_options', payload)
         self.assertIn('coverage', payload)
 

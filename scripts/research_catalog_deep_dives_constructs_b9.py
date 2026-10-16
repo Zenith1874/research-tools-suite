@@ -1,0 +1,476 @@
+# -*- coding: utf-8 -*-
+"""Deep dives for catalog constructs, batch 9 — operations, decision, and control.
+
+The supply-chain and operations outcome variables plus the decision-science and
+analytics constructs. Most of these are measured from the firm's own operational
+systems, which is the recurring source of their measurement problems.
+
+Schema helpers live in ``research_catalog_deep_dives``.
+"""
+
+from research_catalog_deep_dives import D, Debate, P, Pos
+
+CONSTRUCT_DIVES_B9 = dict([
+
+    # ------------------------------------------------------- process flexibility
+    D('process-flexibility',
+      era='Studied in manufacturing strategy from the 1980s; formalized through process-chain models in the 1990s.',
+      era_zh='1980 年代起在制造战略中被研究，1990 年代通过流程链模型形式化。',
+      situation=[
+        P('Operations research optimized for a known demand mix, which produces configurations that perform badly when the mix moves.',
+          '运营研究此前针对已知需求组合进行优化，其产出的配置在组合发生变动时表现很差。'),
+        P('Flexibility named the capability to absorb that movement, which made it a design objective rather than an unmodelled residual.',
+          '柔性命名了吸收这类变动的能力，使它成为设计目标而非未被建模的剩余项。'),
+      ],
+      argument=[
+        P('Flexibility covers volume, mix, and new-product dimensions. They require different investments and a plant strong on one can be weak on another.',
+          '柔性涵盖数量、品种与新产品三个维度。它们需要不同的投资；在某一维度强的工厂可能在另一维度弱。'),
+        P('The chaining result is the central insight: a small number of well-placed cross-links achieves nearly the benefit of total flexibility at a fraction of the cost, provided the links form a long chain rather than isolated pairs.',
+          '链式结构结论是核心洞见：只要交叉联结构成一条长链而非孤立配对，少量位置得当的联结就能以极低成本获得接近完全柔性的收益。'),
+        P('That makes flexibility a question of configuration rather than of quantity, which is what distinguishes it from simply holding more capacity.',
+          '这使柔性成为配置问题而非数量问题——这正是它区别于"单纯持有更多产能"之处。'),
+      ],
+      development=[
+        P('The analysis was extended from plants and products to supply networks and to labour cross-training, where the same chaining logic applies.',
+          '该分析从工厂与产品扩展到供应网络与劳动力交叉培训，同样的链式逻辑在其中适用。'),
+      ],
+      debates=[
+        Debate('Is flexibility a capability or an option?', '柔性是能力还是期权？',
+               [Pos('Capability position',
+                    'It is built through investment in equipment, systems, and skills, and is therefore a durable resource.',
+                    '它通过设备、系统与技能的投资构建，因而是一种持久资源。'),
+                Pos('Option position',
+                    'Its value is entirely contingent on realized uncertainty, so it should be valued as an option rather than as a stock.',
+                    '其价值完全取决于实现的不确定性；因此应当作期权而非存量来估值。')],
+               'The option reading is analytically cleaner and the capability reading is what survey measures actually capture.',
+               '期权解读在分析上更清晰，而问卷指标实际捕捉的是能力解读。'),
+      ],
+      theoretical=[
+        P('Flexibility is valuable only against uncertainty that materializes, so measuring it without measuring the uncertainty faced gives an incomplete account.',
+          '柔性只有在不确定性真正发生时才有价值；不测量所面对的不确定性而只测柔性，解释是不完整的。'),
+        P('The dimensions are combined into one score although a plant can be flexible in volume and rigid in mix.',
+          '各维度被合并为一个分数，尽管工厂可能在数量上柔性而在品种上刚性。'),
+      ],
+      empirical=[
+        P('Survey measures ask managers how flexible their operation is, which conflates capability with recent experience of needing it.',
+          '问卷指标询问管理者其运营有多柔性，这把能力与"近期是否需要用到它"的经历混同。'),
+        P('Objective measures such as changeover time capture volume flexibility well and mix flexibility poorly.',
+          '换型时间等客观指标能较好捕捉数量柔性，对品种柔性捕捉很差。'),
+      ],
+      temporal=[
+        P('Chaining results assume a fixed asset network whose links are set at design time and are costly to change. Where capacity is contracted and can be added or dropped within a planning cycle, the configuration problem the theory solves is re-solved continuously and the long-chain prescription is not the binding design decision.',
+          '链式结论假定资产网络固定，其联结在设计阶段确定且改变代价高昂。当产能可外包、并能在一个计划周期内增减时，理论所求解的配置问题被持续重解，长链建议不再是关键设计决策。'),
+        P('The framework treats flexibility as residing in a firm own assets. Where it is obtained through contracts with shared providers, the same flexibility is available to competitors simultaneously, so it buffers the firm without differentiating it.',
+          '框架把柔性视为存在于企业自有资产之中。当它通过与共享服务商的合同获得时，同样的柔性对竞争者同时可得；它能为企业缓冲，却无法带来差异化。'),
+      ],
+      today=[
+        P('Report the dimension being measured, and measure the uncertainty faced alongside it; flexibility without exposure has no value to estimate.',
+          '应报告所测量的是哪个维度，并同时测量所面对的不确定性——没有暴露的柔性没有可估价值。'),
+        P('Where capacity is contracted rather than owned, say whether the flexibility is exclusive; shared flexibility does not differentiate.',
+          '当产能是外包而非自有时，应说明该柔性是否具有排他性；共享的柔性不构成差异。'),
+      ]),
+
+    # ------------------------------------------------------------- service level
+    D('service-level',
+      era='Central to inventory theory since the 1950s; the standard operational performance target.',
+      era_zh='自 1950 年代起是库存理论的核心，也是标准的运营绩效目标。',
+      situation=[
+        P('Inventory policy requires a target, and cost minimization alone drives stock to zero, which fails customers in ways the cost model does not price.',
+          '库存策略需要一个目标，而单纯的成本最小化会把库存压到零——这以成本模型未定价的方式辜负顾客。'),
+        P('Service level supplies the constraint, which converts an unpriced consequence into an explicit policy choice.',
+          '服务水平提供了这一约束，把未被定价的后果转化为显式的政策选择。'),
+      ],
+      argument=[
+        P('Two definitions are used and differ substantially: cycle service level is the probability of no stockout in a replenishment cycle; fill rate is the fraction of demand met from stock.',
+          '有两种定义且差异显著：周期服务水平是补货周期内不缺货的概率；满足率是从现货满足的需求比例。'),
+        P('Fill rate is the one customers experience, and cycle service level is the one most textbook formulas compute, so the two are frequently confused in practice.',
+          '顾客体验到的是满足率，而多数教科书公式计算的是周期服务水平；实践中二者常被混淆。'),
+        P('Because the relationship with inventory is convex, each increment of service costs more than the last, and targets above a high level are extremely expensive.',
+          '由于它与库存的关系是凸的，服务水平每提升一档的成本都高于前一档；高水平之上的目标极其昂贵。'),
+      ],
+      development=[
+        P('Multi-echelon formulations extended the target across a network, where a high local service level can be achieved while the end customer experience is poor.',
+          '多级库存表述把目标扩展至整个网络——在那里可以实现很高的局部服务水平，而终端顾客体验仍然很差。'),
+      ],
+      debates=[
+        Debate('Should service level be a constraint or a cost?', '服务水平应作为约束还是成本？',
+               [Pos('Constraint position',
+                    'Stockout consequences are hard to price, so setting a target is more defensible than estimating a penalty cost.',
+                    '缺货后果难以定价；设定目标比估计缺货惩罚成本更站得住。'),
+                Pos('Cost position',
+                    'A target set without reference to the actual cost of a stockout allocates inventory arbitrarily across products.',
+                    '不参照实际缺货成本设定的目标，会在各产品之间任意配置库存。')],
+               'Both are used; the constraint form dominates practice because the penalty cost is genuinely unknown.',
+               '两者都在使用；约束形式在实践中占主导，因为惩罚成本确实未知。'),
+      ],
+      theoretical=[
+        P('The measure is defined per product per location, and a customer buying several items experiences the product of the individual levels, which is much lower.',
+          '该指标按产品、按地点定义；而购买多件商品的顾客体验到的是各单项水平的乘积，这要低得多。'),
+        P('It treats all unmet demand as equal, although losing a first-time customer and delaying a routine reorder have very different consequences.',
+          '它把所有未满足需求视为等同，尽管失去新顾客与延迟一次常规补货后果迥异。'),
+      ],
+      empirical=[
+        P('Unmet demand is not observed when a customer does not order, so measured fill rate is computed against demand that was already censored by past stockouts.',
+          '当顾客不下单时未满足的需求不被观察；因此所测满足率是对照"已被过去缺货截断的需求"计算的。'),
+        P('Substitution within the assortment is recorded as a fulfilled order, which overstates service from the customer point of view.',
+          '品类内的替代购买被记为已满足订单，这从顾客角度高估了服务水平。'),
+      ],
+      temporal=[
+        P('The measure assumes a defined assortment held at a location the customer orders from. Where fulfilment is pooled across a network and routed dynamically, per-location service level does not describe what any customer experiences.',
+          '该指标假定在顾客下单的某个地点持有确定的品类。当履约在网络中汇集并动态路由时，按地点计算的服务水平无法描述任何顾客的实际体验。'),
+        P('It was defined when the alternative to availability was waiting. Where an unavailable item is substituted by a recommendation within seconds, the cost of a stockout is a switch to a different product rather than a lost sale, which the target does not represent.',
+          '它成形于"没有现货就只能等待"的时期。当缺货商品在数秒内被推荐替代品补上时，缺货的代价是转向另一产品而非损失一笔销售——这是该目标所无法表达的。'),
+      ],
+      today=[
+        P('State which definition is used. Cycle service level and fill rate are not interchangeable and differ most where it matters.',
+          '应说明使用的是哪一定义。周期服务水平与满足率不可互换，且恰在关键处差异最大。'),
+        P('Correct for censoring before estimating service against demand; unmet demand from past stockouts is missing from the record.',
+          '在对照需求估计服务水平之前应校正截断；过去缺货所导致的未满足需求并未出现在记录中。'),
+      ]),
+
+    # ------------------------------------------------------ inventory performance
+    D('inventory-performance',
+      era='Measured by turnover since early cost accounting; benchmarked empirically from the 1990s.',
+      era_zh='自早期成本会计起以周转率测量，1990 年代起开展经验基准比较。',
+      situation=[
+        P('Inventory is simultaneously an asset that enables service and a cost that ties up capital, and a single measure was needed to express the trade-off.',
+          '库存既是支撑服务的资产，也是占用资本的成本；需要单一指标来表达这一权衡。'),
+        P('Turnover became that measure, and its simplicity is why it persisted despite well-known problems.',
+          '周转率成为该指标；尽管问题众所周知，其简洁性使它得以延续。'),
+      ],
+      argument=[
+        P('Turnover is cost of goods sold divided by average inventory, and higher turnover means capital is recycled faster.',
+          '周转率是销货成本除以平均库存；周转率越高意味着资本回收越快。'),
+        P('Turnover alone is not performance, because it can be raised by cutting stock until service collapses. The trade-off requires reading turnover jointly with service level.',
+          '周转率本身不是绩效，因为可以通过削减库存直到服务崩溃来提高它。这一权衡要求把周转率与服务水平联合解读。'),
+        P('Empirical benchmarking established that turnover varies systematically with margin, capital intensity, and sales surprise, so comparing raw turnover across firms compares business models.',
+          '经验基准研究确立了周转率随毛利率、资本密度与销售意外系统性变化；因此跨企业比较原始周转率，比较的是商业模式。'),
+      ],
+      development=[
+        P('Adjusted turnover measures were developed to make cross-firm comparison meaningful by conditioning on those systematic drivers.',
+          '调整后周转率指标被开发出来，通过对这些系统性驱动因素取条件，使跨企业比较有意义。'),
+      ],
+      debates=[
+        Debate('Does higher turnover indicate better management?', '更高的周转率意味着更好的管理吗？',
+               [Pos('Efficiency position',
+                    'Within a firm over time, rising turnover at constant service reflects genuine improvement in planning and replenishment.',
+                    '在同一企业随时间看，服务水平不变而周转率上升，反映的是计划与补货的真实改善。'),
+                Pos('Comparability critique',
+                    'Across firms, turnover mostly reflects margin and product characteristics, so a ranking measures assortment rather than capability.',
+                    '跨企业看，周转率主要反映毛利率与产品特性；因此排名测的是品类而非能力。')],
+               'Settled: within-firm change is informative and cross-firm level is not, which most benchmarking ignores.',
+               '已确定：企业内部的变化有信息量，跨企业的水平值没有——而多数基准比较忽略了这一点。'),
+      ],
+      theoretical=[
+        P('The construct combines an efficiency objective and a service objective that conflict, and a single ratio cannot express where a firm sits on that trade-off.',
+          '该构念合并了相互冲突的效率目标与服务目标，而单一比率无法表达企业处在这一权衡的什么位置。'),
+        P('Average inventory conceals composition: the same average can be healthy stock or obsolete stock that has not been written off.',
+          '平均库存掩盖了构成：同样的均值可能是健康库存，也可能是尚未核销的呆滞库存。'),
+      ],
+      empirical=[
+        P('Reported inventory is a period-end snapshot subject to timing choices, so turnover can be managed by scheduling receipts around the reporting date.',
+          '报表库存是受时点选择影响的期末快照；因此可以通过在报告日前后安排收货来操纵周转率。'),
+        P('Write-downs reduce inventory and raise turnover, so a deteriorating position can appear as an improving ratio.',
+          '减值会降低库存并抬高周转率；因此恶化的状况可能表现为改善的比率。'),
+      ],
+      temporal=[
+        P('Turnover assumes inventory is owned and held on the balance sheet. Where stock is held on consignment, drop-shipped, or supplier-managed, the same physical position produces very different reported turnover and cross-firm comparison breaks down entirely.',
+          '周转率假定库存自有并计入资产负债表。当采用寄售、代发货或供应商管理库存时，同样的实物状况会产生迥异的报表周转率，跨企业比较完全失效。'),
+        P('It was defined for assortments stable enough that a period average is meaningful. Where product lifecycles are short and much of the stock at any moment is in its first or last weeks, an average conceals the position that determines the outcome.',
+          '它是为"品类稳定到期间平均值有意义"而定义的。当产品生命周期很短、任一时点的大量库存都处于其头几周或最后几周时，平均值掩盖了决定结果的实际状况。'),
+      ],
+      today=[
+        P('Report turnover jointly with service level; either alone can be improved at the expense of the other.',
+          '应把周转率与服务水平联合报告；单独看任一指标都可以通过牺牲另一个来改善。'),
+        P('For cross-firm comparison, adjust for margin and capital intensity, and state whether inventory is owned or consigned.',
+          '跨企业比较应对毛利率与资本密度加以调整，并说明库存是自有还是寄售。'),
+      ]),
+
+    # ------------------------------------------------- supply chain integration
+    D('supply-chain-integration',
+      era='Developed through the 1990s; the central independent variable in supply-chain management research.',
+      era_zh='1990 年代发展而成，是供应链管理研究的核心自变量。',
+      situation=[
+        P('Optimizing each stage of a chain separately produces outcomes worse than optimizing the chain, and the bullwhip literature made that concrete.',
+          '对链条各环节分别优化，其结果劣于对整条链优化；牛鞭效应文献使这一点具体化。'),
+        P('Integration named the coordination that would close the gap, and became the variable most studies relate to performance.',
+          '整合命名了能弥合这一差距的协调，并成为多数研究与绩效相关联的变量。'),
+      ],
+      argument=[
+        P('Integration has internal, supplier, and customer dimensions, and covers information sharing, joint decision making, and process linkage.',
+          '整合包含内部、供应商与顾客三个维度，涵盖信息共享、共同决策与流程连接。'),
+        P('Internal integration is generally found to be a precondition: firms that have not connected their own functions gain little from connecting to partners.',
+          '内部整合通常被发现是前提条件：尚未打通自身职能的企业，从对外连接中获益很少。'),
+        P('Benefits arise from reducing information distortion and from making joint decisions that neither party would make alone, which is why information sharing without decision rights changes little.',
+          '收益来自减少信息失真，以及作出任一方单独都不会作出的联合决策——这正是"只共享信息而不共享决策权几乎无用"的原因。'),
+      ],
+      development=[
+        P('Arc-of-integration work examined whether breadth across dimensions matters more than depth in any one, with mixed results.',
+          '"整合弧"研究考察跨维度的广度是否比单一维度的深度更重要，结果不一。'),
+      ],
+      debates=[
+        Debate('Is more integration always better?', '整合越多总是越好吗？',
+               [Pos('Linear position',
+                    'Integration consistently correlates with operational performance across large samples, which is the accumulated finding.',
+                    '在大样本中整合与运营绩效稳定相关，这是累积的结论。'),
+                Pos('Cost position',
+                    'Integration raises coordination cost and dependence on specific partners, so the relationship should turn and does in some samples.',
+                    '整合提高了协调成本与对特定伙伴的依赖；因此该关系应当发生反转，在部分样本中也确实如此。')],
+               'The cost reading is theoretically stronger and less often tested, because most designs fit a linear term.',
+               '成本解读在理论上更有力却较少被检验，因为多数设计拟合的是线性项。'),
+      ],
+      theoretical=[
+        P('Integration is treated as a firm capability although it is a property of a relationship, and the partner side is almost never measured.',
+          '整合被当作企业能力，尽管它是关系的属性；而伙伴一侧几乎从不被测量。'),
+        P('The construct combines information sharing with joint decision making, which have very different governance requirements.',
+          '该构念把信息共享与共同决策合并，而二者的治理要求截然不同。'),
+      ],
+      empirical=[
+        P('One manager reports integration and performance for the whole chain, which is both a same-source problem and a knowledge problem.',
+          '由一位管理者报告整条链的整合与绩效，这既是同源问题也是知识边界问题。'),
+        P('Firms that integrated successfully are the ones still in the relationship, so surviving dyads are oversampled.',
+          '成功整合的企业才仍处在该关系中；因此存续的合作对被过度抽样。'),
+      ],
+      temporal=[
+        P('Integration was theorized as bilateral coordination built through relationship investment. Where coordination runs through a platform that many participants connect to, integration is a property of joining a standard rather than of a relationship, and it confers no advantage since competitors join the same one.',
+          '整合被设想为通过关系投资建立的双边协调。当协调经由众多参与者接入的平台进行时，整合是"加入某个标准"的属性而非某段关系的属性；由于竞争者接入同一平台，它并不带来优势。'),
+        P('Information sharing was costly and therefore signalled commitment. Where data exchange is near-costless and default, sharing no longer signals anything, and the trust mechanism the literature relies on does not operate.',
+          '信息共享此前代价高昂，因而传递了承诺信号。当数据交换近乎零成本且成为默认时，共享不再传递任何信号，文献所依赖的信任机制也就不再运作。'),
+      ],
+      today=[
+        P('Separate information sharing from joint decision making; they require different governance and only the second predicts the benefits claimed.',
+          '应区分信息共享与共同决策；二者治理要求不同，且只有后者能预测所宣称的收益。'),
+        P('Collect data from both sides of the dyad, or report that integration is measured from one side only.',
+          '应从合作双方收集数据，或明确报告整合只从一侧测量。'),
+      ]),
+
+    # --------------------------------------------------------- decision quality
+    D('decision-quality',
+      era='Formalized in decision analysis from the 1960s; the process-versus-outcome distinction is its defining problem.',
+      era_zh='1960 年代起在决策分析中形式化；过程与结果之分是其决定性难题。',
+      situation=[
+        P('Decisions are judged by how they turn out, which is unfair under uncertainty: a well-reasoned choice can produce a bad outcome and a reckless one a good outcome.',
+          '决策通常按结果来评判，而这在不确定条件下并不公允：审慎的选择可能带来坏结果，鲁莽的选择可能带来好结果。'),
+        P('Separating the quality of a decision from the quality of its outcome required defining quality in terms of the process.',
+          '要把决策质量与结果质量分开，就必须以过程来定义质量。'),
+      ],
+      argument=[
+        P('A high-quality decision has an appropriate frame, credible information, clear values, sound reasoning, creative alternatives, and commitment to act.',
+          '高质量决策具备恰当的框定、可信的信息、明确的价值标准、严谨的推理、有创造性的备选方案，以及行动承诺。'),
+        P('Quality is assessed against the process because outcomes under uncertainty are a noisy signal, and judging decisions by outcomes teaches decision makers to avoid variance rather than to reason well.',
+          '质量按过程评估，因为不确定条件下的结果是噪声很大的信号；按结果评判决策，只会教会决策者规避方差而非好好推理。'),
+        P('The framework is prescriptive rather than descriptive: it defines what a good decision process contains, not what decision makers actually do.',
+          '该框架是规范性而非描述性的：它界定好的决策过程包含什么，而非决策者实际做了什么。'),
+      ],
+      development=[
+        P('Organizational applications added process fairness and stakeholder involvement, on the argument that implementation depends on them.',
+          '组织层面的应用补入了程序公平与利益相关方参与，理由是执行取决于它们。'),
+      ],
+      debates=[
+        Debate('Can decision quality be assessed without outcomes?', '不看结果能评估决策质量吗？',
+               [Pos('Process position',
+                    'Outcomes under uncertainty are noisy, so only the process is diagnostic of the decision itself.',
+                    '不确定条件下的结果噪声很大；只有过程才对决策本身具有诊断性。'),
+                Pos('Outcome position',
+                    'A process assessed with no reference to results can be elaborate and wrong, and outcomes are the only external check available.',
+                    '完全不参照结果来评估过程，可能得出"精致而错误"的结论；结果是唯一可得的外部检验。')],
+               'The process reading is standard in decision analysis, and the absence of an external check is the persistent criticism.',
+               '过程解读是决策分析的标准做法，而缺乏外部检验是持续存在的批评。'),
+      ],
+      theoretical=[
+        P('Quality is defined by conformity to a prescribed process, so a decision can score highly while being wrong for reasons the process does not address.',
+          '质量以"符合规定过程"来定义；因此决策可能得分很高，却因过程未涉及的原因而是错的。'),
+        P('The framework assumes stable values that can be elicited, and much of the difficulty in real decisions is that values are constructed during the process.',
+          '框架假定价值标准稳定且可被引出，而现实决策的多数困难恰恰在于价值是在过程中被建构的。'),
+      ],
+      empirical=[
+        P('Assessment is usually by self-report or by researcher coding of accounts given after the outcome is known.',
+          '评估通常依靠自评，或由研究者对"结果已知后给出的叙述"进行编码。'),
+        P('Studies rarely observe decisions that were not made, so the sample consists of processes that reached a conclusion.',
+          '研究很少观察"未被作出的决策"；因此样本仅由已得出结论的过程构成。'),
+      ],
+      temporal=[
+        P('The framework assumes a decision made at an identifiable moment by people who can articulate their reasoning. Where a recommendation is generated by a model and accepted, there is a decision point but no reasoning to assess, and the quality criteria have nothing to apply to.',
+          '框架假定决策在可辨识的时点由能够阐明其推理的人作出。当建议由模型生成并被接受时，存在决策点却没有可评估的推理，质量标准也就无所依附。'),
+        P('Credible information was a criterion because information was scarce and its provenance traceable. Where inputs are aggregated from sources whose provenance is not recoverable, the criterion cannot be checked in the way the framework intends.',
+          '"可信的信息"之所以成为标准，是因为信息稀缺且其来源可追溯。当输入来自无法还原出处的聚合来源时，该标准无法按框架所设想的方式被核查。'),
+      ],
+      today=[
+        P('Assess the process against criteria fixed in advance, and collect the assessment before the outcome is known where the design allows.',
+          '应对照事先确定的标准评估过程，并在设计允许时于结果已知之前收集评估。'),
+        P('Where a model produced the recommendation, assess whether the acceptance was itself reasoned rather than scoring the model output.',
+          '当建议由模型产生时，应评估"接受该建议"这一行为本身是否经过推理，而非为模型输出打分。'),
+      ]),
+
+    # ---------------------------------------------------------- reference point
+    D('reference-point',
+      era='Central to prospect theory from 1979; its determination remains the theory main open problem.',
+      era_zh='自 1979 年起是前景理论的核心；其确定方式至今仍是该理论的主要未决问题。',
+      situation=[
+        P('Expected-utility models evaluate outcomes as final wealth states, which cannot explain why the same final position feels like a gain to one person and a loss to another.',
+          '期望效用模型把结果评价为最终财富状态，无法解释同样的最终状态为何对一人是收益、对另一人是损失。'),
+        P('Prospect theory relocated evaluation to changes relative to a reference point, which is what produces loss aversion and the reflection effect.',
+          '前景理论把评价重新定位于"相对于参照点的变化"，由此产生损失厌恶与反射效应。'),
+      ],
+      argument=[
+        P('Outcomes are coded as gains or losses relative to a reference point, and the value function is steeper for losses, concave for gains and convex for losses.',
+          '结果相对于参照点被编码为收益或损失；价值函数在损失一侧更陡，在收益区间为凹、在损失区间为凸。'),
+        P('The reference point therefore determines the prediction entirely: shifting it converts a gain frame into a loss frame and reverses the predicted risk attitude.',
+          '因此参照点完全决定了预测：移动它会把收益框架变为损失框架，并使预测的风险态度反转。'),
+        P('Candidates include the status quo, an aspiration level, a social comparison, and an expectation, and the theory does not say which applies.',
+          '候选参照点包括现状、抱负水平、社会比较对象与预期，而理论并未说明何时适用哪一个。'),
+      ],
+      development=[
+        P('Expectation-based formulations proposed that the reference point is the rational expectation of the outcome, which makes it endogenous and in principle predictable.',
+          '基于预期的表述提出参照点是对结果的理性预期，这使它内生化，原则上可被预测。'),
+      ],
+      debates=[
+        Debate('Is the reference point predictable in advance?', '参照点能事先预测吗？',
+               [Pos('Expectation position',
+                    'It is the anticipated outcome, which can be estimated from the situation and makes the theory testable ex ante.',
+                    '它是被预期的结果，可由情境估计，从而使理论可事前检验。'),
+                Pos('Indeterminacy critique',
+                    'Multiple candidates coexist and researchers select the one that fits, so the theory is fitted rather than tested.',
+                    '多个候选并存，研究者会选择契合的那个；因此该理论是被拟合而非被检验的。')],
+               'Open, and it is the main reason prospect theory is easier to apply after the fact than to use predictively.',
+               '未决，这正是前景理论"事后好用、事前难以预测"的主要原因。'),
+      ],
+      theoretical=[
+        P('If the reference point is chosen after observing behaviour, the theory can accommodate any result and predicts nothing.',
+          '若参照点是在观察行为之后选定的，该理论可容纳任何结果，也就不预测任何东西。'),
+        P('Multiple reference points can be active at once — a target, a prior year, a rival — and the theory does not specify how they combine.',
+          '多个参照点可能同时活跃——某个目标、去年水平、某个对手——而理论未说明它们如何结合。'),
+      ],
+      empirical=[
+        P('Laboratory studies impose a reference point through framing, which demonstrates the effect but does not show which point operates naturally.',
+          '实验室研究通过框架强加参照点，这证明了效应存在，却未显示自然状态下起作用的是哪个参照点。'),
+        P('Field studies infer the reference point from the behaviour it explains, which is the circularity the critique identifies.',
+          '实地研究从它所解释的行为中推断参照点——这正是批评所指出的循环。'),
+      ],
+      temporal=[
+        P('Status-quo and prior-outcome reference points assume the decision maker has a stable baseline they can recall. Where positions are displayed continuously with a running comparison, the reference point is supplied by the interface, and it can be changed by a display choice the theory treats as neutral.',
+          '现状与既往结果类参照点，假定决策者拥有可回忆的稳定基线。当持仓被持续显示并附带实时对比时，参照点由界面提供；而理论视为中性的显示方式选择，就能改变它。'),
+        P('Social-comparison reference points assumed a comparison set drawn from people the decision maker knows. Where the comparison is to an aggregate or to selected high performers surfaced by a system, the reference point is set by the selection rule rather than by the social environment.',
+          '社会比较类参照点，假定比较对象取自决策者认识的人。当比较对象是某个聚合值、或由系统推送的少数高绩效者时，参照点由筛选规则而非社会环境设定。'),
+      ],
+      today=[
+        P('Specify the reference point in advance and say how it was determined; a post-hoc choice makes the test uninformative.',
+          '应事先指定参照点并说明其确定方式；事后选择会使检验失去信息量。'),
+        P('Where an interface displays a comparison, treat the displayed baseline as the reference point rather than assuming the status quo.',
+          '当界面显示某个对比基准时，应把所显示的基准当作参照点，而非假定为现状。'),
+      ]),
+
+    # ------------------------------------------------------ analytics capability
+    D('analytics-capability',
+      era='Introduced in the 2010s as the analytics counterpart to IT capability research.',
+      era_zh='2010 年代提出，是信息技术能力研究在分析领域的对应物。',
+      situation=[
+        P('Firms invested heavily in data infrastructure with widely varying returns, repeating the productivity-paradox pattern from earlier IT waves.',
+          '企业在数据基础设施上大量投资而回报差异极大，重演了此前信息技术浪潮中的生产率悖论模式。'),
+        P('The explanation offered was that technology alone does not produce value; a capability combining technology, skills, and management is required.',
+          '给出的解释是：技术本身不产生价值，需要一种结合技术、技能与管理的能力。'),
+      ],
+      argument=[
+        P('The capability is a bundle: data and infrastructure resources, human skills, and management practices for directing analysis toward decisions.',
+          '该能力是一个组合：数据与基础设施资源、人力技能，以及把分析导向决策的管理实践。'),
+        P('The resource-based claim is that the bundle is hard to imitate even though its components are purchasable, which is what makes it a source of advantage rather than a cost of doing business.',
+          '资源基础观的主张是：尽管各组成部分可以购买，该组合难以模仿——这正是它成为优势来源而非经营成本的原因。'),
+      ],
+      development=[
+        P('Later work emphasized the decision-making practices over the technical components, since infrastructure converged and skills became hireable.',
+          '后续研究更强调决策实践而非技术组件，因为基础设施已趋同、技能也可通过招聘获得。'),
+      ],
+      debates=[
+        Debate('Is analytics capability distinct from IT capability?', '分析能力与信息技术能力有区别吗？',
+               [Pos('Distinct position',
+                    'It centres on directing analysis toward decisions, which the IT capability construct does not address.',
+                    '它的核心是把分析导向决策，而信息技术能力构念并未涉及这一点。'),
+                Pos('Relabelling critique',
+                    'The dimensions and items closely mirror the IT capability literature, so the construct largely renames an existing one.',
+                    '其维度与题项与信息技术能力文献高度对应；因此该构念在很大程度上只是给既有构念改名。')],
+               'The overlap is substantial, and studies rarely control for IT capability when claiming an analytics effect.',
+               '重叠相当可观，而声称存在分析效应的研究很少控制信息技术能力。'),
+      ],
+      theoretical=[
+        P('The construct is defined as a bundle whose components are individually purchasable, which sits awkwardly with the inimitability claim it rests on.',
+          '该构念被定义为各组成部分均可单独购买的组合，这与它所依赖的不可模仿性主张并不相容。'),
+        P('Capability is inferred from firms that used analytics well, which makes the explanation of their success circular.',
+          '能力是从"善用分析的企业"推断出来的，这使对其成功的解释成为循环。'),
+      ],
+      empirical=[
+        P('Measurement is by manager self-report, and managers at successful firms rate their capability higher.',
+          '测量依靠管理者自评，而成功企业的管理者会给自身能力打更高分。'),
+        P('Performance is often reported by the same respondent, and objective analytics use is rarely observed.',
+          '绩效常由同一受访者报告，而客观的分析使用情况很少被观察。'),
+      ],
+      temporal=[
+        P('The capability was theorized as combining scarce components — infrastructure, skills, governance. Where infrastructure is rented, models are available as services, and skills are hireable, none of the components is scarce, so the construct describes a cost of participation rather than a source of advantage.',
+          '该能力被设想为对稀缺组件——基础设施、技能、治理——的组合。当基础设施可租用、模型以服务形式可得、技能可招聘时，各组件均不稀缺；该构念描述的是参与成本而非优势来源。'),
+        P('It presumes analysis is performed by an internal function whose practices management can shape. Where analysis is embedded in purchased software, the management practices the construct measures apply to a decreasing share of what the firm actually uses.',
+          '它预设分析由管理层可塑造其实践的内部职能执行。当分析嵌入采购软件之中时，该构念所测量的管理实践，适用于企业实际使用之物的比例越来越小。'),
+      ],
+      today=[
+        P('Control for IT capability before claiming an analytics effect; without it the result may be a general technology-capability effect.',
+          '在宣称存在分析效应之前应控制信息技术能力；否则结果可能只是一般性的技术能力效应。'),
+        P('Measure actual analytics use from systems rather than from a manager rating of capability.',
+          '应从系统测量实际的分析使用情况，而非依靠管理者对能力的评分。'),
+      ]),
+
+    # ---------------------------------------------------- organizational control
+    D('organizational-control',
+      era='Formalized in 1979 into a market, bureaucracy, and clan typology; extended repeatedly since.',
+      era_zh='1979 年被形式化为市场、科层与宗族三种类型，此后被反复扩展。',
+      situation=[
+        P('Organizations need to direct behaviour they cannot observe fully, and the design question is what to control when direct supervision is not possible.',
+          '组织需要引导自身无法完全观察的行为；设计问题在于：当直接监督不可行时应当控制什么。'),
+        P('The framework organized the alternatives by what the organization is able to measure.',
+          '该框架依据"组织能够测量什么"来组织各种备选方案。'),
+      ],
+      argument=[
+        P('Behaviour control specifies how work is done and requires knowing the transformation process. Output control specifies results and requires measurable outputs.',
+          '行为控制规定工作如何完成，要求了解转化过程；产出控制规定结果，要求产出可测量。'),
+        P('When neither condition holds, clan or normative control operates through shared values and socialization, which is why professional and creative work is governed that way.',
+          '当两个条件都不成立时，宗族或规范控制通过共享价值与社会化运作——这正是专业性与创造性工作被如此治理的原因。'),
+        P('The choice is therefore determined by knowledge of the transformation process and measurability of output, which is the framework central contingency claim.',
+          '因此控制方式的选择由"对转化过程的了解"与"产出的可测量性"决定，这是该框架的核心权变主张。'),
+      ],
+      development=[
+        P('Input control and self-control were added, and the modes were shown to operate in combination rather than as alternatives.',
+          '投入控制与自我控制被补入；各控制模式被证明是组合运作而非互为替代。'),
+      ],
+      debates=[
+        Debate('Do control modes substitute or complement?', '各控制模式是替代还是互补？',
+               [Pos('Substitution position',
+                    'The typology assigns one mode per condition, and applying several imposes redundant cost.',
+                    '该类型学为每种条件指派一种模式；同时施加多种会带来冗余成本。'),
+                Pos('Complementarity position',
+                    'Organizations use portfolios of modes, and outcome control combined with clan control performs better than either alone.',
+                    '组织使用的是控制组合；产出控制与宗族控制结合的表现优于任一单独使用。')],
+               'The complementarity reading is better supported, which weakens the typology as a design prescription.',
+               '互补解读证据更充分，这削弱了该类型学作为设计处方的地位。'),
+      ],
+      theoretical=[
+        P('The framework predicts which mode fits a condition but not what happens when the conditions change faster than control systems can be redesigned.',
+          '框架预测了何种模式适配何种条件，却未说明"条件变化快于控制系统重设计"时会发生什么。'),
+        P('Clan control is defined residually, as what operates when the other two cannot, which makes it a category rather than a mechanism.',
+          '宗族控制是剩余式定义的——即另外两种都不可行时起作用的东西；这使它成为一个类别而非一种机制。'),
+      ],
+      empirical=[
+        P('Control mode is coded by researchers from descriptions of practice, and organizations use several modes simultaneously.',
+          '控制模式由研究者根据实践描述编码，而组织同时使用多种模式。'),
+        P('Measurability of output is assessed by the researcher, and is precisely the variable the framework needs to be exogenous.',
+          '产出可测量性由研究者评定，而它恰恰是框架需要其外生的那个变量。'),
+      ],
+      temporal=[
+        P('The typology rests on output being measurable or not. Where activity is logged in detail, almost everything becomes measurable, so output control is available for work the framework assigned to clan control — and the measure may capture activity rather than the output that matters.',
+          '该类型学建立在"产出可测量与否"之上。当活动被详细记录时几乎一切都变得可测量；产出控制因而适用于框架原本指派给宗族控制的工作——而所测的可能是活动而非真正重要的产出。'),
+        P('Behaviour control required knowing the transformation process. Where the process runs through systems that log each step, behaviour control becomes cheap and continuous, which changes the cost structure the contingency argument is built on.',
+          '行为控制要求了解转化过程。当过程经由逐步记录的系统运行时，行为控制变得低成本且可持续实施，这改变了权变论证所依据的成本结构。'),
+      ],
+      today=[
+        P('Measure the modes as a portfolio rather than assigning one; organizations use several and the combination is the design choice.',
+          '应把各控制模式作为组合来测量而非指派单一模式；组织同时使用多种，其组合才是设计选择。'),
+        P('Where activity is logged, check whether the measured output is the outcome of interest or a proxy for effort.',
+          '当活动被记录时，应检查所测产出究竟是关心的结果，还是努力程度的代理。'),
+      ]),
+])

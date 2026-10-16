@@ -1,0 +1,361 @@
+# -*- coding: utf-8 -*-
+"""Deep dives for the organizational-behaviour and decision theories.
+
+Schema helpers live in ``research_catalog_deep_dives``; this module only holds
+content. See that module's docstring for the rules these entries follow.
+"""
+
+from research_catalog_deep_dives import D, Debate, P, Pos
+
+BEHAVIOR_DIVES = dict([
+
+    # -------------------------------------------------------------------- JD-R
+    D('job-demands-resources',
+      era='Published 2001 as a model; restated as a theory in 2017 after a decade of extension.',
+      era_zh='2001 年作为模型提出，历经十年扩展后于 2017 年被重述为理论。',
+      situation=[
+        P('Occupational health research had two largely separate literatures. One studied strain and burnout, treating work as a source of harm; the other studied motivation and engagement, treating work as a source of fulfilment. Each had its own models and rarely spoke to the other.',
+          '职业健康研究此前有两条基本分离的文献：一条研究紧张与倦怠，把工作视为损害来源；另一条研究动机与投入，把工作视为满足来源。两者各有模型，很少对话。'),
+        P('Existing job-stress models were also narrow: they specified particular job features and therefore fitted some occupations and not others. What was wanted was a framework general enough to apply to any job while still making specific predictions.',
+          '既有的工作压力模型也过于狭窄：它们指定了特定的工作特征，因而只适用于部分职业。当时需要的是一个足够通用、又仍能作出具体预测的框架。'),
+      ],
+      argument=[
+        P('Any job characteristic can be classified as a demand, which costs effort and depletes energy, or a resource, which helps achieve goals, reduces demands, or stimulates growth. The classification is functional, not a fixed list of variables, which is what makes the framework portable across occupations.',
+          '任何工作特征都可归类为"要求"（消耗努力、耗竭能量）或"资源"（有助达成目标、降低要求或促进成长）。这一分类是功能性的，而非固定的变量清单，这正是该框架可跨职业迁移的原因。'),
+        P('Two processes follow. Demands drive a health-impairment path through exhaustion toward strain and its consequences. Resources drive a motivational path through engagement toward positive outcomes.',
+          '由此产生两条过程。要求沿健康损耗路径，经由耗竭走向紧张及其后果；资源沿动机路径，经由投入走向积极结果。'),
+        P('The two paths interact. Resources buffer the effect of demands on strain, and demands can amplify the effect of resources on motivation. These interaction predictions are the framework distinctive contribution and also its least reliably supported part.',
+          '两条路径相互作用：资源缓冲要求对紧张的影响，要求也可放大资源对动机的作用。这些交互预测是该框架的特色贡献，同时也是支持最不稳定的部分。'),
+      ],
+      development=[
+        P('Personal resources such as self-efficacy and optimism were added alongside job resources, and job crafting was introduced as a route by which employees change their own demands and resources rather than only receiving them.',
+          '自我效能、乐观等个人资源被与工作资源并列纳入；工作重塑作为一条路径被引入——员工可以改变自身的要求与资源，而不只是被动接受。'),
+        P('The 2017 restatement made reciprocal and spiral relationships explicit: engagement can generate further resources over time, and exhaustion can erode them.',
+          '2017 年的重述明确了互惠与螺旋关系：投入会随时间产生更多资源，而耗竭会侵蚀资源。'),
+      ],
+      debates=[
+        Debate('Is the demand/resource distinction analytically useful?', '要求/资源的二分在分析上有用吗？',
+               [Pos('Supporters',
+                    'The functional definition is what lets one framework cover nurses, drivers, and software engineers without a separate model for each.',
+                    '功能性定义使同一框架可以覆盖护士、司机与软件工程师，而不必为每种职业另建模型。'),
+                Pos('Critics',
+                    'A category that can absorb any variable explains everything and forbids nothing; without a rule for classification, the model is difficult to disconfirm.',
+                    '一个能吸纳任何变量的类别解释了一切、也就排除不了任何东西；缺少分类规则，模型难以被证伪。')],
+               'Open. The strongest applications state in advance why a given feature is a demand or a resource in that specific context.',
+               '未决。最有力的应用会事先说明：在该具体情境中，某项特征为何算要求或资源。'),
+      ],
+      theoretical=[
+        P('The same feature can function as a demand for one worker and a resource for another, and the framework does not specify when. This flexibility is its reach and its weakness at once.',
+          '同一特征对一名员工是要求、对另一名可能是资源，而框架未说明何时如此。这一弹性既是它的适用广度，也是它的弱点。'),
+        P('Spirals and reciprocal effects are central to the 2017 statement but require designs with several waves, which most applications do not use.',
+          '螺旋与互惠效应是 2017 年表述的核心，却需要多波次设计，而多数应用并不采用。'),
+      ],
+      empirical=[
+        P('The dominant design is a single-wave self-report survey in which demands, resources, and outcomes are all measured by the same person at the same time, which inflates relationships through common method variance.',
+          '主流设计是单波次自评问卷，要求、资源与结果由同一人在同一时点测量，共同方法偏差会抬高所观察到的关系。'),
+        P('The buffering interaction is the framework signature prediction and is supported inconsistently; interaction terms also need far more statistical power than main effects.',
+          '缓冲交互是该框架的标志性预测，而支持并不一致；交互项所需的统计功效也远高于主效应。'),
+      ],
+      temporal=[
+        P('The framework assumes a job with identifiable, relatively stable characteristics that can be classified in advance. Platform and algorithmically allocated work changes demands from shift to shift, so the unit the model classifies may not hold still long enough to be classified.',
+          '框架假定工作具有可识别、相对稳定、可事先分类的特征。平台化与算法派单的劳动使要求随班次变化，模型所分类的对象可能根本无法稳定到足以被分类。'),
+        P('Resources were conceived as things the organization provides: autonomy, support, feedback. Where feedback is automated, support is a chatbot, and autonomy is bounded by a routing algorithm, whether these still function as resources is an open empirical question rather than an assumption.',
+          '资源最初设想为组织提供之物：自主性、支持、反馈。当反馈自动化、支持来自聊天机器人、自主性被派单算法框定时，它们是否仍作为"资源"发挥作用，是有待检验的经验问题，而非可以假定的前提。'),
+        P('It was formulated for a workplace with a boundary. Remote and hybrid arrangements move part of the demand and resource environment into the home, where the organization neither controls nor observes it.',
+          '它针对的是有边界的工作场所。远程与混合安排把部分要求与资源环境移入家庭，而组织既不控制也不观察那里。'),
+      ],
+      today=[
+        P('Still the most usable general framework for wellbeing at work, and the right default when the research question spans both strain and motivation.',
+          '它仍是关于职场福祉最好用的通用框架；当研究问题同时涉及紧张与动机时，它是合适的默认选择。'),
+        P('Contribute by testing the interaction with adequate power and temporal separation, or by classifying a genuinely new feature — algorithmic monitoring, AI assistance — with an argued rationale rather than by assertion.',
+          '有价值的贡献在于：以充足功效与时间分离检验交互效应；或以论证而非断言的方式，对真正新的特征（算法监控、AI 协助）作出归类。'),
+      ]),
+
+    # ---------------------------------------------------------------------- SET
+    D('social-exchange-theory',
+      era='Sociological formulation in 1964; the dominant explanatory mechanism in organizational behaviour from the 1980s.',
+      era_zh='1964 年形成社会学表述，自 1980 年代起成为组织行为学中的主导解释机制。',
+      situation=[
+        P('Behaviourist accounts explained action by reinforcement, and economic accounts by calculated self-interest. Neither captured relationships in which people give without an agreed price and expect return without a stated term.',
+          '行为主义用强化解释行动，经济学用算计的自利解释行动。二者都无法刻画这样一类关系：人们在没有约定价格的情况下付出，并在没有明确期限的情况下期待回报。'),
+        P('Organizational research needed exactly that. Employees do things not required by their role and organizations provide support not required by contract, and the employment relationship is not fully specified by the contract that formally governs it.',
+          '组织研究恰恰需要这一点。员工会做角色未要求之事，组织也会提供契约未要求的支持；雇佣关系无法被正式治理它的契约完全界定。'),
+      ],
+      argument=[
+        P('An exchange is social rather than economic when the terms are unspecified. One party confers a benefit; the norm of reciprocity creates a diffuse obligation to return it; the return is neither priced nor scheduled, and its discharge is left to the recipient.',
+          '当交换条款未被规定时，它就是社会交换而非经济交换。一方给予利益；互惠规范由此产生弥散的回报义务；回报既无定价也无时间表，如何履行由接受方决定。'),
+        P('Because the return is unenforceable, the exchange depends on trust and builds it. Repeated fulfilled obligations produce a high-quality relationship; a breach converts the relationship back toward a transactional footing.',
+          '由于回报不可强制执行，交换依赖信任，也在过程中建立信任。义务被反复履行会形成高质量关系；一次违背则把关系推回交易性状态。'),
+      ],
+      development=[
+        P('Organizational support theory specialized it to the employee-organization relationship; leader-member exchange specialized it to the supervisor dyad; psychological contract research specialized it to beliefs about mutual obligation and what happens when they are broken.',
+          '组织支持理论把它专门化于员工与组织的关系；领导—成员交换专门化于主管与下属的二元关系；心理契约研究则专门化于对互惠义务的信念及其被违背时的后果。'),
+      ],
+      debates=[
+        Debate('Does the theory explain or relabel?', '它是在解释，还是只是换个说法？',
+               [Pos('Critics',
+                    'Almost any positive correlation between something the organization does and something the employee does can be narrated as reciprocity after the fact.',
+                    '几乎任何"组织所为"与"员工所为"之间的正相关，事后都可以被讲述为互惠。'),
+                Pos('Supporters',
+                    'The mechanism makes specific predictions — that felt obligation mediates, and that breach reverses the effect — which are testable.',
+                    '该机制作出具体预测——义务感起中介作用、违背会逆转效应——这些是可检验的。')],
+               'Open. The critique bites hardest where felt obligation is invoked but never measured.',
+               '未决。当义务感被援引却从未被测量时，这一批评最为有力。'),
+      ],
+      theoretical=[
+        P('It specifies that reciprocation occurs but not what will be reciprocated, with what, or when. Without additional theory the prediction is directional only.',
+          '它规定了"会有回报"，却未规定回报什么、以什么形式、在何时。缺少补充理论时，预测只有方向性。'),
+        P('Exchange ideology and reciprocity norms vary across cultures and employment relationships, so the mechanism is not as universal as its usage implies.',
+          '交换意识形态与互惠规范在不同文化与雇佣关系中存在差异，因此该机制并不像其使用方式所暗示的那样普适。'),
+      ],
+      empirical=[
+        P('Perceived support, felt obligation, and the outcome are usually measured in one questionnaire, so the mediation that carries the theoretical claim is established by cross-sectional association.',
+          '感知支持、义务感与结果通常在同一份问卷中测量，因而承载理论主张的中介效应只是由横截面关联确立的。'),
+        P('Constructs across the SET family — perceived organizational support, affective commitment, leader-member exchange — correlate highly enough that discriminant validity is a recurring concern.',
+          'SET 家族的各构念——组织支持感、情感承诺、领导—成员交换——彼此相关度高到区分效度成为反复出现的问题。'),
+      ],
+      temporal=[
+        P('The theory assumes an identifiable counterparty who can be credited with the benefit. When scheduling, evaluation, and discipline are executed by a system, it is unclear who the employee is in exchange with, and reciprocity toward an algorithm has no obvious referent.',
+          '理论假定存在可被"归功"的明确交换对象。当排班、评价与惩戒由系统执行时，员工究竟在与谁交换并不清楚，而"对算法的互惠"没有明显的指称对象。'),
+        P('It was formulated for continuing relationships in which future interaction is expected. Short-tenure, gig, and contract arrangements shorten the shadow of the future that makes diffuse obligation rational in the first place.',
+          '它针对的是预期会持续互动的长期关系。短任期、零工与合约安排缩短了"未来的影子"，而正是这一影子才使弥散义务在理性上成立。'),
+      ],
+      today=[
+        P('Still the default mechanism for explaining discretionary effort, and appropriately so where a human counterparty and a continuing relationship both exist.',
+          '在存在人类交换对象与持续关系的情境下，它仍是解释自主性努力的默认机制，且是恰当的。'),
+        P('If the study is about algorithmic management, name the exchange partner explicitly. The most interesting current question is whether reciprocity operates at all when the counterparty is a system.',
+          '若研究算法管理，应明确指出交换对象是谁。当前最有意思的问题是：当对方是系统时，互惠是否仍然运作。'),
+      ]),
+
+    # ---------------------------------------------------------------------- SDT
+    D('self-determination-theory',
+      era='Consolidated in 1985; extended into work, education, and health through the 2000s.',
+      era_zh='1985 年成形，2000 年代扩展至工作、教育与健康领域。',
+      situation=[
+        P('Behaviourist psychology treated reinforcement as the engine of behaviour: reward a behaviour and you get more of it. Experiments in the 1970s produced an awkward result — rewarding an activity people already enjoyed reduced their subsequent willingness to do it unpaid.',
+          '行为主义心理学把强化视为行为的引擎：奖励某行为便会得到更多该行为。1970 年代的实验却给出尴尬结果——对人们本已喜爱的活动给予奖励，反而降低了其后无报酬从事该活动的意愿。'),
+        P('That undermining effect could not be explained by a theory in which all motivation is the same substance in different amounts. It required a distinction between kinds of motivation, not just levels.',
+          '这一"削弱效应"无法由"所有动机都是同一物质、只是量的多少"的理论解释。它要求区分动机的种类，而不只是水平。'),
+      ],
+      argument=[
+        P('Three basic psychological needs are proposed as necessary for wellbeing and high-quality motivation: autonomy, the sense that action originates in oneself; competence, the sense of being effective; and relatedness, the sense of connection to others.',
+          '理论提出三种基本心理需要，是福祉与高质量动机的必要条件：自主，即行动出自自身的感觉；胜任，即感到有效能；关系，即与他人相联结的感觉。'),
+        P('Motivation is arrayed from external regulation through introjection and identification to intrinsic motivation. Contexts that satisfy the needs promote internalization, moving regulation along that continuum; contexts that thwart them keep behaviour externally controlled.',
+          '动机从外部调节，经内摄、认同，直至内在动机排成序列。满足需要的情境促进内化，使调节沿该连续体移动；挫败需要的情境则使行为停留于外部控制。'),
+        P('The prediction about rewards follows from this: a reward experienced as controlling undermines autonomous motivation, while the same reward experienced as informational about competence does not.',
+          '关于奖励的预测由此推出：被体验为"控制"的奖励会削弱自主动机，而被体验为"关于胜任的信息"的同一奖励则不会。'),
+      ],
+      development=[
+        P('Work applications linked need satisfaction to engagement, performance, and turnover, and gave managers an account of why autonomy-supportive supervision outperforms controlling supervision.',
+          '工作领域的应用把需要满足与投入、绩效、离职联系起来，并向管理者解释了为何支持自主的管理优于控制式管理。'),
+      ],
+      debates=[
+        Debate('Are the three needs universal?', '三种需要是普适的吗？',
+               [Pos('Theory position',
+                    'The needs are basic in the biological sense: thwarting them damages wellbeing in every culture, even where their expression differs.',
+                    '这些需要在生物学意义上是基本的：无论文化如何，挫败它们都会损害福祉，尽管其表达形式不同。'),
+                Pos('Cross-cultural critique',
+                    'Autonomy as conceived here reflects an individualist framing; in more collectivist settings, acting on internalized group expectation may not be experienced as a loss of autonomy.',
+                    '此处设想的自主带有个体主义色彩；在更集体主义的情境中，依内化的群体期待行事未必被体验为自主性的丧失。')],
+               'Long-running and not settled; the theory has absorbed part of the critique by distinguishing autonomy from independence.',
+               '长期未决；理论通过区分"自主"与"独立"吸收了部分批评。'),
+      ],
+      theoretical=[
+        P('Need satisfaction and the wellbeing outcomes it predicts are conceptually close, and some measures of the two share content.',
+          '需要满足与它所预测的福祉结果在概念上接近，部分量表在内容上存在重叠。'),
+        P('Autonomous and controlled motivation are treated as a continuum in some statements and as coexisting states in others, with different implications for measurement.',
+          '自主动机与受控动机在有些表述中被视为连续体，在另一些中被视为并存状态，二者对测量的含义不同。'),
+      ],
+      empirical=[
+        P('Most workplace evidence is cross-sectional self-report, which cannot establish the internalization process that is the theory core claim.',
+          '职场证据多为横截面自评，无法确立作为理论核心主张的内化过程。'),
+        P('The undermining effect is robust in the laboratory but its size and boundary conditions in field settings with real pay are contested.',
+          '削弱效应在实验室中稳健，但在有真实报酬的现场情境中，其效应量与边界条件仍有争议。'),
+      ],
+      temporal=[
+        P('Autonomy was operationalized as discretion over how and when work is done. Algorithmic allocation can leave nominal discretion intact while removing the discretion that matters, so instruments written for a supervised-office setting may register autonomy that workers do not experience.',
+          '自主性被操作化为对"如何做、何时做"的裁量权。算法派单可以保留名义上的裁量，却拿走真正重要的那部分；因此为受督导的办公室情境编写的量表，可能测出员工并未体验到的自主性。'),
+        P('The theory assumes competence feedback comes from the task or from people. Where feedback is a continuously updated score, its informational and controlling aspects are fused in a way the reward literature did not anticipate.',
+          '理论假定胜任反馈来自任务本身或他人。当反馈是持续更新的评分时，其信息性与控制性以奖励文献未曾预料的方式融合在一起。'),
+      ],
+      today=[
+        P('The strongest available account of why controlling management practices backfire, and directly relevant to monitoring and gamification research.',
+          '它是关于"控制式管理为何适得其反"最有力的解释，与监控和游戏化研究直接相关。'),
+        P('When using it in an algorithmic setting, check that the autonomy measure captures the discretion actually at stake rather than formal latitude.',
+          '在算法情境中使用时，应检查自主性量表捕捉的是真正受影响的裁量权，而非形式上的自由度。'),
+      ]),
+
+    # ---------------------------------------------------------------------- COR
+    D('conservation-of-resources',
+      era='Proposed in 1989; the leading stress framework in management research from the 2000s.',
+      era_zh='1989 年提出，2000 年代起成为管理研究中的主导压力框架。',
+      situation=[
+        P('Stress research had become dominated by appraisal models in which stress is whatever the person interprets as threatening. That made the concept subjective to the point where it was hard to predict who would be stressed by what.',
+          '压力研究当时由评价模型主导：压力即个体解读为威胁之物。这使概念主观到难以预测"谁会因何而承压"。'),
+        P('The proposal was to anchor stress in something more objective — the loss of things people actually value — so that the antecedent could be specified before the reaction was observed.',
+          '该理论主张把压力锚定在更客观的东西上——人们真正珍视之物的丧失——从而在观察到反应之前就能界定其前因。'),
+      ],
+      argument=[
+        P('People strive to obtain, retain, and protect resources: objects, conditions, personal characteristics, and energies. Stress arises from actual loss, threatened loss, or failure to gain after investing.',
+          '人们努力获取、保有并保护资源：物品、条件、个人特征与能量。压力源于实际丧失、丧失威胁，或投入后未能获得。'),
+        P('Two principles follow. Loss looms larger than equivalent gain, so a lost resource hurts more than the same resource gained helps. And resources must be invested to protect against loss and to gain more, which means those with fewer resources are more exposed.',
+          '由此得出两条原则：丧失重于等量获得，因而失去一项资源的伤害大于得到同一资源的帮助；且必须投入资源才能防止丧失与获取更多，这意味着资源较少者更为脆弱。'),
+        P('These generate spirals. Loss spirals accelerate because each loss reduces the capacity to prevent the next; gain spirals are real but slower and weaker.',
+          '二者产生螺旋。丧失螺旋会加速，因为每次丧失都削弱了防止下一次丧失的能力；获得螺旋真实存在，但更慢、更弱。'),
+      ],
+      development=[
+        P('Later statements added resource caravans and caravan passageways, arguing that resources travel together and that environments either support or deplete them, which pushed the theory toward context rather than individual coping.',
+          '后续表述加入了"资源商队"与"商队通道"，主张资源成组出现，而环境要么支持要么消耗它们；这把理论推向情境而非个体应对。'),
+      ],
+      debates=[
+        Debate('Is the resource concept too broad?', '资源概念是否过于宽泛？',
+               [Pos('Critics',
+                    'If objects, conditions, traits, and energies all count, then almost any predictor can be called a resource and the theory cannot be disconfirmed.',
+                    '若物品、条件、特质与能量都算资源，那么几乎任何预测变量都能被称作资源，理论也就无法被证伪。'),
+                Pos('Supporters',
+                    'Breadth is deliberate: the claim is about the dynamics of loss and gain, which apply regardless of which specific resource is at stake.',
+                    '宽泛是刻意的：该主张关乎丧失与获得的动力学，不论具体涉及哪种资源都适用。')],
+               'Open. Applications that specify and measure the particular resource in advance are markedly stronger than those that do not.',
+               '未决。事先指明并测量具体资源的应用，明显强于未做此工作的应用。'),
+      ],
+      theoretical=[
+        P('Resource lists differ across studies, so findings are hard to compare even when they claim the same framework.',
+          '不同研究的资源清单各异，即使自称同一框架，结果也难以比较。'),
+        P('Resource value is partly subjective, which reintroduces the appraisal element the theory was meant to reduce.',
+          '资源价值部分是主观的，这重新引入了该理论本欲减少的评价成分。'),
+      ],
+      empirical=[
+        P('Spirals are the distinctive prediction and require multi-wave designs with enough waves to observe acceleration; most studies have two waves or one.',
+          '螺旋是其特色预测，需要波次足够多、能观察到加速的纵向设计；而多数研究只有两波或一波。'),
+        P('Loss primacy is often inferred from cross-sectional coefficients rather than tested against a gain condition.',
+          '"丧失优先"常由横截面系数推断，而非与"获得"条件作对照检验。'),
+      ],
+      temporal=[
+        P('The framework assumes resources are held by the individual and depleted by work. Where scheduling and workload are set by a system that can adjust them continuously, the pace of depletion is externally controlled in a way the original account treats as a background condition rather than a variable.',
+          '框架假定资源由个体持有、被工作消耗。当排班与工作量由可持续调整的系统设定时，消耗速度是外部控制的——而原初表述把这视为背景条件而非变量。'),
+        P('Recovery was theorized as occurring away from work. Where work is remote, always-addressable, and boundaryless, the recovery mechanism the theory relies on is itself compromised.',
+          '恢复被设想为发生在工作之外。当工作远程化、随时可触达、边界消失时，理论所依赖的恢复机制本身就被削弱了。'),
+      ],
+      today=[
+        P('The right framework when the question is about depletion, recovery, and accumulation over time — and it is wasted on a single-wave design.',
+          '当问题关乎随时间的消耗、恢复与累积时，它是合适的框架；用在单波次设计上则是浪费。'),
+        P('Name the resource, justify why it is one in this context, and measure it at enough time points for the spiral claim to be more than an assertion.',
+          '应指明资源为何、论证它在该情境下为何算资源，并在足够多的时点上测量，使螺旋主张不止于断言。'),
+      ]),
+
+    # -------------------------------------------------------------- sensemaking
+    D('sensemaking-theory',
+      era='Developed through the 1970s and 1980s; consolidated in 1995 and reviewed in 2014.',
+      era_zh='1970—1980 年代逐步形成，1995 年集成，2014 年被系统综述。',
+      situation=[
+        P('Organizational decision research assumed a decision maker facing a defined problem with known alternatives. Studies of disasters and crises kept finding something else: people who did not know what was happening, acting anyway, and constructing an account afterwards.',
+          '组织决策研究假定决策者面对界定清晰、备选已知的问题。而对灾难与危机的研究不断发现另一幅图景：人们并不知道正在发生什么，仍然行动，并在事后建构出一套说法。'),
+        P('The gap was that the field had no vocabulary for the stage before a problem exists as a problem — how an ambiguous situation becomes something an organization can act on at all.',
+          '缺口在于：学界没有词汇描述"问题成为问题之前"的阶段——一个模糊情境如何变成组织可以行动的对象。'),
+      ],
+      argument=[
+        P('Sensemaking is retrospective. People act, then notice what they have done, and construct a plausible account that makes the action reasonable. The account then constrains what they do next.',
+          '意义建构是回溯性的。人们先行动，再注意到自己做了什么，并建构出一套使该行动显得合理的、说得通的说法；这套说法随后约束他们下一步的行为。'),
+        P('Plausibility matters more than accuracy. An account that lets people continue acting coherently outperforms a more accurate one that paralyses them, which is why sensemaking can go badly wrong in ways that look obvious afterwards.',
+          '说得通比准确更重要。一套让人们能连贯行动下去的说法，胜过一套更准确却令人瘫痪的说法——这正是意义建构会以事后看来显而易见的方式出错的原因。'),
+        P('Enactment closes the loop: people act into their environment and thereby produce part of the situation they subsequently interpret.',
+          '涌现闭合了循环：人们向环境施加行动，因而制造出他们随后要去解读的那部分情境。'),
+      ],
+      development=[
+        P('Sensegiving examined how leaders influence others sensemaking; later work extended the frame to identity, organizational change, and to how sensemaking is distributed across a group rather than performed by an individual.',
+          '意义给予研究领导者如何影响他人的意义建构；后续研究把该视角扩展到身份、组织变革，以及意义建构如何分布于群体而非由个体完成。'),
+      ],
+      debates=[
+        Debate('Can it be operationalized without losing the phenomenon?', '能否在不丢失现象的前提下操作化？',
+               [Pos('Process researchers',
+                    'Sensemaking is inherently temporal and situated; converting it to variables destroys what makes it distinctive.',
+                    '意义建构本质上是时间性、情境性的；把它转为变量会摧毁它的独特之处。'),
+                Pos('Measurement-oriented researchers',
+                    'Without measurable indicators the framework cannot accumulate evidence and remains a vocabulary rather than a theory.',
+                    '缺少可测指标，该框架无法累积证据，只能停留为一套词汇而非理论。')],
+               'Unresolved, and it explains why the literature is largely qualitative.',
+               '未决，这也解释了该文献为何以质性研究为主。'),
+      ],
+      theoretical=[
+        P('It is a process account and does not predict which interpretation will prevail, which limits it to explaining after the fact.',
+          '它是过程性解释，不预测哪一种解读会胜出，因而基本只能事后解释。'),
+        P('The boundary with interpretation, framing, and attention is not sharp, and the terms are often used interchangeably.',
+          '它与解读、框定、注意力之间的界限并不清晰，这些术语常被混用。'),
+      ],
+      empirical=[
+        P('Evidence usually comes from retrospective accounts collected by the researcher, which are themselves sensemaking, so the data and the phenomenon are the same kind of thing.',
+          '证据通常来自研究者收集的回溯性叙述，而这些叙述本身就是意义建构；数据与现象因此是同一类东西。'),
+        P('Case selection favours dramatic failures, where accounts are abundant, which may overstate how often sensemaking breaks down.',
+          '案例选择偏向叙述丰富的重大失败，这可能高估了意义建构失效的频率。'),
+      ],
+      temporal=[
+        P('The framework assumes cues are ambiguous and interpretation is human work. Where a system pre-classifies events and presents a ranked account, part of the noticing and framing has already been done before any person engages with it.',
+          '框架假定线索是模糊的、解读是人的工作。当系统预先对事件分类并给出排序后的说法时，注意与框定的一部分在任何人介入之前就已完成。'),
+        P('It was developed for co-located groups whose members could talk their way to a shared account. Distributed and asynchronous work removes much of the shared conversational substrate the mechanism assumes.',
+          '它针对的是同处一地、可以通过交谈达成共同说法的群体。分布式与异步工作移除了该机制所假定的大部分共享对话基础。'),
+      ],
+      today=[
+        P('Well suited to studying how organizations respond to novel technology, where nobody yet has a settled account of what the technology is for.',
+          '它很适合研究组织如何应对新技术——在那里，"这项技术是做什么的"尚无定论。'),
+        P('Use a design that observes accounts forming over time. A single round of interviews after the outcome is known collects a finished story, not the process.',
+          '应采用能观察说法随时间形成的设计。在结果已知后做一轮访谈，收集到的是成型的故事，而非过程。'),
+      ]),
+
+    # ---------------------------------------------------------------- prospect
+    D('prospect-theory',
+      era='Published 1979; cumulative version 1992; absorbed into management research from the 1990s.',
+      era_zh='1979 年发表，1992 年提出累积版本，1990 年代起被管理研究吸收。',
+      situation=[
+        P('Expected utility theory was the normative and descriptive standard for choice under risk. Experimental work through the 1960s and 1970s produced a growing list of systematic violations that could not be dismissed as noise.',
+          '期望效用理论既是风险决策的规范标准也是描述标准。1960—1970 年代的实验积累出一长串系统性违背，无法被当作噪声打发。'),
+        P('The contribution was not to document another anomaly but to supply an alternative that generated the anomalies from a small number of assumptions.',
+          '其贡献不在于再记录一个反常现象，而在于提供一个替代方案，由少数几条假定推出这些反常。'),
+      ],
+      argument=[
+        P('Outcomes are evaluated as gains and losses relative to a reference point rather than as final states of wealth. This single move produces framing effects: the same outcome described differently is evaluated differently.',
+          '结果被评价为相对于某参照点的收益与损失，而非最终财富状态。仅此一步就产生框定效应：同一结果换个描述方式，评价随之不同。'),
+        P('The value function is concave for gains, convex for losses, and steeper for losses than gains. Loss aversion follows, as does risk seeking in the loss domain — people gamble to avoid a certain loss.',
+          '价值函数在收益域凹、在损失域凸，且损失一侧更陡。由此推出损失厌恶，也推出损失域中的风险寻求——人们为避免确定损失而赌博。'),
+        P('Probabilities are transformed by a weighting function that overweights small probabilities and underweights moderate to large ones, which accounts for the simultaneous appeal of lotteries and insurance.',
+          '概率经加权函数变换，小概率被高估、中大概率被低估，这解释了彩票与保险同时具有吸引力的现象。'),
+      ],
+      development=[
+        P('Management research applied it to executive risk taking and to the behavioural theory of the firm, where performance relative to aspiration functions as the reference point, and to negotiation, pricing, and framing in marketing.',
+          '管理研究把它应用于高管风险承担与企业行为理论——绩效相对抱负水平充当参照点——以及谈判、定价与营销中的框定问题。'),
+      ],
+      debates=[
+        Debate('Where does the reference point come from?', '参照点从何而来？',
+               [Pos('Practical position',
+                    'It can be inferred from context: the status quo, a prior expectation, or an aspiration level derived from history or peers.',
+                    '可从情境推断：现状、先前预期，或由历史与同侪导出的抱负水平。'),
+                Pos('Critical position',
+                    'If the reference point is chosen by the analyst after seeing the behaviour, the theory can accommodate almost any result.',
+                    '若参照点是分析者在看到行为之后选定的，理论几乎可以容纳任何结果。')],
+               'Open, and it is the main source of flexibility in applied work.',
+               '未决，这也是应用研究中弹性的主要来源。'),
+      ],
+      theoretical=[
+        P('The theory describes choice among presented prospects. It does not say how the choice set is generated, which is often the more consequential question in organizational settings.',
+          '理论描述的是在给定备选之间的选择，却不说明备选集如何生成——而在组织情境中，后者往往是更关键的问题。'),
+        P('It is a theory of individual decision. Applying it to firm-level risk taking requires an additional argument about how individual valuation aggregates into organizational action.',
+          '它是个体决策理论。将其应用于企业层面的风险承担，需要补充论证个体估值如何聚合为组织行动。'),
+      ],
+      empirical=[
+        P('Foundational evidence comes from hypothetical choices over small stakes with student samples; effect sizes in field settings with experienced decision makers and real money are smaller and more variable.',
+          '基础证据来自学生样本、小额赌注的假想选择；在有经验决策者与真实金钱的现场情境中，效应量更小且更不稳定。'),
+        P('The magnitude of loss aversion is contested, and several classic demonstrations have proved harder to replicate than their textbook status suggests.',
+          '损失厌恶的量级存在争议，若干经典演示的可复制性低于其教科书地位所暗示的水平。'),
+      ],
+      temporal=[
+        P('The framework assumes a decision maker who reads a described prospect and responds. Where choices are presented by an interface that sets defaults, orders options, and frames outcomes, the framing is a design variable controlled by another party rather than a feature of the situation.',
+          '框架假定决策者阅读被描述的前景并作出反应。当选择由界面呈现——界面设定默认项、排列选项、框定结果——框定就成了由他方控制的设计变量，而非情境的自然属性。'),
+        P('It was written for one-shot choices. Where the same choice recurs many times a day with immediate feedback, learning may attenuate the very deviations the theory predicts.',
+          '它针对的是一次性选择。当同一选择每天重复多次且有即时反馈时，学习可能削弱理论所预测的那些偏离。'),
+      ],
+      today=[
+        P('Still the standard descriptive account of risky choice, and the reference-point idea remains productive wherever aspiration or expectation can be specified in advance.',
+          '它仍是风险决策的标准描述性解释；只要抱负或预期能被事先界定，参照点思想就依然富有成效。'),
+        P('State the reference point before looking at the data. A reference point chosen afterwards turns the theory into a description of whatever happened.',
+          '应在看数据之前就设定参照点。事后选定的参照点会把理论变成对既成事实的描述。'),
+      ]),
+])

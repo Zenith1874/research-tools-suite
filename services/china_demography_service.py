@@ -3,8 +3,8 @@
 
 该模块只同步仓库内已经核验过来源的年度 CSV，不在更新按钮中猜测或补齐
 缺失值。出生人口使用 ``万人``，结婚/离婚使用官方 ``万对``；后者是夫妻
-对数，不是人数，协议离婚和法院离婚的合计由 dashboard 层在两项同时存在
-时派生。
+对数，不是人数。公报更新单独保存，不改写原快照；dashboard 层优先采用公布
+总数，缺少公布总数时才在两项同时存在时派生。
 """
 from __future__ import annotations
 
@@ -25,11 +25,13 @@ from services.china_macro_service import (
 
 SOURCE_TYPE = 'china_demography'
 DATA_PATH = Path(__file__).resolve().parents[1] / 'data' / 'china_demography_annual_official.csv'
+BULLETIN_UPDATES_PATH = DATA_PATH.with_name('china_demography_bulletin_updates.csv')
 DEMOGRAPHY_CODES = (
     'CN_BIRTHS',
     'CN_MARRIAGES',
     'CN_DIVORCES_AGREEMENT',
     'CN_DIVORCES_COURT',
+    'CN_DIVORCES_TOTAL_OFFICIAL',
 )
 YEAR_PATTERN = re.compile(r'^(?:19|20)\d{2}$')
 ALLOWED_DATA_STATUS = frozenset({
@@ -143,13 +145,34 @@ def read_demography_rows(path=DATA_PATH, strict=True):
     return rows, skipped
 
 
+def read_effective_demography_rows(path=DATA_PATH, updates_path=None):
+    """Overlay dated bulletins while retaining the original source snapshot."""
+    rows, skipped = read_demography_rows(path)
+    if updates_path is None and Path(path).resolve() == DATA_PATH.resolve():
+        updates_path = BULLETIN_UPDATES_PATH
+    if updates_path is None:
+        return rows, skipped
+    updates, update_skipped = read_demography_rows(updates_path)
+    by_key = {(row['indicator_code'], row['period']): row for row in rows}
+    for row in updates:
+        if not row.get('release_date'):
+            raise ValueError('公报更新必须带来源发布日期，不能静默覆盖原快照')
+        key = (row['indicator_code'], row['period'])
+        previous = by_key.get(key)
+        if previous and previous.get('release_date', '') and (
+                row['release_date'] < previous['release_date']):
+            raise ValueError(f'公报更新不能降级来源日期：{key[0]}/{key[1]}')
+        by_key[key] = row
+    return list(by_key.values()), skipped + update_skipped
+
+
 def sync_china_demography(conn, path=DATA_PATH, sync_at=None):
     """将 CSV 幂等写入统一 ``china_macro_observations`` 表。
 
     ``updated_at`` 表示本地记录真正发生变化的时间，而不是每次点击同步
     按钮的时间；这样页面可以区分本地快照同步时间和来源自身的发布时间。
     """
-    rows, skipped = read_demography_rows(path)
+    rows, skipped = read_effective_demography_rows(path)
     now = sync_at.isoformat() if isinstance(sync_at, datetime) else (
         str(sync_at) if sync_at is not None else datetime.now().isoformat())
     existing = {
@@ -160,7 +183,7 @@ def sync_china_demography(conn, path=DATA_PATH, sync_at=None):
                                           release_date,retrieved_at,release_date_not_provided,
                                           release_date_reason
                                    FROM china_macro_observations
-                                   WHERE indicator_code IN (?,?,?,?)''', DEMOGRAPHY_CODES)
+                                   WHERE indicator_code IN (?,?,?,?,?)''', DEMOGRAPHY_CODES)
     }
     upserted = 0
     unchanged = 0
@@ -218,6 +241,10 @@ def sync_china_demography(conn, path=DATA_PATH, sync_at=None):
         else:
             unchanged += 1
     conn.commit()
+    if upserted:
+        # The housing layer shares these marriages; invalidate its local cache.
+        from services.housing_structural_driver_service import load_national_structural_drivers
+        load_national_structural_drivers.cache_clear()
     return {
         'success': True,
         'records_upserted': upserted,

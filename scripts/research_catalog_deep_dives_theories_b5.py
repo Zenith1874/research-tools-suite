@@ -1,0 +1,540 @@
+# -*- coding: utf-8 -*-
+"""Deep dives for catalog theories, batch 5 — finance, decision science, operations.
+
+Four disciplines had no written analysis at all: Finance, Decision Sciences,
+Operations Management, and Supply Chain Management. These nine open them, and
+add the two highest-usage undone theories in OB/HR and strategy.
+
+The finance entries are closely related and cross-reference each other: expected
+utility underlies portfolio theory, portfolio theory underlies CAPM, and
+behavioral finance is the standing objection to all three.
+
+Schema helpers live in ``research_catalog_deep_dives``.
+"""
+
+from research_catalog_deep_dives import D, Debate, P, Pos
+
+THEORY_DIVES_B5 = dict([
+
+    # ------------------------------------------------ job characteristics model
+    D('job-characteristics-model',
+      era='Published 1975-1976; the dominant job design framework for three decades and still the basis of most job redesign practice.',
+      era_zh='1975—1976 年提出，此后三十年是工作设计的主导框架，至今仍是多数工作再设计实践的基础。',
+      situation=[
+        P('Job enlargement and rotation were being promoted as remedies for assembly-line monotony without a theory saying which features of a job actually matter or for whom.',
+          '工作扩大化与轮岗被作为流水线单调性的对策推广，却没有理论说明工作的哪些特征真正重要、对谁重要。'),
+        P('The field needed a diagnostic: a way to measure a job before redesigning it and to predict which changes would raise motivation rather than merely change the task.',
+          '该领域需要一套诊断工具：在再设计之前测量一份工作，并预测哪些改动会提升动机，而不只是改变任务内容。'),
+      ],
+      argument=[
+        P('Five core characteristics are proposed: skill variety, task identity, task significance, autonomy, and feedback from the job itself.',
+          '提出五项核心特征：技能多样性、任务完整性、任务重要性、自主性，以及来自工作本身的反馈。'),
+        P('They operate through three critical psychological states. The first three produce experienced meaningfulness; autonomy produces experienced responsibility; feedback produces knowledge of results. The states, not the characteristics, are what drive motivation.',
+          '它们经由三种关键心理状态起作用：前三项产生体验到的意义感；自主性产生体验到的责任感；反馈产生对结果的知晓。真正驱动动机的是这些状态，而非特征本身。'),
+        P('Growth need strength moderates the whole chain: the model predicts that enriching a job helps most for people who want growth from work, which is what makes it a contingency model rather than a universal prescription.',
+          '成长需要强度调节整条链条：模型预测工作丰富化对"希望从工作中获得成长"的人帮助最大——这使它成为权变模型而非普适处方。'),
+      ],
+      development=[
+        P('Later job design work added social and contextual characteristics — interdependence, social support, feedback from others — on the evidence that the original five omit the relational side of work entirely.',
+          '后续工作设计研究加入社会与情境特征——相互依赖、社会支持、来自他人的反馈——依据是原有五项完全遗漏了工作的关系维度。'),
+      ],
+      debates=[
+        Debate('Do the psychological states actually mediate?', '心理状态真的起中介作用吗？',
+               [Pos('Model position',
+                    'The states are the theoretical core; without them the model is just a list of job features correlated with satisfaction.',
+                    '这些状态是理论内核；没有它们，模型只是一份与满意度相关的工作特征清单。'),
+                Pos('Meta-analytic critique',
+                    'Support for the mediating states is consistently weaker than for the direct characteristic-outcome links, so the mechanism is less established than the prediction.',
+                    '对中介状态的支持一贯弱于对"特征—结果"直接联系的支持，因此机制的确立程度低于预测本身。')],
+               'Open. The direct effects replicate well; the mediation that makes it a theory does not replicate as cleanly.',
+               '未决。直接效应复制良好；而使它成为"理论"的那个中介，复制得并不干净。'),
+      ],
+      theoretical=[
+        P('Growth need strength as a moderator has received inconsistent support, which weakens the contingency claim that distinguishes the model from a simple enrichment prescription.',
+          '成长需要强度作为调节变量的支持并不一致，这削弱了使该模型区别于"简单丰富化处方"的权变主张。'),
+        P('The unit is an individual job with stable characteristics. Team-based and project work, where the job changes with the assignment, does not fit the diagnostic.',
+          '其分析单位是特征稳定的个体岗位。团队化与项目制工作中岗位随任务变化，并不适配该诊断工具。'),
+      ],
+      empirical=[
+        P('The diagnostic survey asks the jobholder to rate their own job, so job characteristics and satisfaction come from one person at one time and the correlation is inflated.',
+          '诊断问卷由任职者评价自己的工作，因此工作特征与满意度出自同一人、同一时点，相关被抬高。'),
+        P('Objective job characteristics and perceived ones diverge substantially, and a redesign that changes the former may not move the latter.',
+          '客观工作特征与感知工作特征差异很大；改变前者的再设计未必能推动后者。'),
+      ],
+      temporal=[
+        P('Feedback from the job itself assumed the work produces a visible result the person can judge. Where output is a contribution to a system whose outcome is measured elsewhere and returned as a score, feedback comes from the measurement apparatus rather than from the job, which is a different psychological object.',
+          '"来自工作本身的反馈"假定工作会产出个体能自行判断的可见结果。当产出只是对某个系统的贡献、其结果在别处被测量并以分数返回时，反馈来自测量装置而非工作本身——这是不同的心理对象。'),
+        P('Task identity — completing a whole and identifiable piece of work — was already strained by specialization and is harder still where a task is split between a person and a system, with the person supervising fragments.',
+          '任务完整性——完成一件完整且可辨识的工作——在专业化分工下已很勉强；当任务在人与系统之间拆分、人只监督片段时，更难成立。'),
+      ],
+      today=[
+        P('Still the right starting diagnostic for job redesign, and the five characteristics remain the most usable checklist available.',
+          '它仍是工作再设计恰当的起点诊断，五项特征也仍是最好用的检查清单。'),
+        P('Add the social characteristics and measure objective job features independently of the jobholder if the claim is that a redesign caused the change.',
+          '若主张再设计导致了变化，应补入社会特征，并独立于任职者测量客观工作特征。'),
+      ]),
+
+    # ------------------------------------------------ behavioral theory of firm
+    D('behavioral-theory-of-the-firm',
+      era='Published 1963; revived and formalized as performance-feedback research from the late 1980s.',
+      era_zh='1963 年出版，1980 年代末起以"绩效反馈研究"之名复兴并形式化。',
+      situation=[
+        P('Economic theory treated the firm as a single rational actor maximizing profit. That could not explain why firms with the same information and opportunities behaved differently, or why internal conflict shaped decisions.',
+          '经济理论把企业当作追求利润最大化的单一理性行动者。这解释不了为何信息与机会相同的企业行为不同，也解释不了内部冲突如何塑造决策。'),
+        P('Opening the black box required a different premise: the firm is a coalition of participants with conflicting goals, and decisions are the outcome of a process rather than of an optimization.',
+          '打开黑箱需要一个不同的前提：企业是目标冲突的参与者联盟，决策是过程的产物而非优化的结果。'),
+      ],
+      argument=[
+        P('Goals are not maximized but satisficed against an aspiration level, which is set by the firm own history and by comparison with peers.',
+          '目标不是被最大化，而是相对于抱负水平被满意化；抱负水平由企业自身历史与同侪比较共同设定。'),
+        P('Performance relative to aspiration triggers behaviour. Below aspiration, the firm engages in problemistic search — local, near the symptom, and biased toward familiar solutions. Above aspiration, slack accumulates and search relaxes.',
+          '相对于抱负的绩效触发行为。低于抱负时，企业展开问题式搜索——局部的、贴近症状的、偏向熟悉方案的。高于抱负时，冗余积累、搜索放松。'),
+        P('Organizational slack is the buffer that absorbs conflict between coalition members and permits experimentation that would not survive a strict optimization.',
+          '组织冗余是吸收联盟成员之间冲突的缓冲，也使那些在严格优化下无法存活的试验成为可能。'),
+      ],
+      development=[
+        P('Performance feedback research made the aspiration comparison the central empirical object, generating a large literature on how firms respond to falling below or rising above their reference point.',
+          '绩效反馈研究把抱负比较作为核心经验对象，就"企业如何回应低于或高于参照点"形成了大量文献。'),
+      ],
+      debates=[
+        Debate('Which aspiration reference applies?', '哪一种抱负参照适用？',
+               [Pos('Historical position',
+                    'Firms compare to their own recent performance, which is the reference they observe most reliably.',
+                    '企业与自身近期绩效比较，这是它们观察最可靠的参照。'),
+                Pos('Social position',
+                    'Firms compare to peers, since managers are evaluated relative to competitors rather than to their own past.',
+                    '企业与同侪比较，因为管理者是相对于竞争对手而非自身过去被评价的。')],
+               'Both operate and studies model them differently, which is a substantial source of inconsistent findings.',
+               '两者都在起作用，而不同研究的建模方式不同——这是结论不一致的重要来源。'),
+      ],
+      theoretical=[
+        P('Aspiration levels are inferred from a model rather than observed, which gives the framework flexibility to fit many patterns after the fact.',
+          '抱负水平是由模型推断而非观察得来的，这使框架具备事后拟合多种模式的弹性。'),
+        P('The theory predicts that search is triggered and where it looks, but says little about what firms find, so it explains direction better than content.',
+          '理论预测搜索被触发以及搜索的方向，却几乎不说明企业会找到什么；因此它对方向的解释强于对内容的解释。'),
+      ],
+      empirical=[
+        P('Performance and aspiration are both constructed from the same accounting series, so the gap between them inherits any measurement problem in the underlying data.',
+          '绩效与抱负都由同一套会计序列构造而来，因此二者之差继承了底层数据中的任何测量问题。'),
+        P('Responses above and below aspiration are asymmetric, and specifications that impose a single linear term average away the asymmetry the theory predicts.',
+          '高于与低于抱负的反应是不对称的；施加单一线性项的设定会把理论所预测的不对称平均掉。'),
+      ],
+      temporal=[
+        P('The framework assumes performance feedback arrives periodically and coarsely — quarterly results, annual comparisons — leaving time for search between signals. Where performance is visible continuously on a dashboard, the aspiration comparison happens constantly and the punctuated search the theory describes may not have room to operate.',
+          '框架假定绩效反馈以周期性、粗颗粒的方式到来——季度业绩、年度比较——信号之间留有搜索的时间。当绩效在仪表盘上持续可见时，抱负比较时刻在发生，理论所描述的"间歇式搜索"可能没有运作空间。'),
+        P('Slack was theorized as resources that accumulate unnoticed in good times. Tighter capital discipline and continuous cost visibility reduce the slack that made experimentation possible, which weakens a mechanism the theory relies on.',
+          '冗余被设想为景气时无声积累的资源。更严格的资本纪律与持续的成本可见性压缩了使试验成为可能的冗余，从而削弱了理论所依赖的一个机制。'),
+      ],
+      today=[
+        P('State which reference point the study uses and why, and model above- and below-aspiration responses separately.',
+          '应说明研究采用哪一种参照点及其理由，并分别对高于与低于抱负的反应建模。'),
+        P('It remains the best available account of why firms change strategy when nothing external forced them to, which is a question most strategy frameworks cannot address.',
+          '对于"没有外部强制时企业为何改变战略"这一多数战略框架无法回答的问题，它仍是最好的解释。'),
+      ]),
+
+    # ---------------------------------------------- efficient market hypothesis
+    D('efficient-market-hypothesis',
+      era='Formalized in 1970; the anomalies literature and behavioral challenge developed from the 1980s onward.',
+      era_zh='1970 年形式化，异象文献与行为学挑战自 1980 年代起发展。',
+      situation=[
+        P('Investors and analysts claimed to identify mispriced securities, and there was no agreed standard for what would count as evidence that they could.',
+          '投资者与分析师声称能识别错误定价的证券，而当时没有公认标准来判断什么才算这种能力的证据。'),
+        P('The hypothesis supplied a null: if prices already reflect available information, then no strategy based on that information can earn risk-adjusted excess returns, and any claim to the contrary becomes testable.',
+          '该假说提供了一个零假设：若价格已反映可得信息，任何基于该信息的策略都无法获得风险调整后的超额收益；相反的主张因而变得可检验。'),
+      ],
+      argument=[
+        P('Three forms differ by what counts as available information: weak form uses past prices, semi-strong adds all public information, strong adds private information.',
+          '三种形式的差别在于"可得信息"的范围：弱式为历史价格，半强式加入全部公开信息，强式再加入私人信息。'),
+        P('The mechanism is competition among informed traders. If a profitable pattern exists, acting on it moves the price and eliminates it, so efficiency is a consequence of the search for inefficiency.',
+          '其机制是知情交易者之间的竞争。若存在可获利模式，据之交易就会推动价格并消除该模式；因此有效性是"寻找无效性"这一行为的结果。'),
+        P('The hypothesis is never testable alone. Any test is a joint test of efficiency and of the asset pricing model used to define what return is normal, which is why no result can refute efficiency on its own.',
+          '该假说本身永远无法单独检验。任何检验都是"有效性"与"用以界定正常收益的资产定价模型"的联合检验——这正是没有任何结果能单独证伪有效性的原因。'),
+      ],
+      development=[
+        P('The anomalies literature documented persistent patterns — size, value, momentum — that were then absorbed as risk factors, which is either the model improving or the hypothesis being rescued by redefinition depending on the reader.',
+          '异象文献记录了规模、价值、动量等持续存在的模式，随后它们被吸收为风险因子。这究竟是模型的改进，还是通过重新定义来挽救假说，取决于读者的立场。'),
+      ],
+      debates=[
+        Debate('Do anomalies refute market efficiency?', '异象能证伪市场有效吗？',
+               [Pos('Anomaly position',
+                    'Persistent, replicable patterns that earn excess returns are what inefficiency would look like, and there are many of them.',
+                    '持续、可复制且带来超额收益的模式，正是无效性应有的样子——而这样的模式很多。'),
+                Pos('Joint-hypothesis position',
+                    'An anomaly is equally consistent with a mispriced risk factor missing from the model, and the two cannot be separated by data.',
+                    '异象同样可以解释为模型遗漏了某个定价的风险因子；数据无法把二者分开。')],
+               'Structurally unresolvable given the joint hypothesis problem, which is the most important thing to understand about this literature.',
+               '在联合假设问题之下结构性地不可解——这是理解这一文献最重要的一点。'),
+      ],
+      theoretical=[
+        P('The joint hypothesis problem means the theory cannot be falsified independently, which is a limitation of the research programme rather than of any single study.',
+          '联合假设问题意味着该理论无法被独立证伪；这是整个研究纲领的局限，而非任何单项研究的局限。'),
+        P('Efficiency requires that mispricing be arbitrageable. Where arbitrage is limited by capital constraints, horizon, or risk, prices can deviate without any profitable trade existing.',
+          '有效性要求错误定价可被套利。当套利受资本约束、期限或风险限制时，价格可以偏离而不存在可获利交易。'),
+      ],
+      empirical=[
+        P('Anomaly research faces severe multiple-testing pressure: many candidate signals are examined and the surviving ones are published, so a substantial share are expected to fail out of sample.',
+          '异象研究面临严重的多重检验压力：大量候选信号被检视、只有存活者被发表，因此相当一部分预期在样本外失效。'),
+        P('Replication attempts find that many documented anomalies weaken or disappear after publication, which is consistent both with arbitrage removing them and with them having been overfitted.',
+          '复制研究发现许多已记录异象在发表后减弱或消失——这既与"套利消除了它们"一致，也与"它们本就是过拟合"一致。'),
+      ],
+      temporal=[
+        P('The competition mechanism assumed human traders acting on public information over days. Where signals are extracted from alternative data and traded in microseconds, the window in which information is unincorporated is far shorter, and tests using daily data may not observe the process at all.',
+          '竞争机制假定人类交易者在数日内依据公开信息行动。当信号从另类数据中提取并以微秒级交易时，信息未被吸收的窗口远为短暂，使用日频数据的检验可能根本观察不到这一过程。'),
+        P('The information set itself changed. Public information now includes machine-readable filings, satellite imagery, and behavioural traces, so what counts as semi-strong form efficiency is a moving definition rather than a fixed one.',
+          '信息集本身也变了。公开信息如今包括机器可读的申报文件、卫星影像与行为痕迹，因此"半强式有效"的界定是移动的而非固定的。'),
+      ],
+      today=[
+        P('State the asset pricing model being used as the benchmark. A claim about efficiency is always a claim about efficiency given that model.',
+          '应说明作为基准的资产定价模型。任何关于有效性的主张，都是"给定该模型"下的主张。'),
+        P('Report out-of-sample and post-publication performance for any anomaly. In-sample significance is the weakest form of evidence available here.',
+          '任何异象都应报告样本外与发表后的表现。样本内显著是这里最弱的一种证据。'),
+      ]),
+
+    # ---------------------------------------------------- modern portfolio theory
+    D('modern-portfolio-theory',
+      era='Published 1952; the foundation of quantitative asset allocation and the basis for CAPM.',
+      era_zh='1952 年发表，是量化资产配置的基础，也是 CAPM 的出发点。',
+      situation=[
+        P('Investment practice evaluated securities one at a time, seeking those with the best prospects. That framing has no place for the interaction between holdings and therefore no account of diversification beyond the intuition that it helps.',
+          '当时的投资实践逐一评估证券，寻找前景最好的那些。这一框定没有位置容纳持仓之间的相互作用，因而除了"分散有好处"的直觉之外，没有关于分散化的解释。'),
+        P('The contribution was to make the portfolio rather than the security the object of choice, which turns covariance from a statistical detail into the central decision variable.',
+          '其贡献是把选择对象从单个证券转为组合，这使协方差从统计细节变成核心决策变量。'),
+      ],
+      argument=[
+        P('An investor cares about the mean and variance of portfolio return. Because portfolio variance depends on covariances, combining imperfectly correlated assets reduces risk without a proportional reduction in expected return.',
+          '投资者关心组合收益的均值与方差。由于组合方差取决于协方差，把不完全相关的资产组合起来可以降低风险，而预期收益不会等比例下降。'),
+        P('The efficient frontier is the set of portfolios with maximum expected return for each level of variance. Rational choice lies on the frontier; anything inside it is dominated.',
+          '有效前沿是每个方差水平下预期收益最高的组合集合。理性选择位于前沿之上，前沿之内的任何组合都被占优。'),
+        P('The practical implication is that a risky asset should be judged by its contribution to portfolio risk rather than by its own volatility, which is the idea CAPM then formalizes as beta.',
+          '其实践含义是：风险资产应以它对组合风险的贡献来评判，而非以自身波动率——这一思想随后被 CAPM 形式化为贝塔。'),
+      ],
+      development=[
+        P('Estimation error was recognized early as the binding practical problem, and shrinkage estimators, factor models, and constrained optimization were developed in response.',
+          '估计误差很早就被认识为实践中的关键约束，收缩估计量、因子模型与带约束优化因而被发展出来。'),
+      ],
+      debates=[
+        Debate('Is mean-variance optimization usable in practice?', '均值—方差优化在实践中可用吗？',
+               [Pos('Theoretical position',
+                    'It is the correct framework for the trade-off and remains the benchmark against which alternatives are judged.',
+                    '它是刻画该取舍的正确框架，也仍是评判各种替代方案的基准。'),
+                Pos('Estimation-error critique',
+                    'Optimized weights are extremely sensitive to estimated expected returns, and naive equal weighting frequently outperforms optimization out of sample.',
+                    '优化权重对估计的预期收益极其敏感，样本外表现上，朴素等权常常优于优化。')],
+               'The critique is well established. The theory survives as a conceptual framework more than as an allocation procedure.',
+               '该批评已充分确立。该理论更多以概念框架而非配置程序的形式存续。'),
+      ],
+      theoretical=[
+        P('Variance treats upside and downside deviation symmetrically, which does not match how investors describe risk, and downside measures give different frontiers.',
+          '方差把上行与下行偏离对称处理，这与投资者描述风险的方式不符；下行风险指标会给出不同的前沿。'),
+        P('The framework is single period. Multi-period problems with rebalancing, taxes, and changing opportunity sets do not reduce to it.',
+          '该框架是单期的。含再平衡、税收与机会集变化的多期问题无法化约为它。'),
+      ],
+      empirical=[
+        P('Expected returns must be estimated and are estimated poorly. Errors in expected return dominate errors in covariance, which is why optimized portfolios are unstable.',
+          '预期收益必须被估计，而估计得很差。预期收益的误差主导协方差的误差——这正是优化组合不稳定的原因。'),
+        P('Correlations rise in crises, so the diversification the model promises is weakest precisely when it is needed most.',
+          '相关性在危机中上升，因此模型所承诺的分散化恰恰在最需要时最弱。'),
+      ],
+      temporal=[
+        P('The framework assumes a fixed set of assets with estimable return distributions. Asset classes that lack long return histories, or whose distributions are shaped by their own adoption, cannot supply the inputs the optimization requires, so applying it to them is an extrapolation rather than an application.',
+          '框架假定资产集合固定且收益分布可估。缺乏长期收益历史、或其分布本身由采纳过程塑造的资产类别，无法提供优化所需的输入；把它用于这些资产是外推而非应用。'),
+        P('It was formulated when portfolio construction was infrequent and costly. Continuous rebalancing at near-zero transaction cost changes the practical problem, and the single-period formulation does not describe it.',
+          '它成形于组合构建低频且昂贵的时期。近乎零成本的持续再平衡改变了实践问题，而单期表述无法描述它。'),
+      ],
+      today=[
+        P('Use it to reason about the risk-return trade-off, and report the sensitivity of any optimized allocation to the expected-return inputs.',
+          '应用它来推理风险—收益取舍，并报告任何优化配置对预期收益输入的敏感性。'),
+        P('Compare against equal weighting as a benchmark. If optimization does not beat it out of sample, the estimation error is dominating the theory.',
+          '应以等权作为基准对照。若优化在样本外无法胜过等权，说明估计误差已压过理论本身。'),
+      ]),
+
+    # ------------------------------------------------- capital asset pricing model
+    D('capital-asset-pricing-model',
+      era='Derived in the 1960s; empirically challenged from the 1980s and extended into multifactor models from 1993.',
+      era_zh='1960 年代推导得出，1980 年代起在经验上受到挑战，1993 年起扩展为多因子模型。',
+      situation=[
+        P('Portfolio theory said which portfolios are efficient but not what expected return an individual asset should offer. Without that, there was no benchmark for whether a return was adequate compensation for risk.',
+          '组合理论说明了哪些组合有效，却没有说明单项资产应提供怎样的预期收益。缺少这一点，就没有基准判断某个收益是否是对风险的充分补偿。'),
+        P('If all investors optimize as portfolio theory prescribes and hold the same beliefs, the market portfolio must itself be efficient, and that equilibrium condition pins down the price of risk.',
+          '若所有投资者都按组合理论优化且持有相同信念，市场组合本身必定是有效的；这一均衡条件确定了风险的价格。'),
+      ],
+      argument=[
+        P('Only risk that cannot be diversified away should be compensated. Beta measures an asset covariance with the market portfolio, and expected return is linear in beta.',
+          '只有无法通过分散消除的风险才应获得补偿。贝塔衡量资产与市场组合的协方差，预期收益是贝塔的线性函数。'),
+        P('Idiosyncratic risk earns nothing because an investor can eliminate it for free, which is the sharpest and most useful implication of the model.',
+          '特异性风险没有回报，因为投资者可以免费消除它——这是该模型最锋利、也最有用的推论。'),
+        P('The result depends on a chain of strong assumptions: homogeneous expectations, frictionless markets, unlimited riskless borrowing, and a single period.',
+          '该结论依赖一系列强假定：同质预期、无摩擦市场、无限制的无风险借贷，以及单期。'),
+      ],
+      development=[
+        P('Multifactor models added size, value, profitability, and investment factors, which improved description substantially while abandoning the single-factor equilibrium logic that made CAPM a theory rather than a regression.',
+          '多因子模型加入规模、价值、盈利与投资因子，大幅改善了描述力，却放弃了使 CAPM 成为"理论而非回归"的单因子均衡逻辑。'),
+      ],
+      debates=[
+        Debate('Is CAPM testable?', 'CAPM 可检验吗？',
+               [Pos('Testable position',
+                    'Beta and returns are observable and the linear relation is a clear prediction that can be examined.',
+                    '贝塔与收益可观察，线性关系是可供检验的明确预测。'),
+                Pos('Unobservable-market position',
+                    'The true market portfolio includes all assets — human capital, private firms, real estate — and is unobservable, so any test uses a proxy and tests the proxy rather than the model.',
+                    '真实市场组合包含全部资产——人力资本、非上市企业、房地产——而它不可观察；因此任何检验用的都是代理，检验的是代理而非模型。')],
+               'The critique is a permanent limitation on empirical work in this area rather than a resolved question.',
+               '这一批评是该领域经验研究的永久性局限，而非已解决的问题。'),
+      ],
+      theoretical=[
+        P('The assumptions are known to be false individually. The defence is that the model is a useful approximation, which is a different claim from the model being correct.',
+          '这些假定单个来看都已知为假。辩护理由是"模型是有用的近似"——而这与"模型正确"是不同的主张。'),
+        P('It is an equilibrium model of expected returns, and applying it to realized returns for performance evaluation imports assumptions that the evaluation context may not satisfy.',
+          '它是关于预期收益的均衡模型；把它用于已实现收益的业绩评价，会引入评价情境未必满足的假定。'),
+      ],
+      empirical=[
+        P('The empirical relation between beta and average return is flatter than the model predicts, which is one of the most replicated findings in finance.',
+          '贝塔与平均收益之间的经验关系比模型预测的更平坦，这是金融学中被复制最多的发现之一。'),
+        P('Beta is estimated from historical returns and is unstable over time, so cross-sectional tests carry substantial measurement error in the key variable.',
+          '贝塔由历史收益估计且随时间不稳定，因此横截面检验在关键变量上带有相当大的测量误差。'),
+      ],
+      temporal=[
+        P('The model was built for a market of listed equities held by diversified investors. Where a growing share of value sits in private firms, and where index products mean many investors hold the market mechanically rather than as an optimization, the equilibrium story the model tells about how prices are set has less purchase.',
+          '模型针对的是由分散化投资者持有的上市股票市场。当越来越大比例的价值存在于非上市企业、且指数产品意味着大量投资者是机械持有市场而非通过优化持有时，模型关于"价格如何形成"的均衡叙事的解释力随之下降。'),
+        P('Despite its empirical record, it remains the standard cost-of-capital input in valuation and in corporate finance practice, so a gap between what the literature concludes and what is used in practice has persisted for decades.',
+          '尽管经验表现不佳，它仍是估值与公司金融实践中标准的资本成本输入；文献结论与实践用法之间的落差已持续数十年。'),
+      ],
+      today=[
+        P('Use a multifactor benchmark for performance evaluation and say which factors and why. Single-factor alpha is not a defensible measure of skill.',
+          '业绩评价应使用多因子基准，并说明选用哪些因子及理由。单因子 alpha 不是可辩护的能力度量。'),
+        P('When CAPM is used for cost of capital, state that it is a convention rather than an empirically supported estimate.',
+          '当用 CAPM 计算资本成本时，应说明这是一种惯例，而非有经验支持的估计。'),
+      ]),
+
+    # ------------------------------------------------------- behavioral finance
+    D('behavioral-finance',
+      era='Developed from the 1980s and consolidated in the 2000s as the standing alternative to frictionless rational pricing.',
+      era_zh='1980 年代起发展，2000 年代集成，成为"无摩擦理性定价"的常设替代方案。',
+      situation=[
+        P('The efficient markets programme could accommodate anomalies by adding risk factors, but it could not explain a growing body of evidence that prices respond to things with no plausible risk interpretation.',
+          '有效市场纲领可以通过增加风险因子来容纳异象，却无法解释越来越多的证据：价格会对没有合理风险解释的因素作出反应。'),
+        P('Psychology already documented systematic departures from expected utility. The contribution was to show that those departures survive in markets rather than being competed away.',
+          '心理学已记录了对期望效用的系统性偏离。该领域的贡献在于证明：这些偏离在市场中得以存续，而非被竞争消除。'),
+      ],
+      argument=[
+        P('Two components are required together. Investors are subject to identifiable biases — overconfidence, loss aversion, extrapolation, attention effects. And arbitrage is limited, so rational traders cannot always correct the resulting mispricing.',
+          '两个组成部分缺一不可：投资者受可识别偏差影响——过度自信、损失厌恶、外推、注意力效应；同时套利受限，理性交易者无法总是纠正由此产生的错误定价。'),
+        P('Limits to arbitrage is the load-bearing half. Without it, biased investors would simply lose money to rational ones and prices would be unaffected, so a behavioral explanation that omits it is incomplete.',
+          '套利受限是承重的那一半。若无此，有偏投资者只会把钱输给理性投资者，价格不受影响；因此忽略这一点的行为学解释是不完整的。'),
+        P('Arbitrage is limited by fundamental risk, noise trader risk, horizon and capital constraints, and the agency relationship between managers and their investors.',
+          '套利受限于基本面风险、噪声交易者风险、期限与资本约束，以及管理人与其投资者之间的委托代理关系。'),
+      ],
+      development=[
+        P('The field moved from cataloguing biases to identifying which ones survive aggregation, since individual errors that are uncorrelated cancel in a market and only correlated ones move prices.',
+          '该领域已从罗列偏差转向识别哪些偏差能在聚合后存续：不相关的个体误差在市场中彼此抵消，只有相关的偏差才能推动价格。'),
+      ],
+      debates=[
+        Debate('Are behavioral explanations disciplined enough?', '行为学解释足够有约束力吗？',
+               [Pos('Critique',
+                    'With a long list of biases available, almost any pattern can be explained after the fact, which makes the programme hard to falsify.',
+                    '在一长串偏差可供取用的情况下，几乎任何模式都能被事后解释，这使该纲领难以证伪。'),
+                Pos('Defence',
+                    'The requirement to specify limits to arbitrage and to predict out of sample disciplines it, and the strongest work does both.',
+                    '"必须指明套利限制并作出样本外预测"这一要求构成了约束，最有力的研究两者兼具。')],
+               'Open, and the discipline comes from the limits-to-arbitrage half rather than from the psychology.',
+               '未决；约束力来自"套利受限"这一半，而非来自心理学部分。'),
+      ],
+      theoretical=[
+        P('An individual-level bias does not automatically produce an aggregate price effect, and the step from one to the other is frequently assumed rather than argued.',
+          '个体层面的偏差不会自动产生总量层面的价格效应，而从前者到后者的这一步常被假定而非论证。'),
+        P('Behavioral and rational explanations are often observationally equivalent, so distinguishing them requires a prediction on which they differ.',
+          '行为学解释与理性解释常常观测等价；要区分二者，需要找到它们预测不同的地方。'),
+      ],
+      empirical=[
+        P('Sentiment and attention proxies are constructed from data that also reflect fundamentals, so a documented relation may be picking up information rather than bias.',
+          '情绪与注意力代理指标构造自同样反映基本面的数据，因此所记录的关系可能捕捉的是信息而非偏差。'),
+        P('Many behavioral anomalies weaken after publication, which is consistent both with arbitrage removing them and with the original result being overfitted.',
+          '许多行为异象在发表后减弱——这既与套利消除一致，也与原结果过拟合一致。'),
+      ],
+      temporal=[
+        P('Limits to arbitrage were theorized when correcting mispricing required capital, access, and a long horizon. Cheaper execution and broader instrument availability weaken some of those limits, so a bias that survived in the 1990s may not survive now, and results are period specific in a way that is easy to overlook.',
+          '套利受限的理论化发生在"纠正错误定价需要资本、渠道与长期限"的时期。更低的执行成本与更广的工具可得性削弱了其中部分限制；因此在 1990 年代存续的偏差如今未必存续，结果具有容易被忽略的时期特定性。'),
+        P('The investor population changed. Retail participation through commission-free platforms and coordinated online behaviour produce correlated flows of a kind the original noise-trader models did not contemplate.',
+          '投资者构成也变了。经由零佣金平台的散户参与以及线上协同行为，产生了原初噪声交易者模型未曾设想的相关性资金流。'),
+      ],
+      today=[
+        P('Specify the limit to arbitrage, not just the bias. A paper that documents a bias without explaining why it is not competed away has explained half the phenomenon.',
+          '应指明套利受限之处，而不只是偏差。只记录偏差却不解释它为何未被竞争消除的论文，只解释了现象的一半。'),
+        P('Report post-publication performance where the claim is a return pattern, and design tests where the behavioral and rational accounts predict differently.',
+          '当主张涉及收益模式时应报告发表后表现，并设计"行为学与理性解释预测不同"的检验。'),
+      ]),
+
+    # --------------------------------------------------- expected utility theory
+    D('expected-utility-theory',
+      era='Axiomatized in 1944; the normative benchmark for decision under risk and the target of the behavioral critique.',
+      era_zh='1944 年公理化，是风险决策的规范基准，也是行为学批评的靶子。',
+      situation=[
+        P('Decision under uncertainty had no formal standard. Choosing by expected monetary value gives absurd prescriptions in cases where a small probability of a huge payoff dominates the calculation.',
+          '不确定条件下的决策此前没有形式化标准。按期望货币价值选择，在"极小概率对应极大回报"主导计算的情形下会给出荒谬处方。'),
+        P('The axiomatic treatment supplied a foundation: state properties a rational preference ordering should satisfy, then show that any preference satisfying them can be represented as maximizing expected utility.',
+          '公理化处理提供了基础：先陈述理性偏好序应满足的性质，再证明任何满足这些性质的偏好都可表示为期望效用最大化。'),
+      ],
+      argument=[
+        P('The theory is a representation result, not a psychological claim. It does not assert that people compute utilities; it says that if preferences satisfy the axioms, they behave as if they did.',
+          '该理论是一个表示定理，而非心理学主张。它并不断言人们在计算效用，而是说：若偏好满足公理，人们的行为就"如同"在计算效用。'),
+        P('Independence is the axiom that does the work and the one behavioral evidence violates: preference between two prospects should not change when both are mixed with a common third prospect.',
+          '独立性是起关键作用、也是被行为证据违反的那条公理：两个前景之间的偏好，不应因二者都与同一个第三前景混合而改变。'),
+        P('Risk aversion is represented by the curvature of the utility function over final wealth, which is what distinguishes it from the reference-dependent account prospect theory proposes.',
+          '风险规避由效用函数在最终财富上的曲率表示——这正是它区别于前景理论所提出的"参照依赖"解释之处。'),
+      ],
+      development=[
+        P('Non-expected-utility models were developed to accommodate the observed violations while retaining as much structure as possible, and prospect theory is the most influential of them.',
+          '非期望效用模型被发展出来以容纳观察到的违背，同时尽可能保留结构；前景理论是其中最有影响的一个。'),
+      ],
+      debates=[
+        Debate('Is it normative, descriptive, or neither?', '它是规范的、描述的，还是两者都不是？',
+               [Pos('Normative position',
+                    'The axioms are properties a decision maker on reflection would want to satisfy, so violations are errors rather than counterexamples.',
+                    '这些公理是决策者经反思后会希望满足的性质，因此违背是错误而非反例。'),
+                Pos('Descriptive critique',
+                    'Violations are systematic, replicable, and persist among experienced decision makers, so treating them as errors saves the theory by definition.',
+                    '违背是系统的、可复制的，且在有经验的决策者中持续存在；把它们当作错误，等于用定义来挽救理论。')],
+               'Both readings persist. The productive position is that it is a normative benchmark whose descriptive failures are informative.',
+               '两种解读并存。有建设性的立场是：把它当作规范基准，其描述性失败本身即有信息量。'),
+      ],
+      theoretical=[
+        P('It requires probabilities to be known. Where they are unknown — ambiguity rather than risk — the framework does not apply and people behave differently in ways the theory does not represent.',
+          '它要求概率已知。当概率未知时——是模糊而非风险——框架不适用，而人们的行为方式也不同，理论无法表达。'),
+        P('Utility is defined over final wealth states, which requires the decision maker to integrate a prospect with everything else they hold, and people demonstrably do not.',
+          '效用定义在最终财富状态上，这要求决策者把某个前景与其全部持有整合考虑，而人们明显不会这样做。'),
+      ],
+      empirical=[
+        P('Violations of independence are among the most robust findings in experimental economics and appear across incentives, stakes, and populations.',
+          '对独立性的违背是实验经济学中最稳健的发现之一，在不同激励、赌注与人群中都会出现。'),
+        P('Utility functions estimated from choices are not stable across elicitation methods, which suggests the parameter is partly an artefact of how the question is asked.',
+          '由选择估计出的效用函数在不同引出方法之间并不稳定，这提示该参数部分是提问方式的产物。'),
+      ],
+      temporal=[
+        P('The framework assumes a decision maker facing a described prospect with stated probabilities. Most consequential decisions now involve probabilities produced by a model, and whether people treat a model output as a probability at all is an open question the theory does not address.',
+          '框架假定决策者面对一个概率已明示的被描述前景。如今多数重要决策所涉概率由模型产生，而人们是否把模型输出当作概率来对待，是理论未处理的开放问题。'),
+        P('It remains the foundation of normative decision analysis and of most economic modelling, so its descriptive failures matter more for interpreting model-based prescriptions than for the models internal consistency.',
+          '它仍是规范决策分析与多数经济建模的基础；因此其描述性失败，对"如何解读基于模型的处方"的影响大于对模型内部一致性的影响。'),
+      ],
+      today=[
+        P('Use it as the normative benchmark and state that role explicitly. Describing observed behaviour as violating it is informative; describing it as irrational usually is not.',
+          '应把它当作规范基准并明确说明这一角色。把观察到的行为描述为"违背它"是有信息量的；描述为"非理性"通常不是。'),
+        P('If probabilities in the setting are unknown or model generated, say so. Ambiguity is a different problem and the framework does not cover it.',
+          '若情境中的概率未知或由模型生成，应予说明。模糊是另一个问题，该框架并不涵盖。'),
+      ]),
+
+    # --------------------------------------------------------- inventory theory
+    D('inventory-theory',
+      era='Begins with the economic order quantity in 1913; stochastic and multi-echelon models developed from the 1950s.',
+      era_zh='始于 1913 年的经济订货量模型，随机与多级模型自 1950 年代起发展。',
+      situation=[
+        P('Holding inventory ties up capital and space; holding too little causes stockouts and lost sales. Practice managed the trade-off by rule of thumb with no way to say what the right level was.',
+          '持有库存占用资金与空间，持有过少则导致缺货与销售损失。实践此前靠经验法则管理这一取舍，无法说明多少才是正确水平。'),
+        P('Formalizing the cost structure turns the question into an optimization: given ordering cost, holding cost, and demand, there is a quantity and a timing that minimizes total cost.',
+          '把成本结构形式化，问题即转为优化：给定订货成本、持有成本与需求，存在使总成本最小的订货量与时点。'),
+      ],
+      argument=[
+        P('The basic result balances two costs that move in opposite directions with order size: ordering frequently raises fixed ordering cost, ordering in bulk raises holding cost.',
+          '基本结论平衡两项随订货量反向变动的成本：频繁订货抬高固定订货成本，大批量订货抬高持有成本。'),
+        P('Under uncertainty the problem becomes a service-level choice. Safety stock buys protection against demand and lead-time variability, and the optimal level depends on the cost of a stockout relative to the cost of holding.',
+          '在不确定条件下问题转为服务水平选择。安全库存换取对需求与提前期波动的保护，最优水平取决于缺货成本相对于持有成本的比值。'),
+        P('The critical insight for practice is that required safety stock scales with the square root of lead time, which is why lead-time reduction is often more effective than adding stock.',
+          '对实践最关键的洞见是：所需安全库存随提前期的平方根增长——这正是缩短提前期往往比增加库存更有效的原因。'),
+      ],
+      development=[
+        P('Multi-echelon models extended it across a supply network, where local optimization at each stage produces globally worse outcomes than coordinated policy.',
+          '多级模型把它扩展到整个供应网络：各环节各自局部最优，会产生比协调策略更差的全局结果。'),
+      ],
+      debates=[
+        Debate('Is lean inventory a cost saving or a risk transfer?', '精益库存是节约成本还是转移风险？',
+               [Pos('Efficiency position',
+                    'Inventory hides operational problems, and reducing it exposes and forces correction of the underlying variability.',
+                    '库存掩盖运营问题；减少库存会暴露并迫使纠正底层的波动性。'),
+                Pos('Resilience position',
+                    'Buffers absorb disruption, and removing them transfers risk to the point where a shock becomes a stoppage rather than a delay.',
+                    '缓冲吸收中断；移除它们会把风险转移到"冲击变成停产而非延误"的临界点。')],
+               'Disruption experience shifted practice toward accepting buffer cost as insurance, but the cost of that insurance is rarely modelled explicitly.',
+               '中断经历使实践转向把缓冲成本视为保险，但这份保险的成本很少被显式建模。'),
+      ],
+      theoretical=[
+        P('Standard models assume stationary demand with a known distribution. Where demand is non-stationary or shaped by the firm own pricing and promotion, the optimization is solving a problem the firm partly creates.',
+          '标准模型假定需求平稳且分布已知。当需求非平稳、或受企业自身定价与促销塑造时，优化所解的问题有一部分是企业自己制造的。'),
+        P('Stockout cost is the parameter that drives the service-level choice and is the one least amenable to measurement, since it includes lost future sales and reputational effects.',
+          '缺货成本是驱动服务水平选择的参数，也是最难测量的：它包含未来销售损失与声誉影响。'),
+      ],
+      empirical=[
+        P('Recorded demand is censored by stockouts: what is observed is sales, not demand, and treating the two as equal biases forecasts downward exactly where stock was short.',
+          '记录的需求被缺货截断：观察到的是销量而非需求；把二者等同，恰恰在缺货处使预测向下偏倚。'),
+        P('Inventory records diverge from physical stock at rates high enough to matter, so policies optimized on system data are applied to a different physical reality.',
+          '库存记录与实物库存的差异大到足以产生影响；据系统数据优化的策略，被应用于不同的实物现实。'),
+      ],
+      temporal=[
+        P('The models assume replenishment lead times that are long, stable, and known. Where lead times are volatile and correlated across suppliers — as they are under multi-tier disruption — the square-root safety stock formula understates the buffer required, and the model gives confident guidance that is wrong in the direction that matters.',
+          '模型假定补货提前期长、稳定且已知。当提前期波动且在供应商之间相关时——多层级中断下正是如此——平方根安全库存公式会低估所需缓冲；模型给出的自信建议，恰恰在关键方向上是错的。'),
+        P('It was built when demand signals arrived slowly and inventory was reviewed periodically. Continuous visibility and rapid replenishment change the problem from setting a policy to running a control loop, which the classical formulation does not describe.',
+          '它建立于需求信号到达缓慢、库存周期性盘点的时期。持续可见性与快速补货把问题从"设定策略"变为"运行控制回路"，而经典表述并未描述后者。'),
+      ],
+      today=[
+        P('Correct for censored demand before fitting any policy. Optimizing on sales data reproduces the stockouts that produced it.',
+          '在拟合任何策略之前应校正被截断的需求。用销量数据优化，只会复制产生该数据的缺货。'),
+        P('Model lead-time variability and its correlation across suppliers explicitly, since that is where the classical formula fails and where disruption cost concentrates.',
+          '应显式建模提前期波动及其在供应商之间的相关性——经典公式正是在这里失效，中断成本也集中于此。'),
+      ]),
+
+    # ---------------------------------------------------------- queueing theory
+    D('queueing-theory',
+      era='Originates in 1909 telephone engineering; developed as a general framework for congestion from the 1950s.',
+      era_zh='源自 1909 年的电话工程，1950 年代起发展为拥塞问题的通用框架。',
+      situation=[
+        P('Systems where arrivals are random and service capacity is finite produce waiting, and adding capacity is expensive. Practice had no way to predict how much waiting a given capacity would produce.',
+          '到达随机、服务能力有限的系统必然产生等待，而增加能力代价高昂。实践此前无法预测给定能力会产生多少等待。'),
+        P('The formal treatment supplies that prediction from three inputs: how arrivals occur, how long service takes, and how many servers there are.',
+          '形式化处理由三项输入给出这一预测：到达如何发生、服务需时多久、有多少服务台。'),
+      ],
+      argument=[
+        P('The central result is non-linear. Waiting time does not rise proportionally with utilization; it rises slowly until utilization approaches capacity and then explodes.',
+          '核心结论是非线性的：等待时间不随利用率成比例上升，而是在利用率接近产能之前缓慢上升，之后急剧爆发。'),
+        P('That non-linearity is the practical content of the theory. A system run at ninety percent utilization has far more than twice the waiting of one run at eighty, which is why targeting high utilization is a design error rather than efficiency.',
+          '这一非线性正是该理论的实践内容：以 90% 利用率运行的系统，其等待远超 80% 系统的两倍——因此以高利用率为目标是设计错误而非效率。'),
+        P('Variability is the other driver. For the same average arrival and service rates, higher variability in either produces more waiting, so reducing variability substitutes for adding capacity.',
+          '另一驱动因素是波动性。在平均到达率与服务率相同的情况下，任一方波动越大等待越多；因此降低波动可以替代增加产能。'),
+      ],
+      development=[
+        P('Networks of queues, priority disciplines, and abandonment models extended it to systems where customers move between stages or leave when the wait is too long.',
+          '排队网络、优先级规则与放弃模型把它扩展到"顾客在阶段间流动"或"等待过久即离开"的系统。'),
+      ],
+      debates=[
+        Debate('Do the standard arrival assumptions hold?', '标准的到达假定成立吗？',
+               [Pos('Tractability position',
+                    'Poisson arrivals give closed-form results and approximate many systems well enough for design decisions.',
+                    '泊松到达给出封闭解，且对许多系统的近似足以支撑设计决策。'),
+                Pos('Empirical position',
+                    'Real arrivals are bursty, correlated, and time varying, and the closed-form results understate congestion in exactly those conditions.',
+                    '真实到达是突发的、相关的、随时间变化的；恰在这些条件下，封闭解会低估拥塞。')],
+               'Both are used: analytical models for insight, simulation for design where the assumptions clearly fail.',
+               '两者并用：解析模型用于获得洞见，当假定明显失效时用仿真进行设计。'),
+      ],
+      theoretical=[
+        P('Steady-state results describe a system that has been running long enough to settle. Systems with pronounced daily or seasonal cycles may never reach steady state, and applying steady-state formulas to them is a category error.',
+          '稳态结论描述的是运行足够久已趋稳定的系统。具有明显日内或季节周期的系统可能从未达到稳态，对其套用稳态公式属于范畴错误。'),
+        P('The models assume servers work at a constant rate. Human servers speed up under load and slow down when idle, which changes the dynamics the standard model predicts.',
+          '模型假定服务台以恒定速率工作。人类服务者在负荷下会加快、空闲时会放慢，这改变了标准模型所预测的动态。'),
+      ],
+      empirical=[
+        P('Service time distributions are frequently assumed exponential for tractability when observed distributions are not, and the assumption affects the predicted waiting substantially.',
+          '为便于求解，服务时间常被假定为指数分布，而实际观测分布并非如此；该假定对预测等待时间影响很大。'),
+        P('Abandonment is often unmeasured because customers who leave are not recorded, which makes observed waiting times a censored sample of the waits the system actually produces.',
+          '放弃行为常常未被测量，因为离开的顾客不被记录；这使观察到的等待时间成为系统真实等待的截断样本。'),
+      ],
+      temporal=[
+        P('The framework was developed for physical queues with visible waiting. Digital service systems can hide the queue, serve requests out of order, and shed load silently, so waiting is no longer a single observable quantity and the model output does not correspond to a customer experience.',
+          '框架针对的是等待可见的实体排队。数字服务系统可以隐藏队列、乱序处理请求、静默丢弃负载；等待因而不再是单一可观察量，模型输出也不再对应某种顾客体验。'),
+        P('Elastic capacity changes the design problem. Where servers can be added in seconds, the classical trade-off between utilization and waiting is replaced by a cost-of-capacity decision made continuously rather than at design time.',
+          '弹性产能改变了设计问题。当服务台可在数秒内增加时，"利用率与等待"的经典取舍被"持续作出的产能成本决策"所取代，而非在设计时一次性决定。'),
+      ],
+      today=[
+        P('Report the utilization the system runs at. It is the single most informative number and it makes the non-linear consequence visible.',
+          '应报告系统实际运行的利用率。它是最有信息量的单一数字，能使非线性后果变得可见。'),
+        P('Check whether arrivals are bursty and whether abandonment is recorded. Both make standard formulas understate congestion, and both are common.',
+          '应检查到达是否突发、放弃是否被记录。二者都会使标准公式低估拥塞，且都很常见。'),
+      ]),
+])

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Shared OpenAlex rate-limit and daily-budget handling.
 
-OpenAlex meters by daily request budget. On the free tier that is 1,000 requests
-per day, reset at midnight UTC, after which every request returns 429 with a
+OpenAlex meters by daily credits; account authentication raises the anonymous
+allowance. The response headers report the actual budget, reset at midnight UTC,
+after which requests return 429 with a
 ``Retry-After`` pointing at the reset:
 
     x-ratelimit-limit: 1000
@@ -25,8 +26,43 @@ not spend 219 more requests discovering it one journal at a time.
 """
 
 import logging
+import os
+from pathlib import Path
+from urllib.parse import urlparse
 
 LOG = logging.getLogger(__name__)
+
+_SOURCE_SETTINGS_PATH = Path(__file__).resolve().parents[1] / '.secrets'
+
+
+def openalex_headers(url, headers=None):
+    """Attach the local key only to HTTPS requests to the OpenAlex API.
+
+    CLI updates and an already-running service can read the same local setting.
+    Only this setting is consumed; other local credentials are never loaded.
+    Authentication stays in the header rather than URLs or saved parameters.
+    """
+    result = dict(headers or {})
+    parsed = urlparse(url)
+    if parsed.scheme != 'https' or parsed.hostname != 'api.openalex.org':
+        return result
+    if any(name.lower() == 'authorization' for name in result):
+        return result
+    key = os.environ.get('OPENALEX_API_KEY', '').strip()
+    if not key:
+        try:
+            for line in _SOURCE_SETTINGS_PATH.read_text(encoding='utf-8-sig').splitlines():
+                if '=' not in line or line.lstrip().startswith('#'):
+                    continue
+                name, value = line.split('=', 1)
+                if name.strip() == 'OPENALEX_API_KEY':
+                    key = value.strip().strip('\"\'')
+                    break
+        except OSError:
+            pass
+    if key:
+        result['Authorization'] = 'Bearer ' + key
+    return result
 
 # A Retry-After longer than this means the daily budget is gone rather than a
 # burst limit needing to be ridden out.
@@ -124,4 +160,4 @@ class BudgetState:
 
 
 __all__ = ['BudgetState', 'RateLimited', 'raise_for_rate_limit',
-           'BUDGET_RESET_THRESHOLD', 'MAX_RATE_LIMIT_RETRIES']
+           'BUDGET_RESET_THRESHOLD', 'MAX_RATE_LIMIT_RETRIES', 'openalex_headers']

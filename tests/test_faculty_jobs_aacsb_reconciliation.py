@@ -21,32 +21,43 @@ from services.faculty_jobs_service import (
 )
 
 NOW = "2026-08-26T00:00:00Z"
+COMPLETE_META = {
+    "complete": True,
+    "max_records": None,
+    "pagination_natural_end": True,
+    "page_budget_exhausted": False,
+    "error_count": 0,
+    "raw_results_observed": 1093,
+}
 
 
 class CompletenessGateTests(unittest.TestCase):
     def test_a_full_run_is_complete(self):
-        complete, _reason = _aacsb_snapshot_is_complete(1054, 1093, None, 110, 42)
+        complete, _reason = _aacsb_snapshot_is_complete(1054, 1093, None, 110, 42, COMPLETE_META)
         self.assertTrue(complete)
 
     def test_a_record_limited_run_is_never_complete(self):
-        complete, reason = _aacsb_snapshot_is_complete(100, 1093, 100, 110, 3)
+        complete, reason = _aacsb_snapshot_is_complete(
+            100, 1093, 100, 110, 3, {**COMPLETE_META, "max_records": 100})
         self.assertFalse(complete)
         self.assertIn("max_records", reason)
 
     def test_a_page_limited_run_falls_below_the_bar(self):
-        complete, reason = _aacsb_snapshot_is_complete(40, 1093, None, 2, 2)
+        complete, reason = _aacsb_snapshot_is_complete(
+            40, 1093, None, 2, 2,
+            {**COMPLETE_META, "complete": False, "pagination_natural_end": False})
         self.assertFalse(complete)
-        self.assertIn("completeness", reason)
+        self.assertIn("incomplete", reason)
 
     def test_no_reported_total_means_no_comparison(self):
-        complete, reason = _aacsb_snapshot_is_complete(1054, 0, None, 110, 42)
+        complete, reason = _aacsb_snapshot_is_complete(1054, 0, None, 110, 42, COMPLETE_META)
         self.assertFalse(complete)
         self.assertIn("total", reason)
 
     def test_the_known_parse_gap_still_counts_as_complete(self):
         # The directory reports more results than it exposes as /accredited/
         # rows, so exact equality would never hold.
-        self.assertTrue(_aacsb_snapshot_is_complete(1054, 1093, None, 110, 42)[0])
+        self.assertTrue(_aacsb_snapshot_is_complete(1054, 1093, None, 110, 42, COMPLETE_META)[0])
 
 
 class ReconciliationTests(unittest.TestCase):
@@ -80,7 +91,9 @@ class ReconciliationTests(unittest.TestCase):
             "SELECT COUNT(*) FROM aacsb_directory_schools WHERE active=1").fetchone()[0]
 
     def run_complete(self, seen):
-        result = _reconcile_aacsb_snapshot(self.conn, seen, 10, None, 110, 1)
+        result = _reconcile_aacsb_snapshot(
+            self.conn, seen, 10, None, 110, 1,
+            {**COMPLETE_META, "raw_results_observed": 10})
         self.conn.commit()
         return result
 

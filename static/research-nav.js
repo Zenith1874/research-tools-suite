@@ -60,7 +60,8 @@
         { label: 'Business Faculty Jobs', href: '/faculty-jobs', description: '跨美国、加拿大与欧洲公开商学院/商科职位源的规范化检索。' },
         { label: 'School Explorer', href: '/school-explorer', description: '大学研究层级、商学院证据与职位覆盖比较。' },
         { label: 'Job Market Analytics', href: '/job-market-analytics', description: '按地区、学科、职级、合同与招聘周期观察公开样本。' },
-        { label: 'My Applications', href: '/my-applications', description: '本机私有的职位收藏、申请阶段、笔记和个人匹配评分。' }
+        { label: 'Market Observatory', href: '/academic-market', description: '平台持有的每一层数据与其覆盖范围:观测、原始归档、市场快照、博士产出与赞助证据。' },
+        { label: 'My Applications', href: '/my-applications', localOnly: true, description: '本机私有的职位收藏、申请阶段、笔记和个人匹配评分。' }
       ]
     },
     tools: {
@@ -88,7 +89,7 @@
     if (/^\/(dashboard|china-macro|hong-kong-macro|macro-analytics|macro-scenario|fiscal-debt|financial\/debug|china-rates|city-economy|housing-scenario|housing|gdp|debt-ceiling)/.test(pathname)) return 'china';
     if (/^\/us-macro/.test(pathname)) return 'us';
     if (/^\/(abdc|abdc-astar-research|research)/.test(pathname)) return 'research';
-    if (/^\/(faculty-jobs|school-explorer|job-market-analytics|my-applications)/.test(pathname)) return 'career';
+    if (/^\/(faculty-jobs|school-explorer|job-market-analytics|academic-market|my-applications)/.test(pathname)) return 'career';
     if (/^\/(yuedu-fm|cardcookie-monitor)/.test(pathname)) return 'leisure';
     return '';
   }
@@ -115,7 +116,7 @@
   Object.keys(groups).forEach(function (key) {
     const group = groups[key];
     group.items.forEach(function (item) {
-      searchable.push({ label: item.label, href: item.href, meta: group.label + ' · ' + item.description });
+      searchable.push({ label: item.label, href: item.href, localOnly: Boolean(item.localOnly), meta: group.label + ' · ' + item.description });
     });
     (group.disciplines || []).forEach(function (item) {
       searchable.push({
@@ -130,7 +131,9 @@
     if (!activeGroup) return '';
     const group = groups[activeGroup];
     const activeHref = activeSubnavHref();
-    const pages = group.items.map(function (item) {
+    const pages = group.items.filter(function (item) {
+      return !item.localOnly || document.body.dataset.careerAccess === 'local';
+    }).map(function (item) {
       const active = isSubnavActive(activeHref, item.href);
       return '<a class="research-nav-subnav-link' + (active ? ' is-active' : '') + '" href="' + item.href + '"' +
         (active ? ' aria-current="page"' : '') + '>' + item.label + '</a>';
@@ -197,6 +200,13 @@
         access.textContent = canWrite ? '本机管理' : '局域网只读';
         access.classList.add(canWrite ? 'is-manage' : 'is-read-only');
         document.body.dataset.accessMode = canWrite ? 'manage' : 'read-only';
+        const careerLocal = health.academic_career && health.academic_career.personal === true && health.academic_career.manage === true;
+        document.body.dataset.careerAccess = careerLocal ? 'local' : 'public';
+        const currentGroup = activeGroupForPath(window.location.pathname);
+        if (currentGroup === 'career') access.textContent = careerLocal ? '本机教职管理' : '公开数据浏览';
+        const oldSubnav = shell.querySelector('.research-nav-subnav');
+        if (oldSubnav) oldSubnav.outerHTML = subnavHtml(currentGroup);
+        window.dispatchEvent(new CustomEvent('academic-career-access', {detail:{mode:careerLocal ? 'local' : 'public'}}));
         if (!canWrite) {
           protectReadOnlyControls();
           new MutationObserver(protectReadOnlyControls).observe(document.body, {
@@ -228,7 +238,7 @@
       const query = search.value.trim().toLocaleLowerCase();
       if (!query) { closeSearch(); return; }
       searchMatches = searchable.filter(function (item) {
-        return (item.label + ' ' + item.meta).toLocaleLowerCase().indexOf(query) >= 0;
+        return (!item.localOnly || document.body.dataset.careerAccess === 'local') && (item.label + ' ' + item.meta).toLocaleLowerCase().indexOf(query) >= 0;
       }).slice(0, 8);
       highlighted = searchMatches.length ? 0 : -1;
       drawSearch();
@@ -269,6 +279,151 @@
     });
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
+  // Client evidence complements server GETs. The server separates remote,
+  // local and automation events; local usage never enters visitor metrics.
+  function sessionToken() {
+    var created = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+    try {
+      var key = 'zr_research_session';
+      var existing = window.sessionStorage.getItem(key);
+      if (existing) return existing;
+      if (window.crypto && window.crypto.randomUUID) created = window.crypto.randomUUID();
+      window.sessionStorage.setItem(key, created);
+    } catch (_) { /* private mode: fall back to a per-page token */ }
+    return created;
+  }
+
+  // Tab markup here is not one convention. Pages use `data-tab`, a bare
+  // `.tab`, or generated buttons inside `.tabs` / `.fc-region-tabs` /
+  // `.br-paper-tabs`. What they share is a dash-delimited class segment that is
+  // exactly "tab" or "tabs", so that is what this matches — and it deliberately
+  // does not match "table", which is everywhere in these pages.
+  function hasTabClass(el) {
+    var names = (el && el.className && el.className.baseVal !== undefined)
+      ? el.className.baseVal : (el && typeof el.className === 'string' ? el.className : '');
+    return names.split(/\s+/).some(function (name) {
+      return name.split('-').some(function (part) { return part === 'tab' || part === 'tabs'; });
+    });
+  }
+
+  function tabControl(node) {
+    for (var el = node; el && el !== document.body; el = el.parentElement) {
+      if (el.hasAttribute && el.hasAttribute('data-tab')) return el;
+      var tag = (el.tagName || '').toLowerCase();
+      var isControl = tag === 'button' || tag === 'a' || el.getAttribute('role') === 'tab';
+      if (isControl && (hasTabClass(el) || hasTabClass(el.parentElement))) return el;
+      if (!isControl && hasTabClass(el) && !el.querySelector('button, [role="tab"]')) return el;
+    }
+    return null;
+  }
+
+  function controlLabel(el) {
+    // Visible text first: several pages use terse data-tab codes ("cn", "us")
+    // that read as nothing in the dashboard.
+    return ((el.textContent || '').trim() || el.getAttribute('data-tab') || '').slice(0, 60);
+  }
+
+  var EXPORT_PATTERN = /(csv|bibtex|png|xlsx|导出|下载|⬇)/i;
+
+  function initEventTracking() {
+    if (navigator.doNotTrack === '1' || window.doNotTrack === '1' ||
+        navigator.globalPrivacyControl === true) return;
+
+    var endpoint = '/api/portfolio-event';
+    var session = sessionToken();
+    var behaviorReady = false, legacyFinished = false, started = Date.now();
+
+    function send(name, target, extra) {
+      var payload = {
+        session_id: session,
+        path: window.location.pathname,
+        event: name,
+        target: String(target || '').slice(0, 255),
+        // Driven browsers set this. Reporting it keeps agent runs out of the
+        // owner's usage counts instead of drowning them.
+        automated: navigator.webdriver === true
+      };
+      if (extra) Object.keys(extra).forEach(function (k) { payload[k] = extra[k]; });
+      var body = JSON.stringify(payload);
+      // text/plain keeps this a simple request, so no preflight and no CORS setup.
+      var blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
+      if (!navigator.sendBeacon || !navigator.sendBeacon(endpoint, blob)) {
+        fetch(endpoint, {
+          method: 'POST', body: body, keepalive: true,
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' }
+        }).catch(function () {});
+      }
+    }
+
+    send('page_view', window.location.pathname);
+
+    // Load once without changing each module's markup. Failure must not block
+    // navigation or the existing page/tab/click collector.
+    fetch('/api/health', {cache: 'no-store'}).then(function (response) {
+      return response.ok ? response.json() : {};
+    }).then(function (health) {
+      if (health.analytics_behavior_version !== 1) return;
+      var behavior = document.createElement('script');
+      behavior.src = '/analytics-behavior.js?v=20260920a';
+      behavior.async = true;
+      behavior.onload = function () {
+        if (window.ZRAnalyticsBehavior) {
+          behaviorReady = true;
+          window.ZRAnalyticsBehavior.start(send);
+        }
+      };
+      document.head.appendChild(behavior);
+    }).catch(function () {});
+
+    // Rolling-deployment fallback: keep legacy dwell until the backend advertises
+    // support. Never send the new vocabulary to an older running server.
+    function legacyFinish() {
+      if (behaviorReady || legacyFinished) return;
+      legacyFinished = true;
+      send('session_end', window.location.pathname,
+           {dwell_seconds: Math.round((Date.now() - started) / 1000)});
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') legacyFinish();
+    });
+    window.addEventListener('pagehide', legacyFinish);
+
+    // Capture phase: several pages stop propagation inside their own handler.
+    document.addEventListener('click', function (event) {
+      var node = event.target;
+      if (!node || !node.closest) return;
+
+      var tab = tabControl(node);
+      if (tab) {
+        var label = controlLabel(tab);
+        if (label) send('tab_view', window.location.pathname + ' · ' + label);
+        return;
+      }
+
+      var link = node.closest('a[href]');
+      if (link && link.hostname && link.hostname !== window.location.hostname) {
+        send('outbound_click', link.origin + link.pathname);
+        return;
+      }
+
+      var control = node.closest('a, button, .dl');
+      if (!control) return;
+      var text = (control.textContent || '').trim();
+      var href = control.getAttribute ? (control.getAttribute('href') || '') : '';
+      if (EXPORT_PATTERN.test(text) || /\.(csv|xlsx|png|bib)($|[?#])/i.test(href))
+        send('data_export', window.location.pathname + ' · ' + text.slice(0, 60));
+      else if (behaviorReady && link && /^https?:$/.test(link.protocol) &&
+               link.origin === window.location.origin &&
+               link.pathname !== window.location.pathname)
+        send('internal_navigation', link.pathname);
+    }, true);
+  }
+
+  function start() {
+    init();
+    initEventTracking();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();

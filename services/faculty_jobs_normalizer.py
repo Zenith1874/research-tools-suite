@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import re
+import unicodedata
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from services.faculty_jobs_rank_mapper import map_rank
@@ -54,6 +55,7 @@ COUNTRY_ALIASES = {
     "bd": ("Bangladesh", "BD"),
     "tr": ("Turkey", "Türkiye", "Turkiye", "TR"),
     "in": ("India", "IN"),
+    "vn": ("Vietnam", "Viet Nam", "VN"),
     "my": ("Malaysia", "MY"),
     "th": ("Thailand", "TH"),
     "id": ("Indonesia", "ID"),
@@ -116,7 +118,6 @@ _COUNTRY_DISPLAY_TO_CODE = {
 # location parser resolves state/province evidence first; API filters still
 # treat the standalone code as Canada through ``country_code_for``.
 _UNAMBIGUOUS_CODE_ALIASES = set(COUNTRY_ALIASES) - {"ca"}
-
 REGION_GROUPS = {
     "United States": "United States",
     "Canada": "Canada",
@@ -139,6 +140,7 @@ REGION_GROUPS = {
     "New Zealand": "Australia / New Zealand",
     "Turkey": "Europe",
     "India": "Asia-Pacific",
+    "Vietnam": "Asia-Pacific",
     "Malaysia": "Asia-Pacific",
     "Thailand": "Asia-Pacific",
     "Indonesia": "Asia-Pacific",
@@ -189,8 +191,9 @@ REGION_GROUPS = {
 
 STATE_PROVINCE_ALIASES = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
-    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Florida": "FL",
-    "Georgia": "GA", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+    "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
+    "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
     "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME",
     "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN",
     "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE",
@@ -208,6 +211,40 @@ STATE_PROVINCE_ALIASES = {
 # A small, centrally maintained set of unambiguous city hints handles public
 # listing cards that omit the country while the adapter has a broad regional
 # fallback.  State/province evidence and explicit country text take priority.
+# Two-letter codes that are simultaneously a US state or Canadian province code
+# and an ISO country code. A bare token like "CO" in a US location card means
+# Colorado far more often than Colombia, and reading it as a country put
+# University of Denver in Colombia and University of Tennessee in Tunisia.
+_STATE_COUNTRY_CODE_COLLISIONS = frozenset(
+    code.casefold() for code in {value.upper() for value in STATE_PROVINCE_ALIASES.values()}
+    if code.casefold() in set(COUNTRY_ALIASES)
+)
+# Place names that merely end in a country name. "New Mexico" is a US state;
+# matching the trailing "Mexico" recorded Albuquerque postings as Mexican.
+_COUNTRY_ALIAS_FALSE_MATCHES = {
+    "mexico": (r"\bnew\s+mexico\b",),
+    "america": (r"\b(?:north|south|central|latin)\s+america\b",),
+}
+
+
+def _alias_match_is_a_different_place(alias, lower):
+    """True when every hit for ``alias`` sits inside a larger, different name."""
+    patterns = _COUNTRY_ALIAS_FALSE_MATCHES.get(alias.casefold())
+    if not patterns:
+        return False
+    escaped = re.escape(alias.casefold())
+    spans = [match.span() for match in re.finditer(rf"(?<!\w){escaped}(?!\w)", lower)]
+    if not spans:
+        return False
+    excluded = []
+    for pattern in patterns:
+        excluded.extend(match.span() for match in re.finditer(pattern, lower))
+    return all(
+        any(start >= low and end <= high for low, high in excluded)
+        for start, end in spans
+    )
+
+
 CITY_COUNTRY_HINTS = {
     "dublin": "ie",
     "auckland": "nz",
@@ -247,6 +284,9 @@ INSTITUTION_COUNTRY_HINTS = {
     "the university of auckland": "nz",
     "lebanese american university": "lb",
     "university of macau": "mo",
+    # The Shenzhen campus is in mainland China. Without the campus-specific
+    # suffix, the parent Chinese University of Hong Kong must remain HK.
+    "chinese university of hong kong shenzhen": "cn",
 }
 
 _TRACKING_PARAMS = {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "source", "src"}
@@ -435,7 +475,7 @@ _POSTED_KEYWORD_RE = re.compile(
     r"\b(?:posting\s+date|date\s+placed|posted(?:\s+on)?|captured\s+at)\b", re.I
 )
 _OPEN_FILLED_RE = re.compile(
-    r"\b(?:open\s+until\s+filled|until\s+(?:the\s+)?position\s+is\s+filled|"
+    r"\b(?:open\s+until\s+filled|until\s+(?:the\s+)?positions?\s+(?:is|are)\s+filled|"
     r"until\s+filled|open[- ]ended)\b",
     re.I,
 )
@@ -485,6 +525,17 @@ def _deadline_details(value, description="", reference_date=None):
     raw = clean_text(value)
     desc = clean_text(description)
 
+    # A locally qualified date such as "Application Deadline: October 1,
+    # 2026 (Applications accepted until filled or closed)" is not a confirmed
+    # hard close. Keep the dated wording as evidence; never turn a review or
+    # preferred date into automatic expiry. Distant boilerplate is excluded.
+    for text in (raw, desc):
+        text = unicodedata.normalize("NFKC", text)
+        qualified = re.search(r"\b(?:application deadline|priority deadline|first consideration|review of applications)[^.!?]{0,230}\b(?:accepted|open|opened|remain(?:s)? open)\s+until\s+(?:the\s+position\s+is\s+)?filled\b", text, re.I)
+        if qualified and _positive_open_until_filled(text[qualified.start():qualified.end() + 20]):
+            return {"date": None, "mode": "open_until_filled", "evidence": qualified.group()[:300],
+                    "reason": "Dated application/review wording explicitly qualified as open until filled; hard closing date unconfirmed."}
+
     # Some JSON-LD adapters historically supplied ``validThrough`` as the
     # deadline field.  If the visible posting explicitly says the role stays
     # open until filled, a bare ISO expiry is not application-deadline
@@ -511,6 +562,19 @@ def _deadline_details(value, description="", reference_date=None):
     for match in _DEADLINE_KEYWORD_RE.finditer(desc):
         window = desc[match.start():match.end() + 180]
         parsed = parse_date(window, reference_date=reference_date)
+        # A dated start of review under an "APPLICATION DEADLINE" heading is
+        # not a hard close when the same field explicitly stays open until
+        # filled (for example CSU Long Beach's individual faculty postings).
+        review_context = desc[match.start():match.end() + 360]
+        before_date = re.split(r"\d", window, maxsplit=1)[0]
+        if parsed and _positive_open_until_filled(review_context) and re.search(
+            r"\b(?:review\s+(?:of\s+)?applications?\s+(?:to\s+)?begin|"
+            r"review\s+(?:begins?|starts?)|first\s+consideration|"
+            r"preferred\s+(?:consideration|application\s+deadline)|priority\s+consideration)\b",
+            before_date, re.I,
+        ):
+            return {"date": None, "mode": "open_until_filled", "evidence": review_context[:300],
+                    "reason": "A review/priority date is not the closing date; explicitly open until filled."}
         if parsed:
             return {"date": parsed, "mode": "fixed", "evidence": window[:300],
                     "reason": "Parsed near an explicit deadline/closing keyword."}
@@ -593,7 +657,13 @@ def _country_from_text(text, fallback=None):
     # Canada or California and must be resolved with state/province evidence.
     if re.fullmatch(r"[A-Za-z]{2}", original):
         code_token = original.casefold()
-        if code_token in _UNAMBIGUOUS_CODE_ALIASES:
+        # A bare token that is also a US state or Canadian province code is not
+        # country evidence on its own: reading "CO" as Colombia put University
+        # of Denver in South America, and "TN" as Tunisia put Knoxville in
+        # North Africa. Those tokens must fall through to state/province
+        # parsing instead.
+        if (code_token in _UNAMBIGUOUS_CODE_ALIASES
+                and code_token not in _STATE_COUNTRY_CODE_COLLISIONS):
             return code_token
     for code, aliases in COUNTRY_ALIASES.items():
         # Two-letter tokens such as CA/ON/US are ambiguous in location cards;
@@ -604,10 +674,14 @@ def _country_from_text(text, fallback=None):
         # from being mistaken for Germany (DE).
         if any(len(alias) > 2 and re.search(rf"(?<!\w){re.escape(alias.casefold())}(?!\w)", lower) for alias in aliases):
             matched_alias = next((alias for alias in aliases if len(alias) > 2 and re.search(rf"(?<!\w){re.escape(alias.casefold())}(?!\w)", lower)), None)
-            if matched_alias and matched_alias.casefold() == "america" and re.search(r"\b(?:north|south|central)\s+america\b", lower):
+            # Skip when every hit for the alias sits inside a larger place name
+            # that is not this country: "New Mexico" is a US state, and reading
+            # its trailing "Mexico" recorded Albuquerque postings as Mexican.
+            if matched_alias and _alias_match_is_a_different_place(matched_alias, lower):
                 continue
             return code
-        if code in _UNAMBIGUOUS_CODE_ALIASES and any(
+        if (code in _UNAMBIGUOUS_CODE_ALIASES
+                and code not in _STATE_COUNTRY_CODE_COLLISIONS) and any(
             len(alias) <= 2 and re.search(rf"(?<![A-Za-z]){re.escape(alias)}(?![A-Za-z])", original)
             for alias in aliases
         ):
@@ -665,24 +739,39 @@ def _recover_location_from_text(description, institution=None):
     return ""
 
 
-def parse_location(location_raw, source_region=None, institution_text=None, description=None):
+def parse_location(location_raw, source_region=None, institution_text=None, description=None,
+                   region_is_board_default=False):
+    """Parse a posting's location.
+
+    ``source_region`` carries two very different things. When a posting exposes
+    its own country field it is evidence and is honoured. When it is only the
+    job board's registered region -- ``region_is_board_default=True`` -- it says
+    where the board is, not where the job is, and must not become the country.
+    """
     raw = _clean_location_text(location_raw)
     recovered = _recover_location_from_text(description, institution_text) if not raw else ""
     if recovered:
         raw = recovered
+    multiple_locations = bool(re.match(r"^multiple\s+locations?\b", raw, re.I))
     evidence = "location_raw" if raw and location_raw else None
     state = None
     # ``Washington D.C.`` contains the full state name ``Washington`` as a
     # substring.  Resolve the federal district before scanning named states,
     # otherwise the generic alias loop incorrectly emits WA.
-    if re.search(r"(?<!\w)Washington\s*,?\s*D\.?\s*C\.?(?!\w)", raw, re.I):
+    dc_pattern = (
+        r"(?<!\w)Washington\s*,?\s*"
+        r"(?:D\.?\s*C\.?|Dist\.?\s+(?:of\s+)?Columbia)(?!\w)"
+    )
+    dc_match = re.search(dc_pattern, raw, re.I)
+    state_scan_raw = re.sub(dc_pattern, "District of Columbia", raw, flags=re.I)
+    if dc_match:
         state = "DC"
     # Prefer named provinces/states over two-letter tokens.  In particular,
     # ``Toronto, Ontario, CA`` contains both Ontario and the ambiguous CA
     # country token; the named province must win.
     if state is None:
         for name, abbreviation in STATE_PROVINCE_ALIASES.items():
-            if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", raw, re.I):
+            if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", state_scan_raw, re.I):
                 state = abbreviation
                 break
     if state is None:
@@ -690,6 +779,11 @@ def parse_location(location_raw, source_region=None, institution_text=None, desc
             if re.search(rf"[, ]{abbreviation}(?:[, ]|$)", raw):
                 state = abbreviation
                 break
+    state_candidates = {
+        abbreviation for name, abbreviation in STATE_PROVINCE_ALIASES.items()
+        if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", state_scan_raw, re.I)
+        or re.search(rf"[, ]{abbreviation}(?:[, ]|$)", state_scan_raw)
+    }
     canadian_state_codes = {
         value for name, value in STATE_PROVINCE_ALIASES.items()
         if name in {
@@ -740,27 +834,111 @@ def parse_location(location_raw, source_region=None, institution_text=None, desc
             if code:
                 evidence = candidate_evidence
                 break
-    parts = [clean_text(item) for item in raw.split(",") if clean_text(item)] if raw else []
+    # AKADEUS and several institutional feeds publish ``Country / City`` (and
+    # occasionally ``Country / City / City``). The country prefix is evidence,
+    # not part of the city display. Keep the full raw value for provenance and
+    # use the first listed city as the primary structured city.
+    slash_parts = [clean_text(item) for item in raw.split("/") if clean_text(item)] if raw else []
+    slash_prefix_code = country_code_for(slash_parts[0]) if len(slash_parts) > 1 else None
+    if slash_prefix_code:
+        code = slash_prefix_code.casefold()
+        evidence = "location_raw_country_slash"
+        city_text = " / ".join(slash_parts[1:])
+        parts = [clean_text(item) for item in re.split(r"\s*/\s*|,", city_text)
+                 if clean_text(item)]
+    else:
+        parts = [clean_text(item) for item in raw.split(",") if clean_text(item)] if raw else []
     city = parts[0] if parts else None
+    # Parenthetical work-mode labels are not part of a geographic component.
+    # Compare cleaned keys here rather than waiting until the final city trim;
+    # otherwise ``United States (remote)`` survives the country-removal pass and
+    # becomes the rightmost "city".
+    part_keys = [
+        normalize_name(re.sub(r"\s*\([^)]{1,60}\)$", "", item).strip())
+        for item in parts
+    ]
+    duplicate_state_city = bool(
+        state and len(part_keys) > 1 and part_keys[0] == part_keys[1]
+    )
     if code and parts:
         code_name = country_display(code)
-        remaining = [item for item in parts if normalize_name(item) not in {
-            normalize_name(code_name), normalize_name(institution_text),
-        }]
+        city_state_aliases = {
+            normalize_name(alias) for alias in COUNTRY_ALIASES.get(code, ())
+        }
+        city_state_prefix = bool(
+            code in {"hk", "sg", "mo", "mc"}
+            and part_keys
+            and part_keys[0] in city_state_aliases
+        )
+        removable = {
+            normalize_name(code_name), normalize_name(code), normalize_name(institution_text),
+        }
+        if state:
+            removable.add(normalize_name(state))
+            removable.update(
+                normalize_name(name) for name, abbreviation in STATE_PROVINCE_ALIASES.items()
+                if abbreviation == state
+            )
+        if state == "DC":
+            removable.update({normalize_name("Dist. Columbia"), normalize_name("Dist. of Columbia")})
+        # A component that is empty once its parenthetical is stripped -- a
+        # detail page's trailing ``(US)`` -- carries no place name at all, so
+        # it must never become the city. It used to survive this filter only
+        # because ``normalize_name(None)`` is also empty, which meant the right
+        # answer depended on whether an institution name happened to be passed.
+        remaining = [
+            item for item, key in zip(parts, part_keys)
+            if key and key not in removable
+        ]
         # Some public boards expose only an ISO country token (for example
         # ``CN`` or ``AE``). That token is country evidence, not a city.
-        if len(parts) == 1 and (
-            parts[0].casefold() == str(code or "").casefold()
-            or parts[0].casefold() == str(code_name or "").casefold()
+        if city_state_prefix:
+            # Boards may publish a city-state followed by its broader region,
+            # for example ``Macau, China``.  The first component is both the
+            # jurisdiction and the city; the broader label must not become the
+            # structured city merely because it is the rightmost component.
+            city = parts[0]
+        elif len(parts) == 1 and (
+            part_keys[0] == normalize_name(code)
+            or part_keys[0] == normalize_name(code_name)
         ):
-            city = None
-        elif parts[0].casefold() == str(code_name or "").casefold():
+            # City-state jurisdictions legitimately use the same display for
+            # both levels. Keep the visible city while still stripping any
+            # work-mode suffix below.
+            city = parts[0] if code in {"hk", "sg", "mo", "mc"} else None
+        elif part_keys[0] == normalize_name(code_name):
             city = remaining[-1] if remaining else None
+        elif not slash_prefix_code and remaining:
+            # Ordinary board locations are ordered from local to broad, but a
+            # card may prefix an organizational/campus qualifier:
+            # ``College of Business, Main Campus, Portales, NM``.  The last
+            # non-country/non-state component is the actual city.  Slash-form
+            # ``Country / City / City`` values deliberately keep the first city
+            # above, because those are parallel locations rather than nesting.
+            city = remaining[-1]
         else:
             city = parts[0]
     if city:
         city = re.sub(r"\s*\([^)]{1,60}\)$", "", city).strip(" ,;|-—") or None
-    if city and normalize_name(city) in {normalize_name(name) for name in STATE_PROVINCE_ALIASES}:
+    if city:
+        city = re.sub(
+            r"^(?:(?:main|north|south|east|west|downtown)\s+)?campus\s*[-–—:]\s*",
+            "", city, flags=re.I,
+        )
+        city = re.sub(r"\s+campus$", "", city, flags=re.I).strip(" ,;|-—") or None
+    if multiple_locations:
+        # A flattened card can concatenate several cities/states without a
+        # delimiter (for example New York followed by Washington, DC). The
+        # schema has one city/state slot, so expose the honest aggregate label
+        # and retain a state only when every visible location agrees on it.
+        city = "Multiple Locations"
+        state = next(iter(state_candidates)) if len(state_candidates) == 1 else None
+        evidence = "location_raw_multiple"
+    city_is_washington_dc = bool(
+        city and state == "DC" and normalize_name(city) == normalize_name("Washington")
+    )
+    if (city and not duplicate_state_city and not city_is_washington_dc
+            and normalize_name(city) in {normalize_name(name) for name in STATE_PROVINCE_ALIASES}):
         city = None
     if city and re.search(r"(?:\b(?:street|road|avenue|allee|boulevard)\b|\b\w*(?:laan|weg|straat)\b)", city, re.I) and re.search(r"\d", city):
         city = None
@@ -770,10 +948,27 @@ def parse_location(location_raw, source_region=None, institution_text=None, desc
             evidence = "city_hint"
     source_code = country_code_for(source_region)
     if not code and source_code:
-        code = source_code.casefold()
-        evidence = "source_region_country"
+        if region_is_board_default:
+            # The board's registered region is where the board is, not where the
+            # job is. AIS is registered as United States, so its Portuguese
+            # posting -- "... Professor (open rank) at NovaSBE" -- was stamped
+            # US, hiding it from a Portugal filter and surfacing it under the
+            # wrong country. Leave the country Unknown and say why.
+            evidence = "source_region_only_unknown_country"
+        else:
+            code = source_code.casefold()
+            evidence = "source_region_country"
     country = country_display(code)
-    region_group = REGION_GROUPS.get(country, source_region if source_region in REGION_GROUPS.values() else "Other")
+    if code:
+        region_group = REGION_GROUPS.get(country, "Other")
+    elif region_is_board_default:
+        # A board's registered region is no more posting evidence than its
+        # registered country.  Keeping ``United States`` here while clearing
+        # the country made the US region KPI disagree with country=US and put a
+        # NovaSBE posting in the American market summary.
+        region_group = "Other"
+    else:
+        region_group = source_region if source_region in REGION_GROUPS.values() else "Other"
     if city and state and city.upper() == state:
         city = None
     return {
@@ -790,14 +985,18 @@ def parse_location(location_raw, source_region=None, institution_text=None, desc
 _DISCIPLINE_RULES = (
     ("Information Systems / MIS", ("information systems", "mis", "management information systems", "business information systems", "digital business")),
     ("Business Analytics / AI", ("business analytics", "business intelligence", "artificial intelligence", "machine learning", "data analytics", "data science")),
-    ("Organizational Behavior / HR", ("organizational behavior", "organisational behaviour", "human resources", "human resource management", "organizational psychology")),
+    ("Organizational Behavior / HR", ("organizational behavior", "organisational behaviour", "human resources", "human resource management", "organizational psychology", "employment relations", "industrial relations", "employee relations", "future of work", "work and organisation", "work and organization", "labour relations", "labor relations")),
     ("Operations / Supply Chain", ("operations management", "supply chain", "operations and supply", "logistics")),
     ("Entrepreneurship", ("entrepreneurship", "entrepreneurial")),
     ("International Business", ("international business", "global business")),
     ("Strategy", ("strategic management", "strategy", "organization theory", "organisation theory")),
     ("Marketing", ("marketing", "consumer behavior", "consumer behaviour")),
-    ("Finance", ("finance", "financial economics", "financial markets")),
+    ("Finance", ("finance", "financial economics", "financial markets", "financial systems", "real estate", "insurance", "risk management")),
     ("Accounting", ("accounting", "accountancy")),
+    ("Economics", ("economics", "economic analysis", "econometrics")),
+    ("Business Law / Ethics", ("business law", "business ethics", "public law")),
+    ("Public Administration", ("public administration", "mpa program")),
+    ("Hospitality / Tourism", ("hospitality", "tourism", "event management")),
     ("Management", ("management", "business administration", "business school", "business")),
 )
 
@@ -833,7 +1032,11 @@ _GENERIC_JOB_COLLECTION_RE = re.compile(
     r"faculty(?:\s*(?:&|and)\s*instructor)?\s+"
     r"(?:jobs?|job\s+openings?|openings?|positions?|opportunities|vacancies)\.?$|"
     r"^faculty\s*\((?:full|part)[- ]time\)$|^faculty\s+vacancies\.?$|"
-    r"^faculty\s+positions\s+in\b",
+    # "Faculty Positions in <field>" is one advertisement for openings in a
+    # field, not a directory of adverts -- EconJobMarket publishes those with
+    # a stable ad id. Only a trailing generic word keeps the collection
+    # reading: "Faculty Positions in Various Departments".
+    r"^faculty\s+positions\s+in\s+(?:various|multiple|several|all)\b",
     re.I,
 )
 _NON_VACANCY_PAGE_RE = re.compile(
@@ -872,17 +1075,36 @@ _STAFF_ROLE_RE = re.compile(
     re.I,
 )
 _PROFESSOR_ROLE_RE = re.compile(
-    r"\bprofessors?\b|\bprofesseure?s?\b|\bmaître\s+de\s+conférences\b", re.I)
+    # ``professorship(s)`` is how a post is named when the advert counts posts
+    # rather than describing a person: "Two tenure-track Assistant
+    # professorships".
+    r"\bprofessors?\b|\bprofessorships?\b|\bprofesseure?s?\b|"
+    r"\bmaître\s+de\s+conférences\b", re.I)
 _TEACHING_ROLE_RE = re.compile(
     r"\b(?:lecturers?|instructors?|faculty|readers?)\b|\bchargée?s?\s+de\s+cours\b", re.I)
 _LEADERSHIP_ROLE_RE = re.compile(
-    r"\b(?:dean|chair(?:person)?|department\s+head)\b|\bdoyen(?:ne)?s?\b", re.I)
+    r"\b(?:(?:associate|assistant|vice|interim|acting|founding|executive)\s+)?dean\b|"
+    r"\bdepartment\s+(?:chair(?:person)?|head)\b|"
+    r"\bchair(?:person)?\s*(?:,|of\s+(?:the\s+)?)\s*"
+    r"(?:department|school|faculty|college)\b|\bdoyen(?:ne)?s?\b",
+    re.I,
+)
 _POSTDOC_ROLE_RE = re.compile(r"\bpost[- ]?doc(?:toral)?\b", re.I)
 _RESEARCH_ACADEMIC_ROLE_RE = re.compile(
     r"\b(?:research|teaching)\s+fellows?\b",
     re.I,
 )
 _OPEN_RANK_RE = re.compile(r"\bopen[- ]rank\b", re.I)
+# A tenure-track or tenured opening is a faculty vacancy even when the title
+# names no professor or lecturer: "Tenure-track Positions in Accounting and
+# Corporate Finance" says what it is without using either noun.
+_TENURE_POSITION_RE = re.compile(
+    r"\b(?:tenure[- ]track|tenured|tenure[- ]stream)\b[^.]{0,40}?"
+    r"\b(?:positions?|openings?|vacanc(?:y|ies)|appointments?|posts?)\b|"
+    r"\b(?:positions?|openings?|vacanc(?:y|ies)|appointments?|posts?)\b[^.]{0,40}?"
+    r"\b(?:tenure[- ]track|tenured|tenure[- ]stream)\b",
+    re.I,
+)
 
 
 def classify_faculty_market_role(title=None, description=None, official_url=None):
@@ -910,12 +1132,22 @@ def classify_faculty_market_role(title=None, description=None, official_url=None
             "reason": "Title is a generic job collection/search page rather than an individual vacancy.",
         }
 
+    # A dean/department-head search is an academic-leadership market, not the
+    # faculty-job market this default view promises. It remains visible under
+    # scope=all. This check precedes professor wording so "Dean and Professor"
+    # is not promoted merely because the office carries a faculty title.
+    if _LEADERSHIP_ROLE_RE.search(title_text):
+        return {
+            "eligible": 0, "role": "academic_leadership", "confidence": "high",
+            "reason": "Title is an academic-leadership search (dean, department chair, or department head), retained outside the default faculty market.",
+        }
     # Explicit professorial wording wins over phrases such as ``Research
     # Assistant Professor``; the latter is a professor, not a student RA.
-    if _PROFESSOR_ROLE_RE.search(title_text) or _OPEN_RANK_RE.search(title_text):
+    if (_PROFESSOR_ROLE_RE.search(title_text) or _OPEN_RANK_RE.search(title_text)
+            or _TENURE_POSITION_RE.search(title_text)):
         return {
             "eligible": 1, "role": "faculty", "confidence": "high",
-            "reason": "Title contains an explicit professor/open-rank faculty signal.",
+            "reason": "Title contains an explicit professor, open-rank, or tenure-track faculty signal.",
         }
     if _STUDENT_ROLE_RE.search(title_text):
         return {
@@ -931,11 +1163,6 @@ def classify_faculty_market_role(title=None, description=None, official_url=None
         return {
             "eligible": 0, "role": "staff_role", "confidence": "high",
             "reason": "Title is an administrative, technical, or professional staff role.",
-        }
-    if _LEADERSHIP_ROLE_RE.search(title_text):
-        return {
-            "eligible": 1, "role": "academic_leadership", "confidence": "high",
-            "reason": "Title contains an explicit dean/chair/department-head signal.",
         }
     if _TEACHING_ROLE_RE.search(title_text):
         return {
@@ -964,7 +1191,7 @@ def classify_faculty_market_role(title=None, description=None, official_url=None
         }
     return {
         "eligible": 0, "role": "unknown", "confidence": "low",
-        "reason": "No explicit individual faculty, academic-leadership, or postdoctoral role was found.",
+        "reason": "No explicit individual faculty or postdoctoral role was found.",
     }
 
 _BUSINESS_SCHOOL_RE = re.compile(
@@ -1012,6 +1239,9 @@ _NON_BUSINESS_RE = re.compile(
     r"(?:urban|community|regional)\s+planning|public\s+health|health\s+policy|"
     r"mental\s+health|forestr(?:y|ies)|forest\s+sciences?|kinesiolog(?:y|ical)|"
     r"linguistics?|theolog(?:y|ical)|divinity|musicolog(?:y|ical)|"
+    # LIU's music technology/production role mentions entrepreneurship but
+    # explicitly requires recording-arts training, not a business discipline.
+    r"music\s*,?\s*technology|recording\s+arts|"
     r"veterinary(?:\s+medicine)?|mathematics|"
     r"teacher\s+education|educational\s+leadership|curriculum\s+and\s+instruction|"
     r"\bk-?12\b|francophone\s+studies|"
@@ -1167,8 +1397,35 @@ def classify_business_scope(
     }
 
 
+def role_title_for_discipline(title):
+    """Remove trailing employer-unit names when the role already names a subject."""
+    title = clean_text(title)
+    title = re.sub(r"((?:College|School) of Business) (?:and|&) Economics\b", r"\1", title, flags=re.I)
+    parts = re.split(r"\s+[-–—|]\s+(?=(?:department|school|college|haas|kelley|rawls|rady)\b)", title, maxsplit=1, flags=re.I)
+    role = parts[0]
+    specific = [label for label, terms in _DISCIPLINE_RULES if label != "Management"
+                and any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", role, re.I) for term in terms)]
+    if specific:
+        return role
+    return title
+
+
 def classify_disciplines(department, title, description):
-    fields = [clean_text(department), clean_text(title), clean_text(description)]
+    role_title = role_title_for_discipline(title)
+    role_hits = [label for label, terms in _DISCIPLINE_RULES if label != "Management"
+                 and any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", role_title, re.I) for term in terms)]
+    # These names describe a teaching unit or an industry niche, not evidence
+    # of a general Management/IS/OBHR vacancy.
+    if re.search(r"\b(?:hemp|cannabis)\b", role_title, re.I):
+        return {"primary": "Sector-specific Management", "secondary": [],
+                "reason": "Explicit industry-specific role title; general Management was not inferred from the school name."}
+    if re.search(r"\bstudent success\b", role_title, re.I):
+        return {"primary": "Other", "secondary": [],
+                "reason": "Student-success teaching role; the college name does not establish a Management or Economics discipline."}
+    if role_hits:
+        return {"primary": role_hits[0], "secondary": role_hits[1:5],
+                "reason": "Explicit vacancy-subject title takes precedence over employer-unit names and listing categories."}
+    fields = [clean_text(department), role_title, clean_text(description)]
     hits = []
     # Field order is intentional: department evidence outranks title and text.
     for field_index, field in enumerate(fields):
@@ -1176,7 +1433,7 @@ def classify_disciplines(department, title, description):
         if not lower:
             continue
         for discipline, terms in _DISCIPLINE_RULES:
-            if any(term in lower for term in terms):
+            if any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", lower) for term in terms):
                 if discipline not in [item[0] for item in hits]:
                     hits.append((discipline, field_index, field))
     if not hits:
@@ -1189,9 +1446,67 @@ def classify_disciplines(department, title, description):
             "reason": f"Rule matched {evidence}; secondary matches retained separately."}
 
 
+# How the appointment is worked, which is a different axis from how it is
+# contracted. ``infer_track`` answers tenure/permanence and needs wording like
+# "non-tenure" that adjunct advertisements almost never carry, which is why
+# most of them land in ``track_type='unknown'``. An adjunct posting and a
+# tenure-track posting are not competing for the same candidate, so the market
+# view needs to tell them apart without either one being deleted.
+#
+# Only explicit wording is read. Absence of "part-time" is not evidence of a
+# full-time appointment, so nothing here infers a continuing role from silence.
+APPOINTMENT_TYPES = ("adjunct", "visiting", "postdoc", "full_time", "unknown")
+
+_ADJUNCT_RE = re.compile(
+    r"\badjuncts?\b|\bper[- ]course\b|\bpart[- ]time\b|\bpart time\b|"
+    r"\bsessional\b|\bcasual\s+academic\b|\bsingle[- ]term\b|\bper[- ]semester\b|"
+    r"\bhourly\s+(?:faculty|instructor)\b|\bpool\b(?=[^.]*\b(?:adjunct|part[- ]time)\b)",
+    re.I,
+)
+_VISITING_APPOINTMENT_RE = re.compile(
+    r"\bvisiting\b|\bvisiteur\b|\bprofesseur\s+invit", re.I)
+_POSTDOC_APPOINTMENT_RE = re.compile(
+    r"\bpost[- ]?doc(?:toral)?\b|\bresearch\s+fellow\b", re.I)
+_FULL_TIME_RE = re.compile(r"\bfull[- ]time\b|\bfull time\b", re.I)
+
+
+def infer_appointment(text):
+    """Classify the appointment's working shape from explicit wording only.
+
+    Order matters: a "Full-Time Adjunct Pool" advertisement contains both
+    phrases, and the contingent half is the one that decides whether the role
+    belongs in a tenure-track search. Checking ``full_time`` first would file
+    every such posting alongside continuing appointments.
+    """
+    lower = clean_text(text).casefold()
+    if _ADJUNCT_RE.search(lower):
+        return "adjunct"
+    if _POSTDOC_APPOINTMENT_RE.search(lower):
+        return "postdoc"
+    if _VISITING_APPOINTMENT_RE.search(lower):
+        return "visiting"
+    if _FULL_TIME_RE.search(lower):
+        return "full_time"
+    return "unknown"
+
+
 def infer_track(text):
     lower = clean_text(text).casefold()
-    if re.search(r"tenure[- ]track|tenure stream|tenurable", lower):
+    # Remove explicit negations before testing the positive substring. Mixed
+    # advertisements remain unknown rather than inventing a single contract.
+    negative = re.compile(
+        r"\b(?:non[\s\-\u2010-\u2015]*(?:tenur(?:e|ed)(?:[\s\-\u2010-\u2015]*track)?|tt)"
+        r"|not(?:\s+a)?[\s\-]+tenure[\s\-]+track"
+        r"|not\s+eligible\s+for\s+tenure|without\s+tenure"
+        r"|teaching\s+stream|educator\s+track|clinical\s+faculty)\b"
+    )
+    positive = re.compile(r"\b(?:tenure[- ]track|tenure stream|tenurable)\b")
+    has_negative = bool(negative.search(lower))
+    remainder = negative.sub(" ", lower)
+    has_positive = bool(positive.search(remainder))
+    if has_negative:
+        return "unknown" if has_positive else "non_tenure_track"
+    if has_positive:
         return "tenure_track"
     if re.search(r"tenured appointment|already tenured|tenured position", lower):
         return "tenured"
@@ -1214,7 +1529,8 @@ _VISA_REFUSAL_RE = re.compile(
     r"\bcannot\s+sponsor\b|"
     r"\bunable\s+to\s+(?:provide|offer|sponsor|take\s+over)[^.]{0,60}?(?:sponsor|visa)|"
     r"\bno\s+(?:visa\s+)?sponsorship\b|"
-    r"\bnot\s+eligible\s+for\s+(?:visa\s+)?sponsorship\b|"
+    r"\bnot\s+eligible\s+for\s+[^.]{0,60}?sponsorship\b|"
+    r"\bineligible\s+for\s+[^.]{0,60}?sponsorship\b|"
     r"\bsponsorship\s+is\s+not\s+(?:available|offered|provided)\b|"
     r"\bwithout\s+(?:the\s+need\s+for\s+)?(?:visa\s+)?sponsorship\b|"
     r"\bauthori[sz]ed\s+to\s+work[^.]{0,80}?without\s+sponsorship\b",
@@ -1242,19 +1558,213 @@ _VISA_MENTION_RE = re.compile(
     r"\bvisa\b|\bwork\s+authori[sz]ation\b|\bright\s+to\s+work\b|\bsponsorship\b",
     re.I,
 )
+# Sponsorship that is funding rather than immigration. Found live: "Lecturer
+# for Scholarship Sponsorship in Digital Innovation" was read as a visa
+# mention, and "Scholarship sponsorship is available for doctoral students"
+# matched the offer pattern outright.
+_FUNDING_SPONSOR_RE = re.compile(
+    r"\b(?:scholarship|studentship|fellowship|research|industry|corporate|grant|"
+    r"funding|programme|program|project|event|conference|athletic|travel)\s+"
+    r"sponsor(?:s|ed|ing|ship)?\b|"
+    r"\bsponsored\s+(?:programs?|research|projects?|students?)\b|"
+    r"\bfaculty\s+sponsor\b",
+    re.I,
+)
+# What makes a sentence about immigration regardless of the money words in it.
+_IMMIGRATION_WORD_RE = re.compile(
+    r"\bvisa\b|\bwork\s+authori[sz]ation\b|\bright\s+to\s+work\b|"
+    r"\bimmigration\b|\bwork\s+permit\b|\bh-?1b\b|\bpermanent\s+residen|"
+    r"\bgreen\s+card\b|\bcitizen|\bnon-?immigrant\b|\bperm\b|\beb-?[12]\b",
+    re.I,
+)
+
+
+def _is_about_immigration(sentence):
+    """Does this sentence concern work authorization at all?
+
+    A sponsorship word that is qualified as funding -- scholarship, research,
+    industry -- does not make a sentence about immigration. Naming a visa,
+    a permit or a status does, whatever else the sentence says.
+    """
+    text = str(sentence or "")
+    if _IMMIGRATION_WORD_RE.search(text):
+        return True
+    return not _FUNDING_SPONSOR_RE.search(text)
+
+
+# A hard eligibility bar, not a sponsorship policy.  "Must be a U.S. citizen"
+# and "no sponsorship" are different sentences with different consequences: a
+# permanent resident can accept the second and not the first.  Both were
+# reported as `unknown`, which put them in the same bucket as a posting that
+# never mentioned the subject at all.
+_CITIZENSHIP_ONLY_RE = re.compile(
+    r"\b(?:u\.?s\.?|united\s+states|american)\s+citizenship\s+(?:is\s+)?"
+    r"(?:required|mandatory|a\s+requirement)\b|"
+    r"\bmust\s+be\s+(?:a\s+)?(?:u\.?s\.?|united\s+states|american)\s+citizens?\b"
+    r"(?!\s*(?:,|\s)*(?:or|/)\s*(?:a\s+)?(?:lawful\s+)?permanent\s+resident)|"
+    r"\brestricted\s+to\s+(?:u\.?s\.?|united\s+states)\s+citizens\b",
+    re.I,
+)
+_CITIZEN_OR_PR_RE = re.compile(
+    r"\b(?:u\.?s\.?|united\s+states)?\s*citizens?\s*(?:,|\s)*(?:or|/)\s*"
+    r"(?:a\s+)?(?:lawful\s+)?permanent\s+residents?\b|"
+    r"\bpermanent\s+residents?\s*(?:,|\s)*(?:or|/)\s*(?:u\.?s\.?\s*)?citizens?\b|"
+    r"\bgreen\s+card\s+holders?\s+or\s+(?:u\.?s\.?\s*)?citizens?\b",
+    re.I,
+)
+# Support for permanent residency is a bigger commitment than a work visa and
+# is worth separating from it: a candidate choosing between offers cares which
+# one has said it will file.
+_PR_SUPPORT_RE = re.compile(
+    # Inflections matter here: postings say "will be supported for permanent
+    # residency" far more often than "will support".
+    r"\b(?:support(?:s|ed|ing)?|sponsor(?:s|ed|ing)?|assist(?:s|ed|ing)?\s+with|"
+    r"file[sd]?\s+for|filing\s+for|petition(?:s|ed|ing)?\s+for)\b[^.]{0,80}?"
+    r"\b(?:permanent\s+residency|permanent\s+residence|green\s+card|"
+    r"labor\s+certification|perm\b|eb[-\s]?1[ab]?\b|eb[-\s]?2\b|"
+    r"outstanding\s+researcher|national\s+interest\s+waiver)|"
+    r"\b(?:permanent\s+residency|green\s+card)\b[^.]{0,60}?"
+    r"\b(?:support(?:s|ed|ing)?|sponsor(?:s|ed|ing)?|assists?)\b",
+    re.I,
+)
+# Programmes a posting names outright.  Recorded, never inferred: an employer
+# picks an EB category after hiring, so reading one out of a job ad would be
+# invention.
+_VISA_PATHWAY_PATTERNS = (
+    ("h1b", r"\bh[-\s]?1[-\s]?b\b"),
+    ("j1", r"\bj[-\s]?1\b"),
+    ("o1", r"\bo[-\s]?1\b"),
+    ("tn", r"\btn\s+(?:visa|status|classification)\b"),
+    ("e3", r"\be[-\s]?3\s+(?:visa|status)\b"),
+    ("eb1", r"\beb[-\s]?1[ab]?\b|\boutstanding\s+researcher\b"),
+    ("eb2", r"\beb[-\s]?2\b|\bnational\s+interest\s+waiver\b|\bniw\b"),
+    ("perm", r"\bperm\b|\blabor\s+certification\b|\bspecial\s+handling\b"),
+    ("green_card", r"\bgreen\s+card\b|\bpermanent\s+residen(?:cy|ce)\b"),
+)
+_VISA_PATHWAY_RES = tuple(
+    (name, re.compile(pattern, re.I)) for name, pattern in _VISA_PATHWAY_PATTERNS
+)
+_INTERNATIONAL_WELCOME_RE = re.compile(
+    r"international\s+candidates\s+welcome|"
+    r"welcome\s+applications\s+from\s+international|"
+    r"global\s+applicants\s+welcome|"
+    r"applications\s+from\s+international\s+(?:candidates|applicants|scholars)\s+are\s+welcome",
+    re.I,
+)
+
+# A negation sharing the sentence with an affirmative match. Cheap, blunt, and
+# pointed at the only direction that matters: this field's failures have all
+# been affirmatives read out of refusals, never the reverse.
+_NEGATED_SENTENCE_RE = re.compile(
+    r"\b(?:not|no|never|cannot|can\s*not|unable|ineligible|without|"
+    r"n[o’']t)\b",
+    re.I,
+)
+
+
+# Most specific first. A posting that both names a citizenship bar and mentions
+# sponsorship elsewhere is answered by the bar, because that is the sentence
+# that decides whether the reader may apply at all.
+_VISA_RULES = (
+    ("citizenship_required", lambda t: _CITIZENSHIP_ONLY_RE.search(t)),
+    ("citizen_or_pr_required", lambda t: _CITIZEN_OR_PR_RE.search(t)),
+    ("sponsorship_explicit_no", lambda t: _VISA_REFUSAL_RE.search(t)),
+    ("permanent_residency_supported", lambda t: _PR_SUPPORT_RE.search(t)),
+    ("sponsorship_explicit_yes", lambda t: _VISA_OFFER_RE.search(t)),
+    ("international_candidates_welcome", lambda t: _INTERNATIONAL_WELCOME_RE.search(t)),
+    ("unclear", lambda t: _VISA_MENTION_RE.search(t)),
+)
+
+# Values that are a hard bar for a candidate who needs sponsorship. Kept as
+# data so the UI, the CSV and the filters cannot drift apart on which is which.
+VISA_BLOCKING_STATUSES = (
+    "citizenship_required", "citizen_or_pr_required", "sponsorship_explicit_no",
+)
+VISA_SUPPORTIVE_STATUSES = (
+    "sponsorship_explicit_yes", "permanent_residency_supported",
+    "international_candidates_welcome",
+)
+VISA_STATUSES = VISA_BLOCKING_STATUSES + VISA_SUPPORTIVE_STATUSES + ("unclear", "unknown")
+
+
+def _sentence_around(text, match):
+    """The sentence the match sits in, so the answer carries its own evidence."""
+    if not match:
+        return None
+    start, end = match.span()
+    left = max(text.rfind(".", 0, start), text.rfind("\n", 0, start)) + 1
+    right = min(
+        (index for index in (text.find(".", end), text.find("\n", end)) if index != -1),
+        default=-1,
+    )
+    if right == -1:
+        right = min(len(text), end + 200)
+    quote = " ".join(text[left:right + 1].split()).strip()
+    return quote[:400] or None
+
+
+def visa_pathways(text):
+    """Programmes the posting names outright, in a stable order."""
+    cleaned = clean_text(text)
+    if not cleaned:
+        return []
+    return [name for name, pattern in _VISA_PATHWAY_RES if pattern.search(cleaned)]
+
+
+def classify_visa(text):
+    """Return ``{status, evidence, pathways}`` for one posting's text.
+
+    ``evidence`` is the sentence the decision came from, quoted, or ``None``
+    when the answer is ``unknown``.  Nothing here is inferred from the
+    institution, the country, or the role -- only from what the posting says.
+    """
+    cleaned = clean_text(text)
+    if not cleaned:
+        return {"status": "unknown", "evidence": None, "pathways": []}
+    lower = cleaned.casefold()
+    pathways = visa_pathways(cleaned)
+    for status, probe in _VISA_RULES:
+        match = probe(lower)
+        if not match:
+            continue
+        # A hedged offer is not an offer.  "May be available in limited
+        # circumstances" is real information and reporting it as a commitment
+        # would mislead exactly the reader who depends on this field.
+        if status == "sponsorship_explicit_yes" and _VISA_HEDGE_RE.search(lower):
+            status = "unclear"
+        sentence = _sentence_around(cleaned, match) or ""
+        if not _is_about_immigration(sentence):
+            # Scholarship sponsorship, sponsored research, an industry sponsor:
+            # money, not work authorization. Keep looking rather than answering
+            # a question this sentence never addressed.
+            continue
+        if status in ("permanent_residency_supported", "sponsorship_explicit_yes"):
+            if _NEGATED_SENTENCE_RE.search(sentence):
+                # The sentence carrying the affirmative match also carries a
+                # negation. Whatever it means, it is not a commitment.
+                status = "unclear"
+        return {
+            "status": status,
+            "evidence": _sentence_around(cleaned, match),
+            "pathways": pathways,
+        }
+    # A posting that names a programme has said something about immigration,
+    # even when it never uses the words "visa" or "sponsorship" -- "J-1
+    # exchange visitor status may be arranged" is not silence. It is not a
+    # commitment either, so it lands in unclear with the sentence attached.
+    if pathways:
+        for _name, pattern in _VISA_PATHWAY_RES:
+            named = pattern.search(cleaned)
+            if named:
+                return {"status": "unclear",
+                        "evidence": _sentence_around(cleaned, named),
+                        "pathways": pathways}
+    return {"status": "unknown", "evidence": None, "pathways": pathways}
 
 
 def infer_visa(text):
-    lower = clean_text(text).casefold()
-    if _VISA_REFUSAL_RE.search(lower):
-        return "sponsorship_explicit_no"
-    if _VISA_OFFER_RE.search(lower):
-        return "unclear" if _VISA_HEDGE_RE.search(lower) else "sponsorship_explicit_yes"
-    if re.search(r"international candidates welcome|welcome applications from international|global applicants welcome", lower):
-        return "international_candidates_welcome"
-    if _VISA_MENTION_RE.search(lower):
-        return "unclear"
-    return "unknown"
+    """Backwards-compatible string form used by the existing callers."""
+    return classify_visa(text)["status"]
 
 
 def infer_phd(text):
@@ -1271,8 +1781,24 @@ def infer_phd(text):
 def parse_start(text):
     text = clean_text(text)
     year = None
+    # Prefer an explicit appointment header to unrelated dated rankings or
+    # policy notices. Month/day start dates and "Fall Semester of 2027" were
+    # previously missed, allowing older narrative years to win.
+    labelled = re.search(
+        r"\b(?:(?:target\s+)?start\s+date|effective\s+date(?:\s+of\s+appointment)?)"
+        r"\s*:\s*([^.;]{1,80})", text[:2000], re.I)
+    explicit_date = parse_date(labelled.group(1)) if labelled else None
+    purpose = re.search(
+        r"\b(?:commenc(?:e|ing)|start(?:ing)?|begin(?:ning)?)\s+"
+        r"(?:(?:in|during|on)\s+)?(?:the\s+)?"
+        r"(?:fall|spring|summer|winter|autumn)\s+(?:(?:semester|term)\s+)?"
+        r"(?:of\s+)?(20\d{2})", text, re.I)
     found = re.search(r"(?:fall|spring|summer|winter|autumn|commenc(?:e|ing)|start(?:ing)?|begin(?:ning)?)\s+(?:of\s+)?(20\d{2})", text, re.I)
-    if found:
+    if explicit_date:
+        year = int(explicit_date[:4])
+    elif purpose:
+        year = int(purpose.group(1))
+    elif found:
         year = int(found.group(1))
     term = None
     for candidate in ("Fall", "Spring", "Summer", "Winter", "Autumn"):
@@ -1356,6 +1882,16 @@ def parse_explicit_posted_date(text, reference_date=None):
     return None
 
 
+# The same cap as the detail parser, imported rather than repeated. These two
+# numbers have to agree -- storing less here than the parser captured discards
+# exactly the tail the parser was widened for, and sponsorship and
+# work-authorization wording sits at the end of a posting -- and a comment
+# asking a human to keep two literals in step is not a mechanism.
+from services.faculty_jobs_sources.source_jobboards import (  # noqa: E402
+    DETAIL_TEXT_LIMIT as DESCRIPTION_EXCERPT_LIMIT,
+)
+
+
 def normalize_source_job(source_job, source_region=None):
     """Convert a SourceJob-like object into DB-ready normalized fields."""
     raw_title = clean_text(getattr(source_job, "title_raw", None)) or "Untitled academic job"
@@ -1364,13 +1900,18 @@ def normalize_source_job(source_job, source_region=None):
     department = clean_text(getattr(source_job, "department_raw", None)) or None
     description = clean_text(getattr(source_job, "description_excerpt", None))
     extra = getattr(source_job, "extra", {}) or {}
-    fallback_region = extra.get("country_code") or source_region
+    # A country the posting itself exposes is evidence; the board's registered
+    # region is only a default and must not become the job's country.
+    posting_country = extra.get("country_code")
+    fallback_region = posting_country or source_region
+    region_is_board_default = not posting_country
     first_seen = (clean_text(getattr(source_job, "captured_at", None))
               or datetime.now(timezone.utc).replace(microsecond=0)
                  .isoformat(timespec="seconds").replace("+00:00", "Z"))
     location = parse_location(
         getattr(source_job, "location_raw", None), fallback_region,
         institution_text=institution_raw,
+        region_is_board_default=region_is_board_default,
         description=None if extra.get("suppress_location_description") else description,
     )
     rank = map_rank(location["country_code"], raw_title)
@@ -1400,8 +1941,14 @@ def normalize_source_job(source_job, source_region=None):
     salary = parse_salary(getattr(source_job, "salary_raw", None))
     combined = " ".join(item for item in (raw_title, department or "", description) if item)
     start_term, start_year = parse_start(combined)
-    track = infer_track(combined)
-    visa_status = infer_visa(combined)
+    # A contract stated in this vacancy's title takes precedence over general
+    # department prose mentioning other faculty appointments.
+    title_track = infer_track(raw_title)
+    track = title_track if title_track != "unknown" else infer_track(combined)
+    # One call now yields the status, the sentence it came from, and any
+    # programme the posting names outright.
+    visa = classify_visa(combined)
+    visa_status = visa["status"]
     phd_required = infer_phd(combined)
     source_url = normalize_url(getattr(source_job, "source_url", None))
     official_url = normalize_url(getattr(source_job, "official_url", None))
@@ -1431,6 +1978,13 @@ def normalize_source_job(source_job, source_region=None):
         "faculty_market_reason": faculty_role["reason"],
         "school_evidence_context": school_evidence_context,
         "school_evidence_rule_version": clean_text(extra.get("school_evidence_rule_version")) or None,
+        # The board's own taxonomy label, when it publishes one ("Accounting",
+        # "Business Law"). It is source-level discipline evidence and stronger
+        # than anything derived from the title, so it is preserved in the
+        # source record even though the derived discipline is computed
+        # separately. Adapters were already setting it and it was being
+        # dropped here, which lost the only categorisation the board asserted.
+        "source_category": clean_text(extra.get("source_category")) or None,
         "keywords_json": json.dumps(sorted(set(re.findall(r"[A-Za-z][A-Za-z/+&-]{2,}", combined)))[:80], ensure_ascii=False),
         "rank_raw": raw_title,
         "rank_normalized": rank.rank_normalized,
@@ -1438,6 +1992,11 @@ def normalize_source_job(source_job, source_region=None):
         "rank_mapping_confidence": rank.confidence,
         "rank_mapping_explanation": rank.explanation,
         "track_type": track,
+        # Read from the advertised title only. A description that mentions a
+        # part-time MBA programme or a visiting speaker series would otherwise
+        # file a tenure-track vacancy as contingent, and an inverted answer on
+        # this field is worse than no answer.
+        "appointment_type": infer_appointment(raw_title),
         "contract_type": track if track != "unknown" else None,
         "employment_type": "full_time" if re.search(r"full[- ]time", combined, re.I) else None,
         "contract_length": None,
@@ -1461,25 +2020,29 @@ def normalize_source_job(source_job, source_region=None):
         "teaching_areas_json": json.dumps([], ensure_ascii=False),
         "research_areas_json": json.dumps([], ensure_ascii=False),
         "teaching_load_raw": None,
-        "visa_text": None,
+        # The quoted sentence, so a reader can check the call rather than
+        # trust it. NULL only when the posting genuinely said nothing.
+        "visa_text": visa["evidence"],
         "visa_status": visa_status,
+        "visa_pathways": ",".join(visa["pathways"]) or None,
         "language_requirements": None,
         "official_url": official_url,
         "source_url": source_url,
-        "description_excerpt": description[:2000] if description else None,
+        "description_excerpt": description[:DESCRIPTION_EXCERPT_LIMIT] if description else None,
         "fingerprint": fingerprint,
         "canonical_key": canonical_key(official_url, fingerprint),
         "captured_at": first_seen,
         "original_title": raw_title,
         "rank_evidence": raw_title,
         "track_evidence": combined[:2000],
-        "visa_evidence": combined[:2000] if visa_status != "unknown" else None,
+        "visa_evidence": visa["evidence"],
     }
 
 
 __all__ = [
     "DISCIPLINES", "BUSINESS_SCOPES", "FACULTY_MARKET_ROLES", "COUNTRY_ALIASES", "REGION_GROUPS", "CITY_COUNTRY_HINTS", "normalize_url", "normalize_name",
     "parse_date", "parse_deadline", "parse_salary", "parse_location", "parse_explicit_posted_date", "country_code_for", "country_from_text", "COUNTRY_OPTIONS", "classify_disciplines", "classify_business_scope",
-    "classify_faculty_market_role", "infer_track", "infer_visa", "normalize_source_job", "fingerprint_fields", "canonical_key", "is_mergeable_official_url",
+    "classify_faculty_market_role", "infer_track", "infer_visa", "classify_visa",
+    "visa_pathways", "VISA_STATUSES", "VISA_BLOCKING_STATUSES", "VISA_SUPPORTIVE_STATUSES", "normalize_source_job", "fingerprint_fields", "canonical_key", "is_mergeable_official_url",
     "hiring_cycle", "hiring_cycle_reason",
 ]

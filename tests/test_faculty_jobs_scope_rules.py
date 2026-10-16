@@ -104,9 +104,16 @@ class SeniorAdministrationTests(unittest.TestCase):
         self.assertEqual("non_academic", scope("Transitional President (30-months)"))
 
     def test_a_dean_is_still_academic_leadership(self):
-        # Deans lead academic units and stay in the market; only university-wide
-        # administration is excluded.
+        # The role remains visible for audit/filtering, but the default product
+        # is the faculty-job market rather than the academic-leadership market.
         self.assertEqual("academic_leadership", role("Dean of the Business School"))
+        self.assertEqual(0, classify_faculty_market_role(
+            title="Dean of the Business School")["eligible"])
+
+    def test_chair_professor_is_a_professorial_rank_not_a_department_chair(self):
+        result = classify_faculty_market_role(title="Chair Professor of Finance")
+        self.assertEqual("faculty", result["role"])
+        self.assertEqual(1, result["eligible"])
 
 
 class UnrecognisedRoleKeepsFieldEvidenceTests(unittest.TestCase):

@@ -10,6 +10,24 @@
     "max_public_file_bytes": 20971520
   },
   "shared": {
+    "platform_ops": {
+      "name": "Platform Operations",
+      "routes": [
+        "/portfolio-analytics"
+      ],
+      "source_globs": [
+        "private_static/portfolio_analytics.html",
+        "services/portfolio_analytics_service.py",
+        "tests/test_portfolio_analytics.py",
+        "tests/test_server_portfolio_analytics_security.py",
+        "docs/portfolio_analytics_STATUS_*.md"
+      ],
+      "private_data_globs": [
+        "data/portfolio_analytics.db*"
+      ],
+      "public_navigation": false,
+      "description": "Cross-site local-only traffic and usage operations surface"
+    },
     "source_globs": [
       "server.py",
       "requirements.txt",

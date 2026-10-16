@@ -13,7 +13,7 @@ from services.faculty_jobs_normalizer import country_code_for
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE_PATH = ROOT / "data" / "faculty_job_profile.json"
-PROFILE_VERSION = 2
+PROFILE_VERSION = 3
 DEFAULT_WEIGHTS = {
     "field_match": 30,
     "research_topic_match": 20,
@@ -38,6 +38,11 @@ DEFAULT_PROFILE = {
     "weights": DEFAULT_WEIGHTS.copy(),
     "strong_match_threshold": 75,
     "possible_match_threshold": 50,
+    "qualification_evidence": {
+        "doctoral_status": "unknown", "expected_completion_date": "",
+        "research_record": "", "teaching_record": "",
+        "peer_reviewed_publications": None, "independent_courses_taught": None,
+    },
 }
 
 
@@ -101,6 +106,36 @@ def validate_profile(value):
         except (TypeError, ValueError):
             profile[key] = default
     profile["version"] = PROFILE_VERSION
+    facts = value.get("qualification_evidence") or {}
+    if not isinstance(facts, dict):
+        raise ValueError("qualification_evidence must be an object")
+    status = str(facts.get("doctoral_status") or "unknown")
+    if status not in {"unknown", "doctoral_student", "abd", "completed"}:
+        raise ValueError("Invalid doctoral_status")
+    profile["qualification_evidence"]["doctoral_status"] = status
+    expected = str(facts.get("expected_completion_date") or "").strip()
+    if expected and not re.fullmatch(r"20\d{2}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?", expected):
+        raise ValueError("Expected completion date must be YYYY, YYYY-MM or YYYY-MM-DD")
+    if len(expected) == 10:
+        try:
+            datetime.fromisoformat(expected)
+        except ValueError:
+            raise ValueError("Invalid expected completion calendar date") from None
+    profile["qualification_evidence"]["expected_completion_date"] = expected
+    for key in ("research_record", "teaching_record"):
+        profile["qualification_evidence"][key] = str(facts.get(key) or "").strip()[:4000]
+    for key in ("peer_reviewed_publications", "independent_courses_taught"):
+        count = facts.get(key)
+        if count is None or count == "":
+            profile["qualification_evidence"][key] = None
+        else:
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                raise ValueError(f"{key} must be a nonnegative integer or null") from None
+            if count < 0:
+                raise ValueError(f"{key} must be nonnegative")
+            profile["qualification_evidence"][key] = count
     return profile
 
 

@@ -10,7 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from services.faculty_jobs_service import scan_aacsb_official_websites, update_aacsb_directory
+from services.faculty_jobs_service import (
+    FACULTY_DB_PATH, scan_aacsb_official_websites, update_aacsb_directory,
+)
+from services.faculty_jobs_write_guard import guarded_write, postflight, preflight
 
 
 def main(argv=None):
@@ -35,31 +38,37 @@ def main(argv=None):
     def progress(message):
         print(message, flush=True)
 
-    if args.scan_existing:
-        result = scan_aacsb_official_websites(
-            max_schools=max(1, min(2000, args.max_schools or 25)),
-            offset=max(0, args.offset), include_checked=args.include_checked,
-            timeout=max(3, min(120, args.timeout)),
-            delay=max(0.1, min(10.0, args.delay)),
-            max_jobs_per_school=max(1, min(100, args.max_jobs_per_school)),
-            site_max_pages=max(1, min(8, args.site_max_pages)),
-            progress=progress,
-        )
-    else:
-        result = update_aacsb_directory(
-            max_pages=max(1, min(150, args.max_pages)),
-            max_records=args.max_records,
-            fetch_details=not args.no_details,
-            refresh_details=args.refresh_details,
-            scan_websites=args.scan_websites,
-            max_details=args.max_details,
-            max_schools=args.max_schools,
-            timeout=max(3, min(120, args.timeout)),
-            delay=max(0.1, min(10.0, args.delay)),
-            max_jobs_per_school=max(1, min(100, args.max_jobs_per_school)),
-            site_max_pages=max(1, min(8, args.site_max_pages)),
-            progress=progress,
-        )
+    # Both branches below write production. Integrity, inventory and a unique
+    # backup happen first, whichever one runs.
+    inventory = preflight(str(FACULTY_DB_PATH), 'aacsb_directory_update')
+
+    with guarded_write():
+        if args.scan_existing:
+            result = scan_aacsb_official_websites(
+                max_schools=max(1, min(2000, args.max_schools or 25)),
+                offset=max(0, args.offset), include_checked=args.include_checked,
+                timeout=max(3, min(120, args.timeout)),
+                delay=max(0.1, min(10.0, args.delay)),
+                max_jobs_per_school=max(1, min(100, args.max_jobs_per_school)),
+                site_max_pages=max(1, min(8, args.site_max_pages)),
+                progress=progress,
+            )
+        else:
+            result = update_aacsb_directory(
+                max_pages=max(1, min(150, args.max_pages)),
+                max_records=args.max_records,
+                fetch_details=not args.no_details,
+                refresh_details=args.refresh_details,
+                scan_websites=args.scan_websites,
+                max_details=args.max_details,
+                max_schools=args.max_schools,
+                timeout=max(3, min(120, args.timeout)),
+                delay=max(0.1, min(10.0, args.delay)),
+                max_jobs_per_school=max(1, min(100, args.max_jobs_per_school)),
+                site_max_pages=max(1, min(8, args.site_max_pages)),
+                progress=progress,
+            )
+    postflight(str(FACULTY_DB_PATH), inventory)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("ok") else 1
 

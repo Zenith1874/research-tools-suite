@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>A* 研究动态 · ABDC Research Radar</title>
+<title>A*/A 研究动态 · ABDC Research Radar</title>
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -126,8 +126,8 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
   <div class="hdr-l">
     <a href="/" style="color:var(--muted)">← 首页</a>
     <div>
-      <div class="hdr-title">A* 研究动态 · Research Radar</div>
-      <div class="hdr-sub">追踪 ABDC A* 期刊最新文章 · OpenAlex + Crossref</div>
+      <div class="hdr-title">A*/A 研究动态 · Research Radar</div>
+      <div class="hdr-sub">追踪 ABDC A* 与 A 级期刊 · OpenAlex + Crossref</div>
     </div>
   </div>
   <div class="hdr-r">
@@ -136,8 +136,8 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
   </div>
 </div>
 
-<div class="kpis" id="kpis"></div>
-<div id="naNote" style="margin:6px 0 2px;padding:8px 11px;border-left:3px solid #9b6b20;background:rgba(245,166,35,.06);color:#c9b58a;font-size:11px;line-height:1.7;border-radius:4px"></div>
+<div class="kpis" id="kpis" hidden></div>
+<div id="naNote" hidden></div>
 
 <div class="actions">
   <button class="btn btn-primary" onclick="runUpdate('recent',30)">更新最近 30 天</button>
@@ -147,7 +147,7 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
   <button class="btn" onclick="enrich()">补全摘要/引用 (S2)</button>
   <button class="btn" onclick="reclassify()">重新分类</button>
   <button class="btn" onclick="exportCsv()">导出 CSV</button>
-  <button class="btn" onclick="switchTab('debug')">打开 Debug</button>
+  <button class="btn" onclick="switchTab('debug')">查看统计 / Debug</button>
 </div>
 
 <div class="tabs" id="tabs">
@@ -166,9 +166,9 @@ pre.debug{background:var(--s1);border:1px solid var(--bd);border-radius:8px;padd
 <div class="content" id="content"><div class="loading"><div class="spinner"></div></div></div>
 
 <div class="footer">
-  文章元数据来自 OpenAlex、Crossref、Semantic Scholar 或出版社公开元数据。系统不抓取付费全文。
+  文章元数据来自 OpenAlex、Crossref、Semantic Scholar、出版社或高校公开书目。系统不抓取付费全文。
   摘要可能由公开元数据提供；若无公开摘要，则仅显示标题和元数据（标记 abstract missing），不编造内容。
-  <br>历史数据不是全量，当前以持续增量追踪为主（首次建议「回填 90 天」）。
+  <br>历史收录已扩展至 2010 年；查看「期刊覆盖」了解各期刊的实际收录范围。
 </div>
 
 <script>
@@ -199,6 +199,11 @@ const NAV_FIELD_MAP = {
 const NAV_FIELD_SLUGS = Object.fromEntries(Object.entries(NAV_FIELD_MAP).map(([slug,field])=>[field,slug]));
 
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function publicationDisplay(paper){
+  const reported=paper.publication_date||paper.publication_month||paper.publication_year||'';
+  return paper.archive_year && Number(paper.archive_year)!==Number(paper.publication_year)
+    ? `归档 ${paper.archive_year} · 来源日期 ${reported}` : reported;
+}
 function toast(msg){const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),5000)}
 async function getJSON(u){const r=await fetch(API+u);return r.json()}
 async function postJSON(u,b){
@@ -211,46 +216,23 @@ async function postJSON(u,b){
 function relClass(s){s=s||0;return s>=60?'rel-hi':(s>=35?'rel-mid':'rel-lo')}
 
 // ── 顶部 KPI + 状态 ──
-async function loadStatus(){
-  try{
-    const dbg = await getJSON('/api/abdc/astar/debug');
-    const recent7 = await getJSON('/api/abdc/astar/recent?days=7');
-    const recent30 = await getJSON('/api/abdc/astar/recent?days=30');
-    const related = await getJSON('/api/abdc/astar/articles?related_only=true&limit=1');
-    document.getElementById('versionPill').textContent = 'ABDC '+(dbg.abdc_version||'—');
-    const last = (dbg.last_update_logs&&dbg.last_update_logs[0])||null;
-    const mp = document.getElementById('modePill');
-    if(dbg.articles_total>0){mp.className='pill pill-live';mp.textContent='cache · '+(last?last.finished_at:'')}
-    else{mp.className='pill pill-cache';mp.textContent='空 · 待首次抓取'}
-    const kpis = [
-      ['A* 期刊', dbg.astar_journal_count, false],
-      ['有 ISSN', dbg.with_issn_count, false],
-      ['库内文章', dbg.articles_total, false],
-      ['近 7 天', recent7.total, false],
-      ['近 30 天', recent30.total, false],
-      ['高相关', related.total, true],
-      ['缺摘要', dbg.articles_without_abstract, false],
-      ['去重', dbg.duplicates, false],
-    ];
-    document.getElementById('kpis').innerHTML = kpis.map(k=>
-      `<div class="kpi${k[2]?' hl':''}"><div class="kpi-v">${k[1]==null?'—':k[1]}</div><div class="kpi-l">${k[0]}</div></div>`).join('');
-    // 缺摘要说明：区分“元数据 API 未返回”与“出版社页面确实不存在”。
-    const naEl = document.getElementById('naNote');
-    if(naEl && dbg.articles_without_abstract){
-      const checked = dbg.articles_without_abstract_checked_metadata_apis
-        || dbg.articles_without_abstract_confirmed_unavailable || 0;
-      const review = dbg.articles_without_abstract_publisher_review_pending||0;
-      const tops = (dbg.articles_without_abstract_top_journals||[]).slice(0,5).map(j=>j.journal_title).join('、');
-      const pct = Math.round(checked/dbg.articles_without_abstract*100);
-      naEl.innerHTML = `缺摘要 ${dbg.articles_without_abstract} 篇中，约 ${checked}（${pct}%）已查询 OpenAlex / Crossref / Semantic Scholar，但这些 API 当时未返回摘要。`
-        + `${review?`其中 ${review} 篇属于出版社页面/授权接口待逐篇复核，不能标成“无摘要”。`:''}`
-        + `${tops?`高频期刊包括 ${tops}。`:''}`
-        + `本工具不抓付费全文；发现公开摘要页后可经来源核验补录。`;
-    }
-  }catch(e){
-    document.getElementById('modePill').className='pill pill-err';
-    document.getElementById('modePill').textContent='后端未连接';
+function loadStatus(){
+  document.getElementById('versionPill').textContent='ABDC A*/A';
+  const mp=document.getElementById('modePill');
+  mp.className='pill pill-cache';
+  mp.textContent='读取文章库';
+}
+function updateStatusFromArticleResponse(data){
+  document.getElementById('versionPill').textContent='ABDC A*/A';
+  const mp=document.getElementById('modePill');
+  if(!data || !data.success){
+    mp.className='pill pill-err';
+    mp.textContent='后端未连接';
+    return;
   }
+  mp.className='pill pill-live';
+  const last=(data.metadata&&data.metadata.last_update)||'';
+  mp.textContent='缓存'+(last?' · '+last:'');
 }
 
 // ── Tab 路由 ──
@@ -300,6 +282,8 @@ async function renderArticles(relatedDefault){
       <option value="citations_desc">引用优先</option>
     </select>
     <input type="number" id="minrel" placeholder="最低相关分" style="width:110px" value="${esc(STATE.filters.min_relevance||'')}">
+    <input type="number" id="fromyear" min="1900" max="2100" placeholder="归档起年" style="width:110px" value="${esc(STATE.filters.from_year||'')}">
+    <input type="number" id="toyear" min="1900" max="2100" placeholder="归档止年" style="width:110px" value="${esc(STATE.filters.to_year||'')}">
     <button class="btn" onclick="applyFilters()">应用</button>
     <span style="margin-left:auto;display:inline-flex;gap:5px;align-items:center">
       <span style="font-size:11px;color:var(--muted)">浏览</span>
@@ -322,6 +306,8 @@ function buildArticleParams(){
   p.set('sort', STATE.filters.sort || (STATE.relatedDefault?'relevance_desc':'date_desc'));
   if(STATE.filters.q) p.set('q',STATE.filters.q);
   if(STATE.filters.min_relevance) p.set('min_relevance',STATE.filters.min_relevance);
+  if(STATE.filters.from_year) p.set('from_year',STATE.filters.from_year);
+  if(STATE.filters.to_year) p.set('to_year',STATE.filters.to_year);
   if(STATE.relatedDefault || STATE.relatedChip==='related') p.set('related_only','true');
   const chip=STATE.relatedChip;
   if(chip && chip!=='all' && chip!=='related'){
@@ -353,6 +339,7 @@ async function loadArticlePage(append){
     else document.getElementById('content').innerHTML='<div class="empty"><div class="big">后端未连接</div></div>';
     return;
   }
+  updateStatusFromArticleResponse(data);
   STATE.total=data.total;
   STATE.loaded = append ? STATE.loaded.concat(data.articles) : data.articles;
   STATE.lastMeta=data.metadata;
@@ -433,7 +420,7 @@ function articleCard(a){
       <div style="flex:1">
         <div class="card-title">${articleTitleLink(a)}</div>
         <div><span class="card-journal">${esc(a.journal_title||'未知期刊')}</span>${a.is_ft50?'<span class="list-badge lb-ft50">FT50</span>':''}${a.is_utd24?'<span class="list-badge lb-utd24">UTD24</span>':''}</div>
-        <div class="card-meta">${esc(a.publication_date||'')} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}${cls.semantic_relevance!=null?' · 🧠语义 '+Math.round(cls.semantic_relevance):''}</div>
+        <div class="card-meta">${esc(publicationDisplay(a))} · ABDC ${esc(a.journal_abdc_rating||'A*')}${a.cited_by_count!=null?' · 引用 '+a.cited_by_count:''}${cls.semantic_relevance!=null?' · 🧠语义 '+Math.round(cls.semantic_relevance):''}</div>
         <div class="card-authors">${esc(authors)}</div>
       </div>
       <span class="relscore ${relClass(rel)}">${rel}</span>
@@ -461,6 +448,8 @@ function setChip(k){
 function applyFilters(){
   STATE.filters.q=document.getElementById('q').value.trim();
   STATE.filters.min_relevance=document.getElementById('minrel').value.trim();
+  STATE.filters.from_year=document.getElementById('fromyear').value.trim();
+  STATE.filters.to_year=document.getElementById('toyear').value.trim();
   const s=document.getElementById('sort'); if(s) STATE.filters.sort=s.value;
   render();
 }
@@ -473,7 +462,7 @@ async function renderDigest(){
     c.innerHTML=`<div class="empty"><div class="big">本周暂无新文章</div>抓取后这里会按主题分块汇总。</div>`;return;
   }
   const SEC=[
-    ['this_week_in_astar','本周 A* 顶刊新文'],['highly_relevant','与我研究高度相关'],
+    ['this_week_in_astar','本周 A*/A 新文'],['highly_relevant','与我研究高度相关'],
     ['ai_organization','AI / 组织研究'],['wfh_rto','WFH / RTO / 混合办公'],
     ['digital_trace_nlp','Digital trace / NLP / 文本方法'],['ob_hr_mechanisms','OB / HR 机制'],
     ['cross_field','跨领域机会 (IS / OM)'],['interesting_titles_no_abstract','有趣标题但缺摘要'],
@@ -486,7 +475,7 @@ async function renderDigest(){
         items.map(it=>`<div class="digest-item">
           <div class="dt"><a href="${it.doi?'https://doi.org/'+esc(it.doi):(it.url||'#')}" target="_blank">${esc(it.title)}</a>
             <span class="evidence">${esc(it.evidence_basis)}</span></div>
-          <div class="dm">${esc(it.journal_title||'')} · ${esc(it.publication_date||'')} · 相关分 ${it.relevance_score||0}</div>
+          <div class="dm">${esc(it.journal_title||'')} · ${esc(publicationDisplay(it))} · 相关分 ${it.relevance_score||0}</div>
           <div class="dw">${esc(it.why_it_matters||'')}</div>
         </div>`).join('')+`</div>`;
     }).join('');
@@ -577,7 +566,7 @@ async function renderSaved(){
   if(!data.saved||!data.saved.length){c.innerHTML='<div class="empty"><div class="big">还没有保存的文章</div>在文章卡片点「保存」加入阅读列表。</div>';return}
   c.innerHTML='<table><thead><tr><th>标题</th><th>期刊</th><th>日期</th><th>状态</th><th>笔记</th></tr></thead><tbody>'+
     data.saved.map(s=>`<tr><td><a href="${s.doi?'https://doi.org/'+esc(s.doi):'#'}" target="_blank">${esc(s.title)}</a></td>
-    <td style="color:var(--dim)">${esc(s.journal_title||'')}</td><td style="color:var(--muted)">${esc(s.publication_date||'')}</td>
+    <td style="color:var(--dim)">${esc(s.journal_title||'')}</td><td style="color:var(--muted)">${esc(publicationDisplay(s))}</td>
     <td>${esc(s.reading_status||'')}</td><td style="color:var(--dim)">${esc(s.user_note||'')}</td></tr>`).join('')+'</tbody></table>';
 }
 
@@ -593,10 +582,10 @@ async function runUpdate(mode,days){
   const r=await postJSON('/api/abdc/astar/update',body);
   if(r.blocked)return;
   toast(r.message||'已启动');
-  setTimeout(loadStatus,8000);
+  setTimeout(()=>render(),8000);
 }
 async function reclassify(){const r=await postJSON('/api/abdc/astar/classify',{});toast(r.message||'已启动')}
-async function enrich(){toast('Semantic Scholar 全量补全已启动（按批进行，只处理未查验队列）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(loadStatus,15000)}
+async function enrich(){toast('Semantic Scholar 全量补全已启动（按批进行，只处理未查验队列）');const r=await postJSON('/api/abdc/astar/enrich',{});toast(r.message||'已启动');setTimeout(()=>render(),15000)}
 async function saveArticle(id){const r=await postJSON('/api/abdc/astar/save',{article_id:id});toast(r.success?'已保存到阅读列表':'保存失败')}
 
 // ── 语义搜索 ──────────────────────────────────────────────────────────────
@@ -645,7 +634,7 @@ function semanticCards(arts){
     <div class="card-top"><div style="flex:1">
       <div class="card-title">${articleTitleLink(a)}</div>
       <div><span class="card-journal">${esc(a.journal_title||'')}</span></div>
-      <div class="card-meta">${esc(a.publication_date||'')}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
+      <div class="card-meta">${esc(publicationDisplay(a))}${a.relevance_score!=null?' · 相关分 '+a.relevance_score:''}${a.broad_area?' · '+esc(a.broad_area):''}</div>
       <div class="card-authors">${esc((a.authors||[]).join(', '))}</div>
     </div><span class="relscore rel-high" title="语义相似度">${(a.similarity*100).toFixed(0)}</span></div>
     <div class="card-abstract">${esc(a.abstract||'')}${(a.abstract||'').length>=400?'…':''}</div>
@@ -688,7 +677,7 @@ async function exportCsv(){
   if(!data.articles.length){toast('无数据可导出');return}
   const rows=[['date','journal','title','relevance','related','area','topics','methods','data_types','abstract_status','doi']];
   data.articles.forEach(a=>{const c=a.classification||{};rows.push([
-    a.publication_date||'',a.journal_title||'',(a.title||'').replace(/"/g,'""'),
+    publicationDisplay(a),a.journal_title||'',(a.title||'').replace(/"/g,'""'),
     c.relevance_score||0,c.is_related_to_my_research||0,c.broad_area||'',
     (c.research_topic||[]).join('|'),(c.method_tags||[]).join('|'),(c.data_type_tags||[]).join('|'),
     a.abstract_status||'',a.doi||'']);});

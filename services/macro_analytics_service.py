@@ -321,6 +321,13 @@ def _connect(path):
 
 
 def _rows(conn, table, code, code_col='indicator_code'):
+    if table == 'pboc_balance_sheet_observations':
+        columns = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
+        if {'published_date', 'updated_at', 'id'} <= columns:
+            from services.pboc_balance_sheet_service import latest_balance_vintages
+            rows = [dict(row) for row in conn.execute(
+                f'SELECT * FROM {table} WHERE {code_col}=? AND value IS NOT NULL', (code,))]
+            return [{'period': row['period'], 'value': row['value']} for row in latest_balance_vintages(rows)]
     return [dict(r) for r in conn.execute(
         f'SELECT period,value FROM {table} WHERE {code_col}=? AND value IS NOT NULL ORDER BY period', (code,))]
 
@@ -745,6 +752,49 @@ def build_china_analytics(db_path):
         except sqlite3.OperationalError:
             cpi = ppi = pmi = ip_yoy = retail_yoy = fai_yoy = gdp_nominal = gdp_real = []
             unemp = export_yoy = import_yoy = trade_yoy = []
+        enterprise_positions, enterprise_analyses = [], []
+        for code, label, frequency in (
+                ('CN_IND_PROFIT_YTD_YOY', '工业利润官方累计同比定位', 'monthly'),
+                ('CN_IND_REVENUE_YTD_YOY', '工业营收官方累计同比定位', 'monthly'),
+                ('CN_CPI_CORE_YOY', '核心CPI同比定位', 'monthly'),
+                ('CN_PMI_MFG_NEW_ORDERS', '制造业新订单定位', 'monthly'),
+                ('CN_CAPACITY_UTILIZATION', '工业产能利用率定位', 'quarterly')):
+            try:
+                rows = _rows(conn, 'china_macro_observations', code)
+            except sqlite3.OperationalError:
+                rows = []
+            minimum = 24 if frequency == 'monthly' else 12
+            if len(rows) >= minimum:
+                item = _position_item(label, rows, frequency, 'rate')
+            else:
+                item = _item(label, f'有效样本少于{minimum}期，拒绝分位/Z判断。', None, rows,
+                             '官方同口径序列；达到样本门槛后才计算历史分位与Z',
+                             'insufficient_sample' if rows else 'missing')
+            item['caveats'].append('工业同比采用官方可比口径；公布累计值直除不替代官方同比。')
+            enterprise_positions.append(item)
+        try:
+            revenue = _rows(conn, 'china_macro_observations', 'CN_IND_REVENUE_YTD_YOY')
+            receivables = _rows(conn, 'china_macro_observations', 'CN_IND_RECEIVABLES_YOY')
+            inventory = _rows(conn, 'china_macro_observations', 'CN_IND_FINISHED_INVENTORY_YOY')
+        except sqlite3.OperationalError:
+            revenue, receivables, inventory = [], [], []
+        keys, values = _align(revenue, receivables, inventory)
+        pressure = [{'period': str(key)[:7], 'value': round(a-r, 2),
+                     'receivable_gap': round(a-r, 2), 'inventory_gap': round(i-r, 2)}
+                    for key, r, a, i in zip(keys, *values)]
+        enough = len(pressure) >= MONTHLY_MIN_N
+        item = _item('工业应收与库存相对营收增速',
+                     (f'应收同比比营收累计同比高{pressure[-1]["receivable_gap"]:+.2f}个百分点，'
+                      f'产成品库存同比高{pressure[-1]["inventory_gap"]:+.2f}个百分点。' if enough
+                      else '同月三项有效样本不足24期，不进行统计判断。'),
+                     pressure[-1] if enough else None, pressure,
+                     '同月官方应收/产成品存货同比分别减官方累计营收同比；单位：百分点',
+                     'derived' if enough else 'insufficient_sample' if pressure else 'missing',
+                     caveats=['月末存量同比与累计流量同比的描述性对照，不是直接现金流、不表示因果。',
+                              '规上企业统计范围调整，优先官方可比口径同比，不跨缺月补值。'])
+        item['compare_keys'] = [{'key': 'receivable_gap', 'label': '应收－营收', 'color': '#4f8fff'},
+                                {'key': 'inventory_gap', 'label': '库存－营收', 'color': '#f5a623'}]
+        enterprise_analyses.append(item)
         reer = _rows(conn, 'china_rates_observations', 'REER_CNY_BIS')
         try:
             sf_stock = [dict(r) for r in conn.execute(
@@ -817,8 +867,8 @@ def build_china_analytics(db_path):
                                '社融存量含政府债券等，分子口径宽于私人部门债务。',
                                '统计关联不代表因果。']
     return {'positioning': positioning + [sales_area_position, cpi_pos, ppi_pos, pmi_pos, ip_pos, retail_pos,
-                                          fai_pos, gdp_pos, unemp_pos, reer_pos],
-            'analyses': [sales_area_level_item, loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
+                                          fai_pos, gdp_pos, unemp_pos, reer_pos] + enterprise_positions,
+            'analyses': enterprise_analyses + [sales_area_level_item, loan_momentum, share_item, hh_lt_item, stock_item, mix_item, cp_item,
                          lev_item, trade_item, scissors_item, transmission, fiscal, debt_item,
                          spread_item, vol_item]}
 

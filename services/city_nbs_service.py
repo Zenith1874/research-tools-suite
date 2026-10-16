@@ -35,10 +35,9 @@ HEADERS = {
 # db_region_code/scope 与既有库保持一致：直辖市财政存省级行政区代码，
 # 其他城市存地级市代码；nbs_da 是统计局接口中的地区维度值。
 #
-# gdp_region_code 单独给：统计局在线序列是五经普修订后的口径，而库里省级行政区
-# 那批 GDP 是年鉴修订前口径且覆盖 31 个省。若把直辖市的修订值写回省级码，
-# 省级排行就会变成 2 个省用新口径、29 个用旧口径——那是新造一个断点。
-# 因此直辖市的 GDP 写到城市码，省级码原样保留，两套口径各自内部自洽。
+# Keep province and city identities distinct. Their source/collection vintages
+# may differ, but yearbooks are not universally pre-revision and revisions are
+# not necessarily upward. Preserve both records until period-level reconciliation.
 NBS_CITIES = {
     '北京': {'db_region_code': '110000', 'gdp_region_code': '110100',
              'scope': 'province_total', 'nbs_da': '110000000000'},

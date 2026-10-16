@@ -79,8 +79,12 @@ class SchoolMergeTests(MergeTestBase):
         self.conn.commit()
         self.assertEqual(11, self.conn.execute(
             "SELECT school_id FROM jobs WHERE id=100").fetchone()["school_id"])
-        self.assertEqual(11, self.conn.execute(
-            "SELECT school_id FROM school_evidence LIMIT 1").fetchone()["school_id"])
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM school_evidence WHERE school_id=11 AND is_current=1"
+        ).fetchone()[0])
+        self.assertEqual(1, self.conn.execute(
+            "SELECT COUNT(*) FROM school_evidence WHERE school_id=10 AND is_current=0"
+        ).fetchone()[0], "the old evidence row remains historical for audit")
 
     def test_the_merged_row_is_retired_not_deleted(self):
         self.institution(1, "Tulane University")

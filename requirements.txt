@@ -7,3 +7,4 @@ rapidocr_onnxruntime>=1.4,<2  # 统计局只提供 JPG 的省级年鉴表；本�
 pypdf>=4.0              # 财政部中央政府债务 PDF 解析
 PyMuPDF>=1.26,<2         # 本地论文 PDF 文本层提取、版面回写与渲染审计（AGPL/商业双许可证）
 numpy>=2.0              # 宏观统计分析层的数组、相关、滚动统计与Z分数
+tzdata; sys_platform == "win32"  # IANA reporting timezones and DST on Windows

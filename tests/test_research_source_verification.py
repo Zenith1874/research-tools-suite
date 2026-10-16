@@ -117,6 +117,27 @@ class SourceMatchingTests(unittest.TestCase):
         self.assertIsNone(found)
         self.assertEqual(reason, 'no confident match')
 
+    def test_book_review_is_not_accepted_as_original_source(self):
+        candidate = crossref_work(
+            'Book Review: The Constitution of Society: Outline of the Theory of Structuration',
+            1985, ['Anthony Giddens'])
+        found, reason = verify._lookup_crossref(
+            CrossrefStubSession([candidate]), {
+                'authors': 'Anthony Giddens', 'year': 1984,
+                'title': 'The Constitution of Society: Outline of the Theory of Structuration',
+                'kind': 'origin', 'verification': 'pending_verification',
+            })
+        self.assertIsNone(found)
+        self.assertIn('book review', reason)
+
+    def test_machine_match_records_version_review_flag(self):
+        candidate = work('The job demands-resources model of burnout', 2010,
+                         ['Evangelia Demerouti', 'Arnold Bakker'])
+        record = dict(self.record)
+        verify._apply(record, candidate)
+        self.assertEqual(record['verification_status'], 'MACHINE_MATCHED')
+        self.assertEqual(record['version_review_status'], 'VERSION_REVIEW_REQUIRED')
+
     def test_right_authors_but_wrong_year_still_matches(self):
         """Recorded years are often a reprint or an online-first date."""
         candidate = work('The job demands-resources model of burnout', 2002,

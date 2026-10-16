@@ -23,6 +23,23 @@ from services.business_research_service import (
 
 
 class BusinessResearchServiceTests(unittest.TestCase):
+    def test_archive_year_filters_and_cards_preserve_source_year(self):
+        from services.astar_archive_year_service import ensure_tables, put_year
+        from services.business_research_service import _query_papers
+        conn = sqlite3.connect(self.article_db)
+        try:
+            ensure_tables(conn)
+            put_year(conn, 1, 2025, 'publisher_imprint', 'publisher', 'header', {}, priority=30)
+            conn.commit()
+        finally:
+            conn.close()
+        found = _query_papers({'from_year': 2025, 'to_year': 2025}, db_path=self.article_db, state_db_path=self.state_db)
+        paper = next(item for item in found['papers'] if item['id'] == '1')
+        self.assertEqual(2025, paper['year'])
+        self.assertEqual(2026, paper['sourcePublicationYear'])
+        absent = _query_papers({'from_year': 2026, 'to_year': 2026}, db_path=self.article_db, state_db_path=self.state_db)
+        self.assertNotIn('1', [item['id'] for item in absent['papers']])
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)

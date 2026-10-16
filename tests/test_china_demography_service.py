@@ -8,6 +8,7 @@ from pathlib import Path
 
 from services.china_demography_service import (
     DATA_PATH,
+    read_effective_demography_rows,
     read_demography_rows,
     sync_china_demography,
     update_china_demography,
@@ -73,7 +74,7 @@ class ChinaDemographyTests(unittest.TestCase):
             except FileNotFoundError:
                 pass
 
-    def test_sync_is_idempotent_and_preserves_partial_2025(self):
+    def test_sync_is_idempotent_and_preserves_original_snapshot(self):
         first = sync_china_demography(self.conn, sync_at='2026-08-13T10:00:00')
         second = sync_china_demography(self.conn, sync_at='2026-08-13T11:00:00')
         self.assertEqual(first['rows_skipped'], 0)
@@ -93,12 +94,39 @@ class ChinaDemographyTests(unittest.TestCase):
         count = self.conn.execute(
             "SELECT COUNT(*) FROM china_macro_observations "
             "WHERE indicator_code IN ('CN_BIRTHS','CN_MARRIAGES',"
-            "'CN_DIVORCES_AGREEMENT','CN_DIVORCES_COURT')").fetchone()[0]
+            "'CN_DIVORCES_AGREEMENT','CN_DIVORCES_COURT',"
+            "'CN_DIVORCES_TOTAL_OFFICIAL')").fetchone()[0]
         self.assertEqual(count, first['rows_read'])
         court_2025 = self.conn.execute(
             "SELECT 1 FROM china_macro_observations "
             "WHERE indicator_code='CN_DIVORCES_COURT' AND period='2025'").fetchone()
-        self.assertIsNone(court_2025)
+        self.assertIsNotNone(court_2025)
+        raw_rows, _ = read_demography_rows(DATA_PATH)
+        old_marriage = next(row for row in raw_rows if row['indicator_code'] == 'CN_MARRIAGES'
+                            and row['period'] == '2025')
+        self.assertEqual(old_marriage['value'], 676.3)
+
+    def test_bulletin_updates_keep_official_total_and_component_rounding(self):
+        rows, skipped = read_effective_demography_rows()
+        self.assertEqual(skipped, 0)
+        by_key = {(row['indicator_code'], row['period']): row for row in rows}
+        expected = {'CN_MARRIAGES': 676.5, 'CN_DIVORCES_AGREEMENT': 274.4,
+                    'CN_DIVORCES_COURT': 119.4, 'CN_DIVORCES_TOTAL_OFFICIAL': 393.7}
+        for code, value in expected.items():
+            row = by_key[(code, '2025')]
+            self.assertEqual(row['value'], value)
+            self.assertEqual(row['data_status'], 'official')
+            self.assertEqual(row['release_date'], '2026-09-30')
+            self.assertEqual(row['retrieved_at'], '2026-10-02')
+            self.assertIn('www.mca.gov.cn', row['source_url'])
+        self.assertAlmostEqual(by_key[('CN_DIVORCES_AGREEMENT', '2025')]['value'] +
+                               by_key[('CN_DIVORCES_COURT', '2025')]['value'], 393.8)
+
+    def test_undated_bulletin_cannot_override_snapshot(self):
+        rows, _ = read_demography_rows(DATA_PATH)
+        undated = self._write_csv([rows[0]])
+        with self.assertRaisesRegex(ValueError, '来源发布日期'):
+            read_effective_demography_rows(DATA_PATH, updates_path=undated)
 
     def test_sync_preserves_optional_source_timing_fields(self):
         rows, _ = read_demography_rows(DATA_PATH)
@@ -132,7 +160,7 @@ class ChinaDemographyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     read_demography_rows(path)
 
-    def test_dashboard_derives_divorce_total_without_filling_2025(self):
+    def test_dashboard_prefers_official_total_and_retains_derived_sum(self):
         sync_china_demography(self.conn)
         self.conn.close()
         payload = build_china_macro_payload(self.path)
@@ -140,13 +168,17 @@ class ChinaDemographyTests(unittest.TestCase):
                  for row in payload['series']['CN_DIVORCES_TOTAL_DERIVED']}
         self.assertAlmostEqual(total['1978'], 28.5)
         self.assertAlmostEqual(total['2024'], 351.3)
-        self.assertNotIn('2025', total)
+        self.assertAlmostEqual(total['2025'], 393.8)
+        preferred = {row['period']: row for row in payload['series']['CN_DIVORCES_TOTAL']}
+        self.assertEqual(preferred['2025']['value'], 393.7)
+        self.assertEqual(preferred['2025']['data_status'], 'official')
+        self.assertEqual(preferred['2024']['data_status'], 'derived')
         ratio = {row['period']: row['value']
                  for row in payload['series']['CN_DIVORCE_MARRIAGE_RATIO_DERIVED']}
-        self.assertEqual(len(ratio), 47)
+        self.assertEqual(len(ratio), 48)
         self.assertAlmostEqual(ratio['1978'], 28.5 / 597.8 * 100, places=8)
         self.assertAlmostEqual(ratio['2024'], 351.3 / 610.56 * 100, places=8)
-        self.assertNotIn('2025', ratio)
+        self.assertAlmostEqual(ratio['2025'], 393.7 / 676.5 * 100, places=8)
         ratio_rows = payload['series']['CN_DIVORCE_MARRIAGE_RATIO_DERIVED']
         self.assertTrue(all(row['data_status'] == 'derived' for row in ratio_rows))
         self.assertTrue(all(row['value'] >= 0 for row in ratio_rows))
@@ -162,7 +194,11 @@ class ChinaDemographyTests(unittest.TestCase):
         family = next(chart for chart in groups['demography']['charts']
                       if chart['code'] == 'family_flows')
         self.assertEqual(family['unit'], '万对')
-        self.assertEqual(set(family['series']), {'CN_MARRIAGES', 'CN_DIVORCES_TOTAL_DERIVED'})
+        self.assertEqual(set(family['series']), {'CN_MARRIAGES', 'CN_DIVORCES_TOTAL'})
+        routes = next(chart for chart in groups['demography']['charts']
+                      if chart['code'] == 'divorce_routes')
+        self.assertIn('CN_DIVORCES_TOTAL', routes['series'])
+        self.assertNotIn('CN_DIVORCES_TOTAL_DERIVED', routes['series'])
         self.assertNotIn('CN_BIRTHS', family['series'])
         ratio_chart = next(chart for chart in groups['demography']['charts']
                            if chart['code'] == 'divorce_marriage_ratio')
@@ -175,9 +211,18 @@ class ChinaDemographyTests(unittest.TestCase):
         self.assertEqual(birth['release_date_not_provided'], 1)
         marriage_coverage = next(row for row in payload['coverage']
                                  if row['code'] == 'CN_MARRIAGES')
-        self.assertEqual(marriage_coverage['latest_source_tier'], '官方数据转引')
+        self.assertEqual(marriage_coverage['latest_source_tier'], '一手官方')
+        self.assertEqual(marriage_coverage['latest_release_date'], '2026-09-30')
+        self.assertTrue(any('393.8' in warning for warning in payload['warnings']))
         self.assertEqual(payload['local_sync_at'], payload['updated_at'])
         self.assertTrue(any('万对' in warning for warning in payload['warnings']))
+
+    def test_missing_court_stays_missing_without_an_official_total(self):
+        from services.china_macro_dashboard_service import (
+            _annual_divorce_total, _preferred_divorce_total,
+        )
+        agreement = [{'period': '2026', 'value': 138.3}]
+        self.assertEqual(_preferred_divorce_total([], _annual_divorce_total(agreement, [])), [])
 
     def test_birth_history_estimate_is_separate_and_starts_from_1978(self):
         inserted = sync_annual_macro_snapshots(self.conn)
@@ -209,6 +254,7 @@ class ChinaDemographyTests(unittest.TestCase):
         self.assertIn('来源发布日期', html)
         self.assertIn('当前范围内仅 1 期的序列未绘制趋势', html)
         self.assertIn("groupCode==='demography'", html)
+        self.assertIn("demography:['CN_BIRTHS','CN_MARRIAGES','CN_DIVORCES_TOTAL']", html)
         self.assertNotIn('万人/万对', html)
         self.assertNotIn('出生、结婚与离婚合计', html)
 

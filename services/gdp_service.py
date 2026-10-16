@@ -2,8 +2,8 @@
 """中美 GDP：全国可比序列与官方地区 GDP。
 
 全国现价美元来自 World Bank 经 FRED 免 key CSV；美国州级来自 BEA SAGDP。
-中国省级只接受国家统计局官方年鉴值：优先 XLS，只有官方 JPG 时使用
-整表严格校验的本地 OCR 回退；不使用第三方或插值。
+中国省级历史采用国家统计局官方年鉴值；最新年度补入逐项核对的统计公报/
+经济运行发布，明确区分初步核算与政府官网转述；不插值、不混用名义与实际增速。
 """
 import csv
 import io
@@ -19,6 +19,7 @@ from services.regional_fiscal_service import (
     CN_PROVINCES,
 )
 from services.nbs_yearbook_ocr import extract_nbs_yearbook_image_values
+from services.province_gdp_bulletin_service import sync_reviewed_province_gdp
 
 UA = {'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'),
@@ -173,6 +174,8 @@ def update_gdp(db_path):
     with closing(connect(db_path)) as conn:
         ensure_gdp_tables(conn)
         ensure_regional_fiscal_table(conn)
+        cn_bulletins = sync_reviewed_province_gdp(conn)
+        counts['cn_regions'] += cn_bulletins['inserted'] + cn_bulletins['updated']
         for country, code in FRED_SERIES.items():
             try:
                 url = f'https://fred.stlouisfed.org/graph/fredgraph.csv?id={code}'
@@ -277,17 +280,19 @@ def update_gdp(db_path):
         regional_fiscal = update_regional_fiscal(conn)
         stored_cn_regions = conn.execute("""SELECT COUNT(DISTINCT region_code)
           FROM gdp_region_observations WHERE country_code='CN'
-          AND indicator_code='nominal_gdp'""").fetchone()[0]
+          AND region_code LIKE '__0000' AND indicator_code='nominal_gdp'""").fetchone()[0]
         stored_cn_years = conn.execute("""SELECT COUNT(*) FROM (
           SELECT period FROM gdp_region_observations WHERE country_code='CN'
-          AND indicator_code='nominal_gdp' GROUP BY period
+          AND region_code LIKE '__0000' AND indicator_code='nominal_gdp' GROUP BY period
           HAVING COUNT(DISTINCT region_code)=31)""").fetchone()[0]
     return {'success': counts['national'] > 0 or counts['us_regions'] > 0 or counts['cn_regions'] > 0,
-            'records_upserted': counts, 'errors': errors + regional_fiscal['errors'],
+            'records_upserted': counts, 'errors': errors + regional_fiscal['errors'] + cn_bulletins['errors'],
+            'cn_bulletins': cn_bulletins,
             'regional_fiscal': regional_fiscal,
             'china_regions': {'status': 'official' if stored_cn_regions == 31 else 'source_blocked',
               'reason': ('国家数据 API 当前海外 IP 返回 403；改用官方《中国统计年鉴》XLS与JPG。'
-                         f'当前完整覆盖{stored_cn_years}个年份；JPG仅在31省整表与置信度校验通过后入库，不使用第三方或插值。'),
+                         f'当前31省金额覆盖{stored_cn_years}个年份；最新年度公报补录单列初步/转述状态，官方实际增速单独保存。'
+                         'JPG仅在31省整表与置信度校验通过后入库，不插值。'),
               'source_url': NBS_API}}
 
 
@@ -304,7 +309,8 @@ def build_gdp_payload(db_path):
             national[country] = {'series': rs, 'growth': derive_yoy(rs), 'latest': rs[-1] if rs else None}
         regions = {}
         for country in ('CN', 'US'):
-            data = _rows(conn, '''SELECT region_code,region_name,indicator_code,period,value,unit
+            data = _rows(conn, '''SELECT region_code,region_name,indicator_code,period,value,unit,
+                                        data_status,source_name,source_url,parser_notes
                                  FROM gdp_region_observations WHERE country_code=? ORDER BY period,region_name''', (country,))
             if country == 'CN':
                 # 本表同时存省级行政区与地级市（城市经济模块用）。省级视图只要
@@ -320,13 +326,16 @@ def build_gdp_payload(db_path):
                 'china_region_source': {'status': 'source_blocked' if not regions['CN'] else 'official',
                   'message': ('统计局国家数据接口在当前海外网络返回 403；已接入官方年鉴 XLS，'
                               '仅对官方高清 JPG 使用本地严格 OCR 回退。每张表必须通过31省行数、'
-                              '目标列置信度与异常检查；不用第三方或插值。'),
+                              '目标列置信度与异常检查。最新年度另用逐项核对的公报/经济运行发布，'
+                              '区分初步核算和政府官网转述；访问范围逐项保留，不插值。'),
                   'source_url': 'https://data.stats.gov.cn/'},
                 'regional_fiscal': build_regional_fiscal_payload(conn),
                 'methods': {'national': 'World Bank 现价美元年度 GDP，经 FRED 镜像；用于规模比较。',
                   'CN': ('国家统计局《中国统计年鉴》官方 XLS/JPG，地区生产总值按当年价格、单位亿元；'
                          'JPG 使用固定版式列映射与本地 OCR，整表不通过即拒绝，缺值不插值。'
-                         '本页 31 个省级行政区为同一版本，属经济普查修订前口径；城市经济页的'
-                         '北京、上海等城市 GDP 取自国家统计局在线主要城市年度数据（修订后口径），'
-                         '数值更高，两页不可混用或相减。'),
+                         '2025年补入31省统计公报/经济运行发布的现价金额和官方不变价增速，'
+                         '标注初步核算、政府官网转述及摘录/图表的访问范围；青海省局原文尚未取得。'
+                         '各年可能来自不同版年鉴；2025版年鉴说明已纳入经济普查及核算方法修订，'
+                         '不能把整页统称修订前。同一地区的初步核算、最终核实及不同采集版本可能有差异，'
+                         '数值既可能上调也可能下调。城市经济页另用在线城市数据；未核对各期版本前不可混用或机械相减。'),
                   'US': 'BEA SAGDP：1997 起为 NAICS 口径（实际值 2017 年链式美元、名义值当年美元）；1963–1997 为 SIC 口径历史（仅名义值），两套行业分类在 1997 年存在口径断点，图中以虚线区分、不做拼接。'}}

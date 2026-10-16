@@ -199,13 +199,16 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual({"AACSB"}, self.evidence_types())
         self.assertEqual("T4", classify_business_school(self.conn, 1)["tier"])
 
-    def test_rerunning_replaces_rather_than_accumulates(self):
+    def test_rerunning_preserves_historical_evidence_without_accumulating_current_rows(self):
         self.link(30)
         self.link(40)
         rows = self.conn.execute(
-            "SELECT value FROM school_evidence WHERE evidence_type=?", (EVIDENCE_TYPE,)).fetchall()
-        self.assertEqual(1, len(rows), "counts grow as the backfill runs; rows must not pile up")
-        self.assertEqual("40", rows[0]["value"])
+            "SELECT value,is_current,valid_to FROM school_evidence "
+            "WHERE evidence_type=? ORDER BY id", (EVIDENCE_TYPE,)).fetchall()
+        self.assertEqual(2, len(rows), "the replaced observation remains available for provenance")
+        self.assertEqual(["30", "40"], [row["value"] for row in rows])
+        self.assertEqual([0, 1], [row["is_current"] for row in rows])
+        self.assertIsNotNone(rows[0]["valid_to"])
 
     def test_a_manual_override_still_wins(self):
         self.link(500)

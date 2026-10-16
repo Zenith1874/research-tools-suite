@@ -23,6 +23,12 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import requests  # noqa: E402
 
+from services import deepseek_client  # noqa: E402
+from services.abdc_astar_research_service import (  # noqa: E402
+    DEEPSEEK_MODEL_DEFAULT)
+from services.deepseek_offpeak import describe as offpeak_describe  # noqa: E402
+from services.deepseek_offpeak import wait_for_offpeak  # noqa: E402
+
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'pboc_data.db')
 DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 AREAS_ENUM = ('OB / HR, Information Systems, Marketing, Operations / Supply Chain, Finance, '
@@ -64,16 +70,8 @@ def audit_one(item, model, timeout=60):
     user = (f"期刊: {item['journal_title']}\n标题: {item['title']}\n"
             f"摘要: {(item['abstract'] or '(无摘要，按期刊和标题判断)')[:1200]}\n"
             f"当前标注: {item['broad_area']}")
-    r = requests.post(DEEPSEEK_URL, headers={
-        'Authorization': f"Bearer {os.environ['DEEPSEEK_API_KEY']}",
-        'Content-Type': 'application/json'},
-        json={'model': model, 'max_tokens': 200, 'temperature': 0.0,
-              'response_format': {'type': 'json_object'},
-              'messages': [{'role': 'system', 'content': _SYS},
-                           {'role': 'user', 'content': user}]},
-        timeout=timeout)
-    r.raise_for_status()
-    text = r.json()['choices'][0]['message']['content']
+    text = deepseek_client.chat(_SYS, user, model=model, max_tokens=200,
+                                temperature=0.0, timeout=timeout)
     m = re.search(r'\{.*\}', text, re.DOTALL)
     return json.loads(m.group(0)) if m else None
 
@@ -82,8 +80,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--per-area', type=int, default=20)
     ap.add_argument('--areas', type=str, default='', help='逗号分隔，只审计这些领域')
-    ap.add_argument('--model', type=str, default=os.environ.get('LLM_MODEL', 'deepseek-chat'))
+    ap.add_argument('--model', type=str,
+                    default=os.environ.get('LLM_MODEL', DEEPSEEK_MODEL_DEFAULT))
     ap.add_argument('--dry-run', action='store_true', help='只抽样不调 API')
+    ap.add_argument('--offpeak', action='store_true',
+                    help='撞上 DeepSeek 标准时段就等到优惠时段再继续（半价，最多等 4 小时）')
     args = ap.parse_args()
 
     areas_filter = {a.strip() for a in args.areas.split(',') if a.strip()} or None
@@ -105,7 +106,11 @@ def main():
 
     disagreements, errors, done = [], 0, 0
     stats = {a: {'n': 0, 'wrong': 0} for a in by_area}
+    if args.offpeak:
+        print(f'--offpeak：{offpeak_describe()}')
     for item in sample:
+        if args.offpeak:
+            wait_for_offpeak()
         try:
             res = audit_one(item, args.model)
         except Exception as e:

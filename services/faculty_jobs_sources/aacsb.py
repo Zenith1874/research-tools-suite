@@ -34,7 +34,7 @@ AACSB_DIRECTORY_URL = AACSB_BASE_URL + "/accredited"
 AACSB_LOAD_ENDPOINT = AACSB_BASE_URL + "/api/member-search-page/load-members"
 AACSB_CONTEXT_ITEM_ID = "b2195e79-1541-4b64-8ca9-f2e0376b47e6"
 AACSB_DEFAULT_PAGES = 110
-AACSB_SCAN_RULE_VERSION = "faculty_market_v2_20260824"
+AACSB_SCAN_RULE_VERSION = "faculty_market_v3_20260827"
 
 ACADEMIC_JOB_RE = re.compile(
     r"\b(?:assistant|associate|full|distinguished|clinical|teaching|research|practice)?\s*"
@@ -153,6 +153,10 @@ class OfficialSiteScan:
     reason: str | None = None
     candidates_seen: int = 0
     candidates_rejected: int = 0
+    complete: bool = False
+    budget_truncated: bool = False
+    error_count: int = 0
+    pages_fetched: int = 0
 
 
 def _clean(value):
@@ -407,6 +411,11 @@ class AACSBDirectoryClient(SourceAdapter):
             "accredited_records_observed": 0,
             "non_accredited_results_excluded": 0,
             "complete": False,
+            "max_pages_requested": self.max_pages,
+            "max_records": None,
+            "pages_fetched": 0,
+            "pagination_natural_end": False,
+            "error_count": 0,
         }
 
     def _pause(self):
@@ -422,6 +431,8 @@ class AACSBDirectoryClient(SourceAdapter):
         raw_results_observed = 0
         non_accredited_excluded = 0
         stopped_by_record_budget = False
+        pagination_natural_end = False
+        page_budget_exhausted = False
         for page in range(1, max_pages + 1):
             response = self.request(AACSB_LOAD_ENDPOINT, params={
                 "contextItemId": AACSB_CONTEXT_ITEM_ID,
@@ -449,17 +460,28 @@ class AACSBDirectoryClient(SourceAdapter):
             # result page or once every result counted by the endpoint has been
             # observed, including excluded non-accredited members.
             if not raw_nodes or (total and raw_results_observed >= total):
+                pagination_natural_end = True
                 break
             self._pause()
+        else:
+            page_budget_exhausted = True
         self.last_directory_metadata = {
             "reported_results": total,
             "raw_results_observed": raw_results_observed,
             "accredited_records_observed": len(records),
             "non_accredited_results_excluded": non_accredited_excluded,
+            "max_pages_requested": max_pages,
+            "max_records": max_records,
+            "pages_fetched": pages_fetched,
+            "pagination_natural_end": pagination_natural_end,
+            "page_budget_exhausted": page_budget_exhausted,
+            "error_count": 0,
             "complete": bool(
                 not stopped_by_record_budget
                 and total is not None
                 and raw_results_observed >= total
+                and pagination_natural_end
+                and not page_budget_exhausted
             ),
         }
         return records, pages_fetched, total
@@ -475,7 +497,8 @@ class AACSBDirectoryClient(SourceAdapter):
         if not website:
             return OfficialSiteScan(
                 website_status="no_official_website", career_page_status="not_found",
-                job_scan_status="unknown", reason="AACSB detail page did not expose a public website.", jobs=[]
+                job_scan_status="unknown", reason="AACSB detail page did not expose a public website.", jobs=[],
+                complete=False, pages_fetched=0,
             )
         try:
             home = self.request(website)
@@ -485,20 +508,22 @@ class AACSBDirectoryClient(SourceAdapter):
             # is not evidence that the school has no vacancy.
             return OfficialSiteScan(
                 website_status="robots_disallowed", career_page_status="unknown",
-                job_scan_status="unknown", reason=str(exc)[:300], jobs=[]
+                job_scan_status="unknown", reason=str(exc)[:300], jobs=[],
+                complete=False, error_count=1, pages_fetched=0,
             )
         except Exception as exc:
             return OfficialSiteScan(
                 website_status="blocked" if "HTTP 403" in str(exc) or "HTTP 429" in str(exc) else "error",
                 career_page_status="unknown", job_scan_status="unknown",
-                reason=str(exc)[:300], jobs=[]
+                reason=str(exc)[:300], jobs=[], complete=False, error_count=1, pages_fetched=0,
             )
         self._pause()
         home_soup = BeautifulSoup(home.text or "", "html.parser")
         home_text = visible_text(home_soup)
         if BLOCKED_PAGE_RE.search(home_text[:5000]):
             return OfficialSiteScan("blocked", "unknown", "blocked", response_status=home.status_code,
-                                   reason="Public website returned a bot/access challenge.", jobs=[])
+                                   reason="Public website returned a bot/access challenge.", jobs=[],
+                                   complete=False, pages_fetched=1)
         home_json_jobs = _jsonld_job_postings(home_soup)
         candidates = _career_candidates(home_soup, home.url)
         if re.search(r"(?:faculty|academic)\s+(?:jobs?|positions?)", urlsplit(home.url).path, re.I):
@@ -512,7 +537,8 @@ class AACSBDirectoryClient(SourceAdapter):
             candidates = [home.url]
         if not candidates:
             return OfficialSiteScan("ok", "not_found", "not_found", response_status=home.status_code,
-                                   reason="No public faculty/academic employment entry was discovered from the official homepage.", jobs=[])
+                                   reason="No public faculty/academic employment entry was discovered from the official homepage.", jobs=[],
+                                   complete=False, pages_fetched=1)
 
         all_jobs = []
         fetched = 0
@@ -521,15 +547,20 @@ class AACSBDirectoryClient(SourceAdapter):
         selected_url = None
         candidates_seen = 0
         candidates_rejected = 0
+        errors = 0
+        blocked_seen = False
         candidate_budget = max(1, min(8, int(max_pages)))
+        job_budget = max(1, min(100, int(max_jobs)))
         for candidate in candidates[:candidate_budget]:
             try:
                 response = self.request(candidate)
             except RobotsDisallowedError as exc:
                 robots_refused = True
+                errors += 1
                 last_reason = str(exc)[:300]
                 continue
             except Exception as exc:
+                errors += 1
                 last_reason = str(exc)[:300]
                 continue
             self._pause()
@@ -543,6 +574,8 @@ class AACSBDirectoryClient(SourceAdapter):
             text = visible_text(soup)
             if BLOCKED_PAGE_RE.search(text[:5000]):
                 last_reason = "Career page returned a bot/access challenge."
+                blocked_seen = True
+                errors += 1
                 continue
             page_jobs = []
             for item in json_jobs:
@@ -641,16 +674,24 @@ class AACSBDirectoryClient(SourceAdapter):
                         },
                     ))
             all_jobs.extend(page_jobs)
-            if len(all_jobs) >= max(1, min(100, int(max_jobs))):
+            if len(all_jobs) >= job_budget:
                 break
+        hit_job_budget = len(all_jobs) >= job_budget
+        budget_truncated = bool(len(candidates) > candidate_budget or hit_job_budget)
+        complete = bool(
+            not robots_refused and not blocked_seen and errors == 0
+            and not budget_truncated
+            and fetched == len(candidates[:candidate_budget])
+        )
         unique = {}
         for job in all_jobs:
             unique[job.source_job_id] = job
-        jobs = list(unique.values())[:max(1, min(100, int(max_jobs)))]
+        jobs = list(unique.values())[:job_budget]
         if jobs:
             return OfficialSiteScan("ok", "found", "jobs_found", selected_url, jobs, 200,
                                    f"Found {len(jobs)} eligible business-faculty posting(s) after {fetched} public page request(s); rejected {candidates_rejected} non-eligible candidate(s).",
-                                   candidates_seen, candidates_rejected)
+                                   candidates_seen, candidates_rejected, complete, budget_truncated,
+                                   errors, fetched)
         if fetched:
             status = "no_eligible_business_faculty_jobs" if candidates_seen else "no_current_jobs"
             reason = ("Official employment entry was accessible, but no eligible individual "
@@ -662,11 +703,17 @@ class AACSBDirectoryClient(SourceAdapter):
                 status = "unknown"
                 reason += " robots.txt refused at least one career page, so this scan is incomplete."
             return OfficialSiteScan("ok", "found", status, selected_url, [], 200, reason,
-                                   candidates_seen, candidates_rejected)
+                                   candidates_seen, candidates_rejected, complete, budget_truncated,
+                                   errors, fetched)
         if robots_refused:
             return OfficialSiteScan("robots_disallowed", "unknown", "unknown", None, [], None,
-                                   last_reason or "robots.txt refused every discovered career page.")
-        return OfficialSiteScan("ok", "unknown", "unknown", None, [], None, last_reason or "Career page could not be read.")
+                                   last_reason or "robots.txt refused every discovered career page.",
+                                   candidates_seen, candidates_rejected, False, budget_truncated,
+                                   errors, fetched)
+        return OfficialSiteScan("ok", "unknown", "unknown", None, [], None,
+                               last_reason or "Career page could not be read.",
+                               candidates_seen, candidates_rejected, False, budget_truncated,
+                               errors, fetched)
 
 
 __all__ = [

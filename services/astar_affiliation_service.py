@@ -19,7 +19,8 @@ import time
 import requests
 
 from services.openalex_budget import (
-    BUDGET_RESET_THRESHOLD, MAX_RATE_LIMIT_RETRIES, RateLimited, raise_for_rate_limit)
+    BUDGET_RESET_THRESHOLD, MAX_RATE_LIMIT_RETRIES, RateLimited, raise_for_rate_limit,
+    openalex_headers)
 
 LOG = logging.getLogger(__name__)
 
@@ -159,7 +160,8 @@ def _fetch_works(ids, session=None):
         'mailto': MAILTO,
     }
     response = getter(OPENALEX_WORKS, params=params,
-                      headers={'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'},
+                      headers=openalex_headers(OPENALEX_WORKS,
+                          {'User-Agent': f'ABDC-AstarRadar/1.0 (mailto:{MAILTO})'}),
                       timeout=HTTP_TIMEOUT)
     raise_for_rate_limit(response)
     response.raise_for_status()

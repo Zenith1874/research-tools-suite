@@ -41,15 +41,49 @@ class RobotsDisallowedError(NonRetryableAdapterError):
     """
 
 
+class CrawlBudgetExhaustedError(RobotsDisallowedError):
+    """The origin asks for a pace slower than a run can wait out.
+
+    Also a policy outcome rather than a transport failure: the pages beyond the
+    budget were not refused by the board, they were left unread by us.  Like a
+    disallow, it must never be recorded as evidence that a board holds nothing.
+    """
+
+
 ROBOTS_TIMEOUT = 10
-# A declared Crawl-delay is honoured up to this ceiling.  Some boards publish a
-# boilerplate hour-long delay under ``User-agent: *``; blocking a scheduled run
-# for that long would stall the global update lock, so the cap is applied and
-# reported rather than silently dropped.
+# How long a single request will wait on a declared Crawl-delay.  Sleeping an
+# hour inside a scheduled run would hold the global update lock, so the wait
+# itself is capped here.
 MAX_CRAWL_DELAY = 30.0
+# What the cap does NOT do is license us to ignore the declared pace.  An origin
+# asking for one request an hour (sms.careerwebsite.com publishes
+# "Crawl-delay: 3600" under ``User-agent: *``, commented "Force the crawl delay
+# for all bots to be one hour") gets at most this many requests per update run.
+# The default schedule is one run a day, so one request per run is well inside
+# what that board asked for, where spacing 13 requests 30s apart was not.
+SLOW_ORIGIN_REQUESTS_PER_RUN = 1
 _ROBOTS_CACHE = {}
 _ROBOTS_LOCK = threading.Lock()
 _LAST_FETCH = {}
+_SLOW_ORIGIN_USED = {}
+
+
+def reset_crawl_budgets():
+    """Start a new run's per-origin budget for slow-paced origins."""
+    with _ROBOTS_LOCK:
+        _SLOW_ORIGIN_USED.clear()
+
+
+def _consume_slow_origin_budget(origin, declared):
+    """Allow a bounded number of requests to an origin we cannot pace properly."""
+    with _ROBOTS_LOCK:
+        used = _SLOW_ORIGIN_USED.get(origin, 0)
+        if used >= SLOW_ORIGIN_REQUESTS_PER_RUN:
+            raise CrawlBudgetExhaustedError(
+                f"{origin} asks for Crawl-delay={declared}s; this run already used its "
+                f"{SLOW_ORIGIN_REQUESTS_PER_RUN}-request budget for that origin"
+            )
+        _SLOW_ORIGIN_USED[origin] = used + 1
 
 
 def _origin(url):
@@ -153,6 +187,22 @@ class AdapterResponse:
     jobs: list[SourceJob]
     pages_fetched: int = 0
     notes: list[str] = field(default_factory=list)
+    # What the board says it holds, when it says so ("1 - 25 Results of 53").
+    # Without this an adapter that can only read the first page looks like full
+    # coverage, and every count derived from it overstates the market.
+    reported_total: int | None = None
+    # False when the adapter knows it could not reach every advertised result.
+    coverage_complete: bool | None = None
+    # How many *listing* pages were read. ``pages_fetched`` counts every request
+    # an adapter made, so detail-page enrichment inflates it: a source that read
+    # one listing page and opened twelve job pages records 13 there. Reading
+    # that as pagination reach is wrong in exactly the direction that hides a
+    # first-page-only harvest, so the listing count is kept separately.
+    listing_pages: int | None = None
+
+    def __post_init__(self):
+        if self.listing_pages is None:
+            self.listing_pages = self.pages_fetched
 
 
 class SourceAdapter:
@@ -168,6 +218,11 @@ class SourceAdapter:
     default_page_size = 25
     max_items = 50
     respect_robots = True
+    # Whether this adapter can actually reach a second page. Most boards here
+    # are read single-page: looping without a working page parameter would only
+    # re-fetch the first one. Declaring it keeps "we read one page" distinct
+    # from "we read everything" in the source health payload.
+    paginates = False
 
     def __init__(self, timeout=20, max_pages=1, max_items=None, session=None):
         self.timeout = max(3, int(timeout))
@@ -211,11 +266,18 @@ class SourceAdapter:
             declared = None
         if declared:
             declared = max(0.0, float(declared))
-            if declared > MAX_CRAWL_DELAY and not self._crawl_delay_noted.get(url_origin):
-                LOG.warning(
-                    "robots.txt at %s asks for Crawl-delay=%ss; honouring the %ss ceiling",
-                    url_origin, declared, MAX_CRAWL_DELAY)
-                self._crawl_delay_noted[url_origin] = declared
+            if declared > MAX_CRAWL_DELAY:
+                # We cannot sleep this out inside a run, so we take the pace
+                # seriously the other way: a hard request budget for the origin.
+                # Capping the wait alone would have let one run spend 13
+                # requests on a board that asked for one an hour.
+                if not self._crawl_delay_noted.get(url_origin):
+                    LOG.warning(
+                        "robots.txt at %s asks for Crawl-delay=%ss; capping the wait at %ss "
+                        "and this run at %s request(s) to that origin",
+                        url_origin, declared, MAX_CRAWL_DELAY, SLOW_ORIGIN_REQUESTS_PER_RUN)
+                    self._crawl_delay_noted[url_origin] = declared
+                _consume_slow_origin_budget(url_origin, declared)
             # An origin asking for a slower pace outranks our own default.
             space_requests(url_origin, min(MAX_CRAWL_DELAY, declared))
 
@@ -257,6 +319,34 @@ class SourceAdapter:
                 if attempt < 2:
                     time.sleep(2 ** attempt)
         raise AdapterError(str(last_error) if last_error else f"request failed: {url}")
+
+
+_RESULT_TOTAL_RE = re.compile(
+    r"\b\d[\d,]*\s*[-–]\s*\d[\d,]*\s+(?:results?|jobs?|vacancies)\s+of\s+(\d[\d,]*)"
+    r"|\bof\s+(\d[\d,]*)\s+(?:results?|jobs?|vacancies)\b"
+    r"|\b(\d[\d,]*)\s+(?:results?|jobs?|vacancies)\s+found\b",
+    re.I,
+)
+
+
+def reported_result_total(soup):
+    """The result count a board prints, when it prints one.
+
+    Boards say things like "1 - 25 Results of 53" or "128 jobs found". Reading
+    it is the only way to tell a fully harvested source from one where we only
+    ever see the first page: without it both look identical, and every count
+    derived from the source silently claims completeness it does not have.
+    Returns None when the board publishes no total, which is not the same claim
+    as having read everything.
+    """
+    match = _RESULT_TOTAL_RE.search(soup.get_text(" ", strip=True))
+    if not match:
+        return None
+    value = next((group for group in match.groups() if group), None)
+    try:
+        return int(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
 
 
 def now_utc():
@@ -344,9 +434,18 @@ def adapter_catalog():
     from .jobs_ac_uk import JobsAcUkAdapter
     from .university_affairs import UniversityAffairsAdapter
     from .aom import AOMAdapter
+    from .carnegie import CarnegieOfficialAdapter
+    from .association_boards import (
+        ANZAMAdapter,
+        EAAAccountingAdapter,
+        EconJobMarketAdapter,
+        TimesHigherEducationUnijobsAdapter,
+    )
     from .source_jobboards import (
         AACSBJobConnectionAdapter,
         AMAAcademicPlacementAdapter,
+        AFAFinanceAdapter,
+        AMSMarketingAdapter,
         AcademicJobsOnlineAdapter,
         AAACareerCenterAdapter,
         AKADEUSAdapter,
@@ -370,6 +469,12 @@ def adapter_catalog():
         JobsAcUkAdapter(),
         ChronicleAdapter(),
         AAACareerCenterAdapter(),
+        AFAFinanceAdapter(),
+        AMSMarketingAdapter(),
+        TimesHigherEducationUnijobsAdapter(),
+        EconJobMarketAdapter(),
+        EAAAccountingAdapter(),
+        ANZAMAdapter(),
         POMSAdapter(),
         DecisionSciencesAdapter(),
         SMSAdapter(),
@@ -381,6 +486,7 @@ def adapter_catalog():
         INFORMSAdapter(),
         HERCAdapter(),
         EFMDJobsAdapter(),
+        CarnegieOfficialAdapter(),
     ]
 
 

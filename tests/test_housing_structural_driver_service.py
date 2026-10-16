@@ -18,14 +18,17 @@ class HousingStructuralDriverDataTests(unittest.TestCase):
         grouped = load_national_structural_drivers()
         self.assertEqual(len(grouped['national_population']), 16)
         self.assertEqual(len(grouped['national_disposable_income']), 8)
-        self.assertEqual(len(grouped['national_marriages']), 15)
+        self.assertEqual(len(grouped['national_marriages']), 16)
         self.assertEqual(grouped['national_population'][0]['period'], '2010')
         self.assertEqual(grouped['national_population'][-1]['value'], 140489.0)
         self.assertEqual(grouped['national_disposable_income'][-1]['value'], 43377.0)
-        self.assertEqual(grouped['national_marriages'][-1]['value'], 610.56)
+        self.assertEqual(grouped['national_marriages'][-1]['value'], 676.5)
+        self.assertEqual(grouped['national_marriages'][-1]['period'], '2025')
+        self.assertEqual(grouped['national_marriages'][-1]['release_date'], '2026-09-30')
         keys = [(code, row['period']) for code, rows in grouped.items() for row in rows]
         self.assertEqual(len(keys), len(set(keys)))
-        self.assertTrue(all(row['source_url'].startswith('https://www.stats.gov.cn/')
+        self.assertTrue(all(row['source_url'].startswith(('https://www.stats.gov.cn/',
+                                                        'https://www.mca.gov.cn/'))
                             for rows in grouped.values() for row in rows))
 
 
@@ -91,7 +94,8 @@ class HousingStructuralDriverModelTests(unittest.TestCase):
                          'national_crude_marriage_rate')
         self.assertEqual(by_key['marriage_growth']['unit'], '‰')
         self.assertAlmostEqual(by_key['marriage_growth']['latest_value'],
-                               610.56 / 140828 * 1000, places=4)
+                               676.5 / 140489 * 1000, places=4)
+        self.assertEqual(by_key['marriage_growth']['latest_period'], '2025')
         latest_national = next(row for row in snapshot['national_history']
                                if row['period'] == '2024')
         self.assertAlmostEqual(latest_national['national_crude_marriage_rate'],
@@ -113,15 +117,23 @@ class HousingStructuralDriverModelTests(unittest.TestCase):
         by_key = {row['key']: row for row in snapshot['drivers']}
         self.assertLessEqual(by_key['income_growth']['scenario_values']['stress'], 0.0)
         self.assertLess(by_key['population_growth']['scenario_values']['stress'], 0.0)
-        self.assertEqual(by_key['marriage_growth']['scenario_values']['optimistic'], 0.0)
-        self.assertEqual(by_key['marriage_growth']['scenario_values']['stress'],
-                         by_key['marriage_growth']['latest_growth'])
+        self.assertGreaterEqual(by_key['marriage_growth']['scenario_values']['optimistic'], 0.0)
+        self.assertGreater(by_key['marriage_growth']['latest_growth'], 0.0)
+        self.assertLess(by_key['marriage_growth']['scenario_values']['stress'], 0.0)
+        self.assertLessEqual(by_key['marriage_growth']['scenario_values']['stress'],
+                             by_key['marriage_growth']['latest_growth'])
         self.assertGreaterEqual(by_key['lpr_change']['scenario_values']['stress'], 0.0)
         self.assertGreaterEqual(by_key['sales_area_growth']['scenario_values']['optimistic'],
                                 0.0)
         self.assertTrue(all(row.get('scenario_guardrail') for row in snapshot['drivers']))
         self.assertIn('15城可比出生与年龄结构序列',
                       snapshot['coverage']['unavailable_comparable_fields'])
+
+    def test_historical_price_anchor_cannot_use_next_year_marriages(self):
+        snapshot = build_structural_driver_snapshot(self.conn, '厦门', '2024-12')
+        marriage = next(row for row in snapshot['drivers'] if row['key'] == 'marriage_growth')
+        self.assertEqual(marriage['latest_period'], '2024')
+        self.assertAlmostEqual(marriage['latest_value'], 610.56 / 140828 * 1000, places=4)
 
     def test_stale_or_short_city_series_falls_back_only_where_allowed(self):
         self.conn.execute("DELETE FROM city_indicator_observations WHERE indicator_code='resident_population'")

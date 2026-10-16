@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from services.china_macro_service import (
@@ -11,6 +13,24 @@ from services.china_macro_service import (
 
 
 class ChinaMacroParserTests(unittest.TestCase):
+    def test_alternative_main_release_titles_keep_the_statistical_year(self):
+        self.assertEqual(_econ_period('2025年经济发展向新向优 预期目标圆满实现',
+            'https://www.stats.gov.cn/sj/zxfb/202601/t20260119_1962330.html'),'2025-12')
+        self.assertEqual(_econ_period('上半年经济运行在合理区间 新动能快速成长',
+            'https://www.stats.gov.cn/sj/xwfbh/fbhwd/202607/t20260715_1964121.html'),'2026-06')
+        self.assertIsNone(_econ_period('上半年经济运行在合理区间',
+            'https://www.stats.gov.cn/sj/zxfb/202302/t20230202_123.html'))
+
+    def test_reviewed_economic_manifest_survives_search_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            manifest=Path(temp)/'releases.csv'
+            manifest.write_text('period,source_url,source_title\n2025-12,https://www.stats.gov.cn/sj/zxfb/202601/fixture.html,2025年经济发展向新向优\n',encoding='utf-8')
+            with patch('services.china_macro_service.requests.post',side_effect=RuntimeError('fixture search unavailable')), \
+                 patch('services.china_macro_service.discover_release_list_releases',return_value={}), \
+                 patch('services.china_macro_service.ECON_RELEASE_MANIFEST_PATH',manifest):
+                result=discover_releases('econ',2025,2026)
+            self.assertIn('2025-12',result)
+
     def test_cpi_up_yoy_down_mom(self):
         html = '<p>2026年6月份，全国居民消费价格同比上涨1.0%。……全国居民消费价格环比下降0.3%。</p>'
         self.assertEqual(parse_cpi_article(html),
@@ -50,6 +70,95 @@ class ChinaMacroParserTests(unittest.TestCase):
         self.assertEqual(parsed['CN_PPI_MOM'], -0.5)
         self.assertEqual(parsed['CN_PPIRM_YOY'], -6.3)
         self.assertEqual(parsed['CN_PPIRM_MOM'], -0.7)
+
+    def test_ppi_legacy_comparisons_and_explicit_same_month_flat(self):
+        parsed=parse_ppi_article('全国工业生产者出厂价格比上月上涨0.9%，比去年同月上涨6.6%；'
+                                 '工业生产者购进价格比上月上涨1.2%，比去年同月上涨9.7%。')
+        self.assertEqual(parsed['CN_PPI_YOY'],6.6)
+        self.assertEqual(parsed['CN_PPI_MOM'],0.9)
+        self.assertEqual(parsed['CN_PPIRM_YOY'],9.7)
+        self.assertEqual(parsed['CN_PPIRM_MOM'],1.2)
+        flat=parse_ppi_article('全国工业生产者出厂价格与去年同月持平，环比上涨0.1%。'
+                               '工业生产者购进价格同比上涨1.0%，环比上涨0.1%。')
+        self.assertEqual(flat['CN_PPI_YOY'],0)
+        self.assertEqual(flat['CN_PPI_MOM'],0.1)
+
+    def test_flat_ppi_does_not_steal_later_purchase_price_mom(self):
+        for direction,value in (('下降','0.1'),('上涨','0.1')):
+            text=('全国工业生产者出厂价格同比下降1.9%，环比持平（涨跌幅度为0）。'
+                  f'工业生产者购进价格同比下降2.0%，环比{direction}{value}%。')
+            parsed=parse_ppi_article(text)
+            self.assertEqual(parsed['CN_PPI_MOM'],0)
+            self.assertEqual(parsed['CN_PPIRM_MOM'],-0.1 if direction=='下降' else 0.1)
+
+    def test_earlier_legacy_monthly_headline_wins_over_a_later_ytd_sentence(self):
+        parsed=parse_ppi_article('2016年8月份，全国工业生产者出厂价格环比上涨0.2%，同比下降0.8%。'
+                                 '工业生产者购进价格环比上涨0.2%，同比下降1.7%。'
+                                 '1-8月平均，工业生产者出厂价格同比下降3.2%，工业生产者购进价格同比下降4.1%。')
+        self.assertEqual(parsed['CN_PPI_YOY'],-0.8)
+        self.assertEqual(parsed['CN_PPIRM_YOY'],-1.7)
+        self.assertEqual(parsed['CN_PPIRM_MOM'],0.2)
+
+    def test_price_turning_phrases_use_current_not_previous_month_values(self):
+        parsed=parse_ppi_article('全国工业生产者出厂价格同比下降0.8%，环比由上月上涨0.2%转为下降0.2%；'
+                                 '工业生产者购进价格同比下降0.5%，环比上涨0.1%。'
+                                 '一、工业生产者价格同比变动情况。生活资料价格同比由上月上涨0.6%转为下降0.1%。')
+        self.assertEqual(parsed['CN_PPI_MOM'],-0.2)
+        self.assertEqual(parsed['CN_PPIRM_MOM'],0.1)
+        self.assertEqual(parsed['CN_PPI_LIVING_YOY'],-0.1)
+
+    def test_paired_current_headlines_keep_explicit_pair_order_and_flat_values(self):
+        for suffix,expected in (
+                ('环比分别下降0.2%、0.3%。',(-0.2,-0.3)),
+                ('环比分别持平和上涨0.1%。',(0,0.1)),
+                ('环比分别下降0.2%、上涨0.3%。',(-0.2,0.3)),
+                ('环比均下降0.2%。',(-0.2,-0.2))):
+            parsed=parse_ppi_article('全国工业生产者出厂价格和购进价格同比均下降2.3%，'+suffix+
+                                     '一、工业生产者价格同比变动情况。生产资料价格下降2.6%。')
+            self.assertEqual(parsed['CN_PPI_YOY'],-2.3)
+            self.assertEqual(parsed['CN_PPIRM_YOY'],-2.3)
+            self.assertEqual((parsed['CN_PPI_MOM'],parsed['CN_PPIRM_MOM']),expected)
+
+    def test_later_shared_ytd_statement_does_not_replace_separate_monthly_yoy(self):
+        parsed=parse_ppi_article('全国工业生产者出厂价格同比下降1.0%，环比上涨0.1%。'
+                                 '工业生产者购进价格同比下降2.0%，环比上涨0.2%。'
+                                 '1-9月平均，工业生产者出厂价格和购进价格同比均下降1.5%。')
+        self.assertEqual(parsed['CN_PPI_YOY'],-1.0)
+        self.assertEqual(parsed['CN_PPIRM_YOY'],-2.0)
+
+    def test_separate_yoy_sentence_after_national_mom_is_not_missing(self):
+        parsed=parse_ppi_article('全国工业生产者出厂价格环比下降0.2%，工业生产者购进价格环比下降0.3%。'
+                                 '工业生产者出厂价格同比下降3.6%，工业生产者购进价格同比下降4.5%。')
+        self.assertEqual(parsed['CN_PPI_YOY'],-3.6)
+        self.assertEqual(parsed['CN_PPI_MOM'],-0.2)
+
+    def test_continued_flat_mom_does_not_become_purchase_price_change(self):
+        parsed=parse_ppi_article('全国工业生产者出厂价格同比下降2.3%，环比继续持平。'
+                                 '工业生产者购进价格同比下降3.1%，环比上涨0.1%。')
+        self.assertEqual(parsed['CN_PPI_MOM'],0)
+
+    def test_turning_without_repeated_previous_month_and_separate_mom_sentence(self):
+        flat=parse_ppi_article('全国工业生产者出厂价格同比下降2.9%，环比由下降0.2%转为持平。'
+                               '工业生产者购进价格同比下降4.0%，环比持平。')
+        self.assertEqual(flat['CN_PPI_MOM'],0)
+        parsed=parse_ppi_article('全国工业生产者出厂价格同比下降2.9%，工业生产者购进价格同比下降2.7%。'
+                                 '工业生产者出厂价格环比下降0.1%，工业生产者购进价格环比下降0.3%。')
+        self.assertEqual(parsed['CN_PPI_MOM'],-0.1)
+
+    def test_missing_headline_mom_does_not_take_a_different_named_series(self):
+        parsed=parse_ppi_article('全国工业生产者出厂价格同比下降1.9%。'
+                                 '工业生产者购进价格同比下降2.0%，环比下降0.1%。')
+        self.assertNotIn('CN_PPI_MOM',parsed)
+        self.assertEqual(parsed['CN_PPIRM_MOM'],-0.1)
+
+    def test_bare_component_flat_is_yoy_only_inside_the_yoy_section(self):
+        parsed=parse_ppi_article('一、工业生产者价格同比变动情况。生产资料价格同比下降1.8%。'
+                                 '生活资料价格持平。二、各类产品价格环比变动情况。'
+                                 '生活资料价格上涨0.2%。')
+        self.assertEqual(parsed['CN_PPI_LIVING_YOY'],0)
+        missing=parse_ppi_article('一、工业生产者价格同比变动情况。生产资料价格同比下降1.8%。'
+                                  '二、各类产品价格环比变动情况。生活资料价格持平。')
+        self.assertNotIn('CN_PPI_LIVING_YOY',missing)
 
     def test_ppi_combined_headline_wording(self):
         html = ('2024年4月份，全国工业生产者出厂价格同比下降2.5%，工业生产者购进价格同比下降3.0%；'
@@ -192,10 +301,12 @@ class ChinaMacroParserTests(unittest.TestCase):
         self.assertEqual(_econ_period('5月份国民经济运行总体平稳',
                                       'https://www.stats.gov.cn/sj/zxfb/202606/t20260616_1.html'),
                          '2026-05')
-        # 12月稿发在次年:标题月>URL月 → 年减一
+        # A true publication path can infer the year; the 2023-02 migration cannot.
         self.assertEqual(_econ_period('11月份国民经济运行稳中有进',
-                                      'https://www.stats.gov.cn/sj/zxfb/202302/t20230203_1.html'),
+                                      'https://www.stats.gov.cn/sj/zxfb/202212/t20221215_1.html'),
                          '2022-11')
+        self.assertIsNone(_econ_period('11月份国民经济运行稳中有进',
+                                      'https://www.stats.gov.cn/sj/zxfb/202302/t20230203_1.html'))
         self.assertEqual(_econ_period('2026年上半年国民经济运行情况', 'https://x/202607/t2026_1.html'),
                          '2026-06')
         self.assertIsNone(_econ_period('能源生产情况', 'https://x/202607/t2026_1.html'))

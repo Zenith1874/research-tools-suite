@@ -13,15 +13,26 @@
   }
 
   function renderProfile(profile) {
-    $('ma-profile').innerHTML = textAreaValues(profile) + '<div class="fc-inline-actions" style="margin-top:12px"><button class="fc-button primary" id="ma-save-profile" type="button">Save local profile</button><span class="fc-small">The score is deterministic and displays its breakdown on each private job record.</span></div>';
+    $('ma-profile').innerHTML = textAreaValues(profile) + qualificationForm(profile) + '<div class="fc-inline-actions" style="margin-top:12px"><button class="fc-button primary" id="ma-save-profile" type="button">Save local profile</button><span class="fc-small">资格对照使用你填写的事实；偏好匹配分与岗位条件分开显示。</span></div>';
     $('ma-intensity').value = profile.research_intensity_preference || 'balanced';
+    $('ma-doctoral-status').value = profile.qualification_evidence?.doctoral_status || 'unknown';
     $('ma-save-profile').onclick = async () => {
       const split = (id) => ($(id).value || '').split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
       const weights = {}; document.querySelectorAll('.ma-weight').forEach((input) => { weights[input.dataset.weight] = Number(input.value); });
       const payload = { target_disciplines: split('ma-disciplines'), desired_career_stages: split('ma-stages'), research_keywords: split('ma-research'), teaching_areas: split('ma-teaching'), preferred_regions: split('ma-regions'), preferred_countries: split('ma-countries'), preferred_states_provinces: split('ma-states'), contract_preferences: split('ma-contracts'), research_intensity_preference: $('ma-intensity').value, strong_match_threshold: Number($('ma-strong').value), possible_match_threshold: Number($('ma-possible').value), weights };
+      payload.qualification_evidence = { doctoral_status: $('ma-doctoral-status').value,
+        expected_completion_date: $('ma-graduation').value.trim(), research_record: $('ma-research-record').value,
+        teaching_record: $('ma-teaching-record').value,
+        peer_reviewed_publications: $('ma-publications').value === '' ? null : Number($('ma-publications').value),
+        independent_courses_taught: $('ma-courses').value === '' ? null : Number($('ma-courses').value) };
       try { await api('/api/faculty-jobs/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); $('ma-profile-note').textContent = 'Saved locally at the configured private profile path.'; }
       catch (error) { $('ma-profile-note').textContent = `Profile was not saved: ${error.message}`; }
     };
+  }
+
+  function qualificationForm(profile) {
+    const facts = profile.qualification_evidence || {};
+    return `<h3>R1／教学岗位准备对照</h3><p class="fc-small">以下是你实际的博士进度、成果和授课经历。留空表示未知；没有发表可填 0。资料仅保存在本机。</p><div class="fc-form-grid"><div class="fc-form-field"><label for="ma-doctoral-status">博士阶段</label><select class="fc-select" id="ma-doctoral-status"><option value="unknown">未填写</option><option value="doctoral_student">博士在读</option><option value="abd">ABD</option><option value="completed">博士已完成</option></select></div><div class="fc-form-field"><label for="ma-graduation">预计毕业（年／年月／日期）</label><input class="fc-input" id="ma-graduation" placeholder="2029 或 2029-05" value="${esc(facts.expected_completion_date || '')}"></div><div class="fc-form-field"><label for="ma-publications">已发表同行评议论文（篇）</label><input class="fc-input" id="ma-publications" type="number" min="0" step="1" value="${esc(facts.peer_reviewed_publications ?? '')}"></div><div class="fc-form-field"><label for="ma-courses">独立授课（门；未知可留空）</label><input class="fc-input" id="ma-courses" type="number" min="0" step="1" value="${esc(facts.independent_courses_taught ?? '')}"></div><div class="fc-form-field full"><label for="ma-research-record">论文与在研项目事实</label><textarea class="fc-textarea" id="ma-research-record">${esc(facts.research_record || '')}</textarea></div><div class="fc-form-field full"><label for="ma-teaching-record">独立授课、模式与教学效果证据</label><textarea class="fc-textarea" id="ma-teaching-record">${esc(facts.teaching_record || '')}</textarea></div></div>`;
   }
 
   function renderApplications(applications) {

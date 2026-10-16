@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services import astar_interest_service as ais       # noqa: E402
 from services.aim_extract import extract_one, prompt_hash, PROMPT_VERSION   # noqa: E402
+from services.deepseek_offpeak import describe as offpeak_describe   # noqa: E402
+from services.deepseek_offpeak import wait_for_offpeak   # noqa: E402
 
 
 def _load_secrets():
@@ -62,6 +64,8 @@ def main():
     ap.add_argument('--n', type=int, default=200)
     ap.add_argument('--smoke', action='store_true')
     ap.add_argument('--model', default='deepseek-v4-flash')
+    ap.add_argument('--offpeak', action='store_true',
+                    help='撞上 DeepSeek 标准时段就等到优惠时段再继续（半价，最多等 4 小时）')
     args = ap.parse_args()
     _load_secrets()
     if not os.environ.get('DEEPSEEK_API_KEY'):
@@ -86,7 +90,11 @@ def main():
 
     rows_csv, ok, err = [], 0, 0
     t0 = time.time()
+    if args.offpeak:
+        print(f'--offpeak：{offpeak_describe()}')
     for i, art in enumerate(arts, 1):
+        if args.offpeak:
+            wait_for_offpeak()
         try:
             res = extract_one(art, profiles, model=args.model)
         except Exception as e:

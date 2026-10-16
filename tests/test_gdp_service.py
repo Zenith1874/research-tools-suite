@@ -74,6 +74,10 @@ class GdpServiceTests(unittest.TestCase):
         self.assertIn('id="periodStart"', page)
         self.assertIn('id="periodEnd"', page)
         self.assertIn('refreshPeriodRange', page)
+        self.assertIn('src="/gdp-series.js"', page)
+        self.assertIn("fetch('/province-gdp-provenance-2025.json')", page)
+        self.assertNotIn('src="/static/gdp-series.js"', page)
+        self.assertIn('a.period===b.period', page)
 
 
 class ChinaProvincialViewTests(unittest.TestCase):
@@ -113,8 +117,9 @@ class MethodsNoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             payload = build_gdp_payload(directory + '/empty.db')
         note = payload['methods']['CN']
-        for token in ('修订前', '城市经济页', '不可混用'):
+        for token in ('不同版年鉴', '城市经济页', '不可混用', '上调也可能下调'):
             self.assertIn(token, note)
+        self.assertNotIn('数值更高', note)
 
 
 if __name__ == '__main__':

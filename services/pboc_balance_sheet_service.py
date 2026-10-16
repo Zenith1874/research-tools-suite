@@ -194,10 +194,10 @@ def parse_balance_sheet_xlsx(content, source_meta):
     ws = wb.active
     periods_by_col = {}
     for row in ws.iter_rows(min_row=1, max_row=10, values_only=False):
-        for cell in row:
+        for column, cell in enumerate(row, start=1):
             period = period_from_header(cell.value)
             if period:
-                periods_by_col[cell.column] = period
+                periods_by_col[column] = period
         if periods_by_col:
             break
     if not periods_by_col:
@@ -215,8 +215,8 @@ def parse_balance_sheet_xlsx(content, source_meta):
                 break
         if not matched_code:
             continue
-        for cell in row[1:]:
-            period = periods_by_col.get(cell.column)
+        for column, cell in enumerate(row[1:], start=2):
+            period = periods_by_col.get(column)
             if period and isinstance(cell.value, (int, float)):
                 values[period][matched_code] = float(cell.value)
 
@@ -353,12 +353,24 @@ def _coverage(conn):
     return dict(row)
 
 
+def latest_balance_vintages(rows):
+    """Select a published vintage per series/month without summing revisions."""
+    selected = {}
+    for row in rows:
+        key = (row['indicator_code'], row['period'])
+        rank = lambda value: (value.get('published_date') or '', value.get('updated_at') or '', value.get('id') or 0)
+        if key not in selected or rank(row) > rank(selected[key]):
+            selected[key] = row
+    return sorted(selected.values(), key=lambda row: (row['period'], row['indicator_code']))
+
+
 def build_pboc_balance_sheet_payload(db_path):
     with connect(db_path) as conn:
         ensure_pboc_balance_sheet_tables(conn)
         rows = [dict(r) for r in conn.execute(
             'SELECT * FROM pboc_balance_sheet_observations ORDER BY period, indicator_code'
         ).fetchall()]
+        rows = latest_balance_vintages(rows)
         coverage = _coverage(conn)
         sources = [dict(r) for r in conn.execute(
             'SELECT * FROM fiscal_debt_sources WHERE source_type=? ORDER BY updated_at DESC LIMIT 20',
@@ -393,6 +405,7 @@ def build_pboc_balance_sheet_payload(db_path):
         'notes': [
             '“对政府债权”是央行资产负债表内政府债权口径，不等于财政部国债余额，也不等于地方政府债务余额。',
             '央行资产负债表未单列地方政府债；地方债在本模块显示为 not_available，不做推断。',
+            '同月不同来源版本原始记录保留，展示按最新来源发布日期、更新时间选择；不把版本相加。',
         ],
         'local_government_debt_in_pboc_balance_sheet': {
             'data_status': 'not_available',

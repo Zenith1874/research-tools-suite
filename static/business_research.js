@@ -177,11 +177,13 @@
     const catalog = boundary.catalog || {};
     const papers = boundary.papers || {};
     const inference = boundary.inference || {};
+    const linkIndex = boundary.link_index || {};
     return '<div class="br-notice info br-small"><b>Data boundary:</b> ' +
       'Catalog = ' + esc(catalog.status || 'unknown') + '. ' +
       'Papers = ' + esc(papers.status || 'unknown') + ' (' + esc(papers.source || '') + '). ' +
       'Construct links use ' + esc(inference.constructs || 'explicit metadata') + '. ' +
       esc(inference.tag_precision || '') +
+      (linkIndex.refreshing ? ' Theory, construct, and method matches are updating; current paper metadata remains available.' : '') +
       (boundary.sampled ? ' This result uses a bounded sample of ' + num(boundary.sample_size) + ' records.' : '') +
       '</div>';
   }
@@ -223,9 +225,13 @@
       method_foundation_review: 'Method review',
     };
     return '<div class="br-list">' + list.map(function (work) {
-      const badge = work.verified
-        ? '<span class="br-badge green">verified</span>'
-        : '<span class="br-badge amber">pending check</span>';
+      const badge = work.verification_status === 'HUMAN_VERIFIED'
+        ? '<span class="br-badge green">human verified</span>'
+        : work.verification_status === 'MACHINE_MATCHED'
+          ? '<span class="br-badge blue">machine matched</span>'
+          : work.verification_status === 'REJECTED'
+            ? '<span class="br-badge red">rejected</span>'
+            : '<span class="br-badge amber">candidate</span>';
       const kind = work.kind === 'origin' ? 'Origin'
         : work.kind === 'major_review' ? 'Review' : 'Extension';
       const doiLink = work.doi_url
@@ -260,9 +266,13 @@
     const sourceAuthors = Array.isArray(data.source_authors) ? data.source_authors : [];
     if (!sourceAuthors.length) return esc(data.key_scholars_note || 'No scholar attribution recorded');
     return '<div class="br-source-author-list">' + sourceAuthors.map(function (row) {
-      const badge = row.verified
-        ? '<span class="br-badge green">verified source</span>'
-        : '<span class="br-badge amber">catalog lead</span>';
+      const badge = row.verification_status === 'HUMAN_VERIFIED'
+        ? '<span class="br-badge green">human verified source</span>'
+        : row.verification_status === 'MACHINE_MATCHED'
+          ? '<span class="br-badge blue">machine matched</span>'
+          : row.verification_status === 'REJECTED'
+            ? '<span class="br-badge red">rejected source</span>'
+            : '<span class="br-badge amber">catalog candidate</span>';
       return '<div class="br-source-author"><strong>' + esc(row.authors) + '</strong> ' + badge +
         '<span>' + esc(row.work_title || 'Catalog work') + ' (' + esc(plain(row.year)) + ')' +
         ' · ' + esc(row.display_status || 'check primary source') + '</span></div>';
@@ -280,10 +290,18 @@
 
   function paperList(papers, emptyTitle, emptyMessage) {
     return listOrEmpty(papers, function (paper) {
+      const assertion = paper.assertion || {};
+      const assertionBadge = assertion.verification_status === 'VERIFIED'
+        ? '<span class="br-badge green">Verified application</span>'
+        : assertion.verification_status === 'REJECTED'
+          ? '<span class="br-badge red">Rejected</span>'
+          : '<span class="br-badge amber">Candidate · ' +
+            esc(assertion.evidence_level || 'E1 metadata') + '</span>';
       return '<a class="br-list-item" href="' + paperPath(paper.id) + '">' +
         '<strong>' + esc(text(paper.title, 'Untitled paper')) + '</strong>' +
         '<span>' + esc(text(paper.journal, 'Journal unavailable')) + ' · ' +
         esc(plain(paper.year, 'Year unavailable')) +
+        (assertionBadge ? ' ' + assertionBadge : '') +
         (paper.rank ? ' · ABDC ' + esc(paper.rank) : '') +
         (paper.cited_by_count != null ? ' · citations ' + num(paper.cited_by_count) : '') +
         (paper.note_count ? ' · ' + num(paper.note_count) + ' notes' : '') +
@@ -291,7 +309,7 @@
         (paper.favorite ? ' · favorite' : '') +
         '</span></a>';
     }, emptyTitle || 'No linked papers',
-       emptyMessage || 'No verified linked paper records are available in the current A* cache.',
+       emptyMessage || 'No linked paper records are available in the current A* cache.',
        '<div class="br-list">', '</div>');
   }
 
@@ -514,6 +532,25 @@
     return parts.join('<span aria-hidden="true">·</span>');
   }
 
+  /**
+   * Meta line under a card title. Methods keep their sub-category: they carry a
+   * discipline list too, but a workhorse like OLS is tagged with thirteen and
+   * printing them all buries the one word that distinguishes the card. Theories
+   * and constructs show their first few - the home discipline leads the list -
+   * with a count standing in for the rest.
+   */
+  function cardMeta(entity, kind) {
+    const disciplines = entity.discipline || [];
+    if (kind === 'methods') {
+      const label = text(entity.sub_category, '');
+      if (!disciplines.length) return label;
+      const used = disciplines.length + (disciplines.length === 1 ? ' discipline' : ' disciplines');
+      return label ? label + ' \u00b7 ' + used : used;
+    }
+    if (disciplines.length <= 3) return disciplines.join(' \u00b7 ');
+    return disciplines.slice(0, 3).join(' \u00b7 ') + ' +' + (disciplines.length - 3);
+  }
+
   function renderCard(entity, kind) {
     const href = entityPath(kind, entity.slug || entity.id);
     const typeLabel = kind === 'theories' ? 'Theory'
@@ -525,8 +562,10 @@
       (entity.abbreviation ? '<div class="br-card-meta">' + esc(entity.abbreviation) + '</div>' : '') + '</div>' +
       '<div class="br-card-badges"><span class="br-badge ' +
       (kind === 'methods' ? 'purple' : kind === 'constructs' ? 'green' : 'blue') + '">' +
-      esc(typeLabel) + '</span>' + mappingBadge(entity) + '</div></div>' +
-      '<div class="br-card-meta">' + esc((entity.discipline || []).join(' · ') || entity.sub_category || '') + '</div>' +
+      esc(typeLabel) + '</span>' + mappingBadge(entity) +
+      (entity.has_deep_dive ? '<span class="br-badge green" title="Includes a written analysis with era-bound limitations">深度解析</span>' : '') +
+      '</div></div>' +
+      '<div class="br-card-meta">' + esc(cardMeta(entity, kind)) + '</div>' +
       '<p class="br-card-description">' + esc(entity.definition || entity.description || '') + '</p>' +
       tagRow(tags) +
       '<div class="br-card-foot">' + countLine(entity) +
@@ -623,7 +662,7 @@
       const recent = (data.recent_papers || []).map(function (paper) {
         return {
           id: paper.id, title: paper.title, journal: paper.journal_title,
-          year: String(paper.publication_date || '').slice(0, 4),
+          year: String(paper.archive_year || paper.year || paper.publication_year || paper.publication_month || paper.publication_date || '').slice(0, 4),
           rank: paper.journal_abdc_rating, cited_by_count: paper.cited_by_count,
         };
       });
@@ -695,6 +734,7 @@
     let query = url.searchParams.get('q') || '';
     let discipline = url.searchParams.get('discipline') || '';
     let category = url.searchParams.get('category') || 'all';
+    let depth = url.searchParams.get('depth') === 'deep';
 
     function load() {
       page.innerHTML = loading('Loading ' + meta.label + 's');
@@ -702,6 +742,7 @@
       if (query) params.set('q', query);
       if (discipline) params.set('discipline', discipline);
       if (kind === 'methods' && category && category !== 'all') params.set('category', category);
+      if (depth) params.set('depth', 'deep');
       const suffix = params.toString();
       history.replaceState(null, '', window.location.pathname + (suffix ? '?' + suffix : ''));
       getJSON('/api/abdc/research/' + kind + (suffix ? '?' + suffix : '')).then(function (data) {
@@ -723,6 +764,11 @@
               (data.categories || []).map(function (item) {
                 return '<option value="' + esc(item) + '"' + (item === category ? ' selected' : '') + '>' + esc(item) + '</option>';
               }).join('') + '</select>') +
+          (data.deep_dive_total
+            ? '<label class="br-depth-toggle"><input type="checkbox" id="br-depth-filter"' +
+              (depth ? ' checked' : '') + '> Deep dive only · 仅看深度解析 (' +
+              num(data.deep_dive_total) + ')</label>'
+            : '') +
           '<button type="submit" class="br-button primary">Search</button>' +
           '<span class="br-toolbar-note">' + plural(entities.length, 'catalog record') + '</span></form>';
         page.innerHTML = controls + dataBoundary(data) +
@@ -740,6 +786,10 @@
         const disciplineInput = document.getElementById('br-catalog-discipline');
         if (disciplineInput) disciplineInput.addEventListener('change', function () {
           discipline = disciplineInput.value; load();
+        });
+        const depthInput = document.getElementById('br-depth-filter');
+        if (depthInput) depthInput.addEventListener('change', function () {
+          depth = depthInput.checked; load();
         });
         const categoryInput = document.getElementById('br-catalog-category');
         if (categoryInput) categoryInput.addEventListener('change', function () {
@@ -796,6 +846,98 @@
     (model.note ? '<div class="br-notice br-small">' + esc(model.note) + '</div>' : '');
   }
 
+  /**
+   * Long-form theory analysis. Each paragraph carries both languages; the
+   * English is the authored text and the Chinese runs beneath it, matching how
+   * the rest of the workspace presents bilingual content.
+   */
+  function bilingualParagraphs(items, emptyMessage) {
+    const list = items || [];
+    if (!list.length) {
+      return '<p class="br-card-meta">' + esc(emptyMessage || 'Not written yet.') + '</p>';
+    }
+    return list.map(function (item) {
+      return '<div class="br-para"><p>' + esc(item.en) + '</p>' +
+        (item.zh ? '<p class="br-para-zh" lang="zh">' + esc(item.zh) + '</p>' : '') + '</div>';
+    }).join('');
+  }
+
+  function debateList(debates) {
+    return listOrEmpty(debates, function (debate) {
+      return '<div class="br-debate"><h4>' + esc(debate.name) +
+        (debate.name_zh ? ' <span class="br-zh-inline" lang="zh">' + esc(debate.name_zh) + '</span>' : '') +
+        '</h4><div class="br-debate-positions">' +
+        (debate.positions || []).map(function (pos) {
+          return '<div class="br-position"><div class="br-position-holder">' + esc(pos.holder) + '</div>' +
+            '<p>' + esc(pos.claim) + '</p>' +
+            (pos.claim_zh ? '<p class="br-para-zh" lang="zh">' + esc(pos.claim_zh) + '</p>' : '') + '</div>';
+        }).join('') + '</div>' +
+        '<div class="br-debate-status"><b>Where it stands:</b> ' + esc(debate.status) +
+        (debate.status_zh ? '<span class="br-para-zh" lang="zh">' + esc(debate.status_zh) + '</span>' : '') +
+        '</div></div>';
+    }, 'No debates recorded', 'Add the named controversies for this theory.',
+       '<div class="br-debate-list">', '</div>');
+  }
+
+  /**
+   * The same analysis shape means different things for a theory, a construct,
+   * and a method, so the section labels change with the entity kind while the
+   * data stays one schema.
+   */
+  const DIVE_LABELS = {
+    theory: {
+      situation: 'Why this theory exists · 提出的时代背景',
+      argument: 'How the argument runs · 核心论证',
+      development: 'How it developed · 后续发展与分支',
+      theoretical: 'Theoretical · 理论层面',
+      empirical: 'Empirical and measurement · 经验与测量层面',
+    },
+    construct: {
+      situation: 'What it is trying to capture · 这个构念要捕捉什么',
+      argument: 'How it is defined and measured · 定义与测量方式',
+      development: 'How the measurement evolved · 测量的演变',
+      theoretical: 'Conceptual · 概念层面',
+      empirical: 'Measurement and validity · 测量与效度',
+    },
+    method: {
+      situation: 'What problem it solves · 它解决什么推断问题',
+      argument: 'How the inference works · 推断如何成立',
+      development: 'How the method evolved · 方法的演变',
+      theoretical: 'Assumptions that bite · 真正吃紧的假定',
+      empirical: 'How it fails in practice · 实践中如何失效',
+    },
+  };
+
+  function deepDiveSections(data, kind) {
+    const labels = DIVE_LABELS[kind] || DIVE_LABELS.theory;
+    const dive = data.deep_dive;
+    if (!dive) {
+      return section('In-depth analysis · 深度解析',
+        emptyView('Not written yet', data.deep_dive_note || ''),
+        'Coverage is partial');
+    }
+    const limits = dive.limitations || {};
+    return section(labels.situation,
+        '<div class="br-era"><b>Period:</b> ' + esc(dive.era) +
+        (dive.era_zh ? '<span class="br-para-zh" lang="zh">' + esc(dive.era_zh) + '</span>' : '') + '</div>' +
+        bilingualParagraphs(dive.situation), 'Intellectual context') +
+      section(labels.argument, bilingualParagraphs(dive.argument)) +
+      section(labels.development, bilingualParagraphs(dive.development)) +
+      section('Open debates · 未决争论', debateList(dive.debates), 'Named positions') +
+      section('Limitations · 局限性',
+        '<h4 class="br-subheading">' + esc(labels.theoretical) + '</h4>' +
+        bilingualParagraphs(limits.theoretical) +
+        '<h4 class="br-subheading">' + esc(labels.empirical) + '</h4>' +
+        bilingualParagraphs(limits.empirical) +
+        '<h4 class="br-subheading">Bound to its era · 时代局限</h4>' +
+        '<div class="br-notice br-small">These are assumptions that held when this was written and may not hold now. They are the most common reason a well-established idea misfires on a contemporary question.</div>' +
+        bilingualParagraphs(limits.temporal),
+        'Separated by kind') +
+      section('Where it stands today · 当下适用性', bilingualParagraphs(dive.today)) +
+      (data.deep_dive_note
+        ? '<div class="br-notice br-small">' + esc(data.deep_dive_note) + '</div>' : '');
+  }
+
   function broadPaperSection(payload, kindLabel) {
     if (!payload || !payload.total) return '';
     return section('Papers under a broader tag',
@@ -841,6 +983,7 @@
           '<div class="br-field"><div class="br-field-label">Key scholars / source authors</div><div class="br-field-value">' +
           scholarSummary(data) + '</div></div>' +
           '</div>') +
+        deepDiveSections(data, 'theory') +
         section('Conceptual model', conceptualModelView(data.conceptual_model), 'Catalog scaffold') +
         section('Core constructs',
           refCards(data.core_constructs, 'constructs', 'No constructs linked',
@@ -849,10 +992,10 @@
         section('Seminal works · 经典文献',
           seminalWorks(data.source_works || data.seminal_works, data.seminal_papers_note),
           'Verification status shown per row') +
-        section('Recent A* applications',
+        section('Paper candidates · not verified applications',
           paperList(data.recent_applications, 'No classified applications found',
-            'No paper in the cache carries a precise classifier tag for this theory.'),
-          'Precise classification tags') +
+            data.application_note || 'No paper in the cache carries a current classifier candidate for this theory.'),
+          'Classifier candidates · review required') +
         broadPaperSection(data.broad_tag_applications, 'theory') +
         section('Applications',
           tagRow(theory.applications, 'green') ||
@@ -862,6 +1005,9 @@
           theory.source_pack === 'management-organization-60' ? 'Attached book scan' : 'Curated scaffold') : '') +
         (theory.source_text ? section('Original chapter text · 原文章节文本',
           sourceTextView(theory.source_text), 'Local OCR reading layer') : '') +
+        // The deep dive's Limitations section supersedes these two short lists;
+        // showing both makes the page repeat itself with less detail.
+        (data.deep_dive ? '' :
         section('Known boundary conditions',
           listOrEmpty(theory.boundary_conditions, function (item) { return '<li>' + esc(item) + '</li>'; },
             'No boundary conditions loaded', 'Add a verified boundary condition to the catalog.',
@@ -869,7 +1015,7 @@
         section('Criticisms & debates',
           listOrEmpty(theory.criticisms, function (item) { return '<div class="br-warning">' + esc(item) + '</div>'; },
             'No criticisms loaded', 'A research tool should not present a theory as settled; add the debates.',
-            '<div class="br-warning-list">', '</div>')) +
+            '<div class="br-warning-list">', '</div>'))) +
         section('Related theories',
           refCards(data.related_theories, 'theories', 'No related theories',
             'The catalog records no related theory for this entry.')) +
@@ -932,6 +1078,7 @@
             '<div class="br-detail-actions">' + savedButton('construct', construct.id, construct.name) +
             '<span class="br-badge green">' + plural(construct.paper_count, 'observed paper') + '</span></div></div>' +
             section('Definition', '<div class="br-abstract">' + esc(construct.definition) + '</div>') +
+            deepDiveSections(data, 'construct') +
             section('Origin & measurement sources · 定义与测量原始文献',
               seminalWorks(construct.source_works || construct.seminal_works,
                 construct.source_coverage_note),
@@ -958,7 +1105,7 @@
               'Catalog scaffold') +
             section('Measurement scales', scaleHtml +
               '<div class="br-notice">Scale items are intentionally not copied into the system. Copyrighted instruments require source-level verification and appropriate permission; this page stores metadata only.</div>') +
-            section('Papers using this construct',
+            section('Paper candidates · not verified construct use',
               '<div class="br-toolbar" role="group" aria-label="Sort papers">' +
               [['relevance_desc', 'Most relevant'], ['date_desc', 'Recent'], ['citations_desc', 'Citation count']]
                 .map(function (item) {
@@ -967,8 +1114,8 @@
                     esc(item[1]) + '</button>';
                 }).join('') + '</div>' +
               paperList(data.papers, 'No keyword-linked papers found',
-                'No title or abstract in the cache contains this construct’s keywords.'),
-              'Keyword inference from current cache') +
+                data.paper_assertion_note || 'No title or abstract in the cache contains this construct’s keywords.'),
+              'Keyword candidates · review required') +
             dataBoundary(data);
 
           bindSavedButton(content, 'construct', construct.id, construct.name);
@@ -1049,12 +1196,17 @@
         '<div class="br-detail-head"><div>' +
         '<div class="br-card-meta">' + esc(method.category || 'method') + ' · ' +
         esc(method.sub_category || '') + ' · ' + esc(method.difficulty || '') + '</div>' +
+        ((method.discipline || []).length
+          ? '<div class="br-card-meta">Used in · ' +
+            esc((method.discipline || []).join(' · ')) + '</div>'
+          : '') +
         '<h1>' + esc(method.name) + '</h1>' + zhName(method) +
         '<p class="br-lede">' + esc(method.description) + '</p>' + zhDefinition(method) + '</div>' +
         '<div class="br-detail-actions">' + savedButton('method', method.id, method.name) +
         '<span class="br-badge purple">' + plural(method.paper_count, 'linked paper') + '</span></div></div>' +
         (method.mapping_note ? '<div class="br-notice">' + esc(method.mapping_note) + '</div>' : '') +
         section('What it is', '<div class="br-abstract">' + esc(method.description) + '</div>') +
+        deepDiveSections(data, 'method') +
         section('When to use', listOrEmpty(method.use_when, function (item) {
           return '<li>' + esc(item) + '</li>';
         }, 'No use cases loaded', 'Add the conditions under which this method applies.',
@@ -1076,9 +1228,9 @@
           seminalWorks(method.source_works || method.seminal_works,
             method.source_coverage_note),
           'Theory–Construct–Method evidence') +
-        section('Example papers', paperList(data.example_papers, 'No method-tagged papers found',
-          'No paper in the cache carries a precise classifier tag for this method.'),
-          'Precise classification tags') +
+        section('Paper candidates · not verified method use', paperList(data.example_papers, 'No method-tagged papers found',
+          data.paper_assertion_note || 'No precise classifier candidate is present for this method.'),
+          'Classifier candidates · review required') +
         broadPaperSection(data.broad_tag_papers, 'method') +
         section('Related methods', refCards(data.related_methods, 'methods', 'No related methods',
           'The catalog records no related method for this entry.')) +

@@ -9,6 +9,7 @@ import sqlite3, json, re, threading, time, logging, os, mimetypes, socket, sys, 
 import html as html_lib
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import urlparse, urljoin, quote, unquote
 import urllib.request
 from services.financial_data_service import (
@@ -17,6 +18,7 @@ from services.financial_data_service import (
     sync_observations,
     build_debug_payload,
 )
+from services.macro_data_quality_service import build_macro_data_quality
 from services.fiscal_debt_service import (
     ensure_fiscal_tables,
     build_fiscal_debt_payload,
@@ -87,6 +89,13 @@ from services.hong_kong_macro_service import (
 from services.macro_analytics_service import build_macro_analytics_payload
 from services.macro_scenario_service import build_macro_scenario_payload
 from services.whats_new_service import build_whats_new_payload, check_and_record_new_periods
+from services.portfolio_analytics_service import (
+    build_portfolio_analytics,
+    is_automated_agent,
+    record_portfolio_event,
+    record_portfolio_visit,
+    validate_analytics_filters,
+)
 from services.housing_price_service import (
     build_housing_payload,
     update_housing_prices,
@@ -140,6 +149,7 @@ from services.abdc_astar_research_service import (
     build_journal_health_payload,
     llm_classify_articles,
 )
+from services.deepseek_offpeak import describe as offpeak_describe
 from services.business_research_service import (
     ensure_business_research_tables,
     build_research_overview,
@@ -193,6 +203,7 @@ from services.faculty_jobs_service import (
     build_faculty_job_sources,
     build_faculty_jobs_payload,
     build_faculty_job_summary,
+    search_faculty_jobs,
     build_aacsb_directory_summary,
     build_aacsb_directory_filters,
     build_job_market_analytics,
@@ -208,6 +219,7 @@ from services.faculty_jobs_service import (
     list_saved_search_alerts,
     list_saved_searches,
     mark_saved_search_alerts_seen,
+    max_pages_per_source,
     list_my_applications,
     list_schools,
     patch_application,
@@ -285,7 +297,7 @@ FACULTY_JOBS_AUTO_UPDATE = os.environ.get(
     'FACULTY_JOBS_AUTO_UPDATE', '1').strip().lower() in ('1', 'true', 'yes')
 FACULTY_JOBS_UPDATE_HOURS = max(1, int(os.environ.get('FACULTY_JOBS_UPDATE_HOURS', '24')))
 FACULTY_JOBS_HTTP_TIMEOUT = max(3, int(os.environ.get('FACULTY_JOBS_HTTP_TIMEOUT', '20')))
-FACULTY_JOBS_MAX_PAGES = max(1, int(os.environ.get('FACULTY_JOBS_MAX_PAGES_PER_SOURCE', '1')))
+FACULTY_JOBS_MAX_PAGES = max_pages_per_source()
 FACULTY_JOBS_ALLOW_REMOTE_PRIVATE = os.environ.get(
     'FACULTY_JOBS_ALLOW_REMOTE_PRIVATE', '0').strip().lower() in ('1', 'true', 'yes')
 
@@ -316,6 +328,8 @@ def _resolve_db_path():
 
 DB_PATH    = _resolve_db_path()
 STATIC_DIR = os.path.join(_ROOT, 'static')
+PRIVATE_STATIC_DIR = os.path.join(_ROOT, 'private_static')
+PORTFOLIO_ANALYTICS_DB = os.path.join(_ROOT, 'data', 'portfolio_analytics.db')
 ABDC_PATH  = os.path.join(_ROOT, 'data', 'abdc_data.json')
 PAPER_TRANSLATION = (PaperTranslationManager(os.path.join(_ROOT, 'data', 'translation_jobs'))
                      if PAPER_TRANSLATION_ENABLED else None)
@@ -512,6 +526,72 @@ def _analytics_payload():
         _ANALYTICS_CACHE.update(body=body, ts=time.time())
     return body
 
+def _guarded_faculty_write(tag, fn):
+    """Wrap a production write so it is backed up first and checked after.
+
+    Returns a callable for _run_update_job. The guard signals refusal with
+    SystemExit, which _run_update_job's `except Exception` would not catch --
+    the thread would die and the job would report "running" forever -- so both
+    ends are translated into ordinary errors here.
+    """
+    from services.faculty_jobs_write_guard import guarded_write, postflight, preflight
+
+    def run():
+        try:
+            inventory = preflight(str(FACULTY_DB_PATH), tag, echo=log.info)
+        except SystemExit as exc:
+            raise RuntimeError(f'refused before writing anything: {exc}') from None
+        with guarded_write():
+            result = fn()
+        try:
+            postflight(str(FACULTY_DB_PATH), inventory, echo=log.info)
+        except SystemExit as exc:
+            raise RuntimeError(
+                f'the write finished but the post-check failed: {exc}') from None
+        return result
+
+    return run
+
+
+def _ensure_faculty_jobs_schema_safely():
+    """Create a new store or migrate an old one only after a backup."""
+    from services.faculty_jobs_service import FACULTY_JOBS_SCHEMA_VERSION
+    from services.faculty_jobs_write_guard import (
+        check_integrity, guarded_write, open_read_only, postflight, preflight,
+    )
+
+    db_path = Path(FACULTY_DB_PATH)
+    if not db_path.exists():
+        ensure_faculty_jobs_tables(FACULTY_DB_PATH)
+        return
+    conn = open_read_only(db_path)
+    try:
+        check_integrity(conn, "faculty-jobs startup preflight", echo=log.info)
+        try:
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        except sqlite3.DatabaseError:
+            version = 0
+    finally:
+        conn.close()
+    try:
+        conn = open_read_only(db_path)
+        try:
+            ledger_version = conn.execute(
+                "SELECT MAX(version) FROM faculty_job_migrations"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    except (sqlite3.DatabaseError, TypeError):
+        ledger_version = 0
+    if (version == int(FACULTY_JOBS_SCHEMA_VERSION)
+            and int(ledger_version or 0) == int(FACULTY_JOBS_SCHEMA_VERSION)):
+        return
+    inventory = preflight(str(db_path), "server_startup_schema_migration", echo=log.info)
+    with guarded_write():
+        ensure_faculty_jobs_tables(FACULTY_DB_PATH)
+    postflight(str(db_path), inventory, echo=log.info)
+
+
 def _run_update_job(name, fn, blocking=False):
     """在后台守护线程里跑 fn()，串行(共享 _UPDATE_LOCK)。
     blocking=False(HTTP 触发)：锁被占则直接返回 already_running，不排队。
@@ -698,7 +778,7 @@ def init_db():
 
     # Academic Career uses a separate private SQLite/WAL store.  Its schema
     # creation is idempotent and intentionally kept outside the macro DB.
-    ensure_faculty_jobs_tables(FACULTY_DB_PATH)
+    _ensure_faculty_jobs_schema_safely()
     total = get_db().execute('SELECT COUNT(*) FROM monthly_data').fetchone()[0]
     log.info(f'DB 就绪 — 种子新增 {seeded} 条，库中共 {total} 个月')
 
@@ -1623,12 +1703,107 @@ def _write_request_allowed(client_ip, supplied_token=''):
                 hmac.compare_digest(ADMIN_TOKEN, supplied_token))
 
 
-def _faculty_jobs_private_access_allowed(client_ip, supplied_token=''):
-    """Keep profile/application state local unless explicitly opted in."""
-    if _is_loopback_address(client_ip):
+def _portfolio_console_allowed(peer_ip, headers=None):
+    """Keep analytics reads on the physical loopback, never through Tunnel."""
+    return (_is_loopback_address(peer_ip) and
+            not str((headers or {}).get('CF-Connecting-IP') or '').strip())
+
+
+def _portfolio_collection_origin_allowed(origin):
+    return str(origin or '').strip().lower().rstrip('/') in {
+        'https://zhengresearch.com',
+        'https://www.zhengresearch.com',
+    }
+
+
+def _research_collection_origin_allowed(origin, host):
+    """Research events are same-origin only; the page is served by this server."""
+    origin = str(origin or '').strip()
+    if not origin:
         return True
-    return bool(FACULTY_JOBS_ALLOW_REMOTE_PRIVATE and
-                _write_request_allowed(client_ip, supplied_token))
+    try:
+        origin_host = urlparse(origin).netloc.lower()
+    except ValueError:
+        return False
+    return bool(origin_host) and origin_host == str(host or '').strip().lower()
+
+
+def _portfolio_event_site(headers):
+    """Resolve which site an event belongs to, or None when no origin qualifies."""
+    origin = (headers or {}).get('Origin')
+    if _portfolio_collection_origin_allowed(origin):
+        return 'portfolio'
+    if _research_collection_origin_allowed(origin, (headers or {}).get('Host')):
+        return 'research'
+    return None
+
+
+def _research_page_trackable(path):
+    """Track remote HTML-style page routes, not APIs, assets, or private analytics."""
+    normalized = str(path or '').strip()
+    if not normalized.startswith('/'):
+        return False
+    if normalized.startswith('/api') or normalized.startswith('/vendor/'):
+        return False
+    if normalized in ('/portfolio-analytics', '/portfolio-analytics/'):
+        return False
+    basename = normalized.rstrip('/').rsplit('/', 1)[-1]
+    return not os.path.splitext(basename)[1]
+
+
+def _cloudflare_visitor_geo(headers):
+    """Read Cloudflare's managed visitor-location headers when enabled."""
+    return {
+        'city': (headers or {}).get('CF-IPCity', ''),
+        'region': (headers or {}).get('CF-Region', ''),
+        'region_code': (headers or {}).get('CF-Region-Code', ''),
+        'postal_code': (headers or {}).get('CF-Postal-Code', ''),
+        'timezone': (headers or {}).get('CF-Timezone', ''),
+        'latitude': (headers or {}).get('CF-IPLatitude', ''),
+        'longitude': (headers or {}).get('CF-IPLongitude', ''),
+    }
+
+
+def _faculty_jobs_private_access_allowed(client_ip, supplied_token=''):
+    """Academic personal data is local-only, independently of admin overrides."""
+    return _is_loopback_address(client_ip)
+
+
+def _faculty_jobs_direct_local_allowed(peer_ip, headers=None):
+    """Require a physical loopback request to a loopback host, not a proxy."""
+    headers = headers or {}
+    if not _is_loopback_address(peer_ip):
+        return False
+    for name in ('CF-Connecting-IP', 'CF-Ray', 'X-Forwarded-For',
+                 'X-Forwarded-Host', 'X-Forwarded-Proto', 'Forwarded', 'X-Real-IP'):
+        if headers.get(name) is not None:
+            return False
+    host = str(headers.get('Host') or '').strip()
+    try:
+        authority = urlparse('//' + host)
+        if authority.username or authority.password or authority.path or authority.query or authority.fragment:
+            return False
+        if authority.hostname != 'localhost' and not _is_loopback_address(authority.hostname):
+            return False
+        authority.port
+    except ValueError:
+        return False
+    if str(headers.get('Sec-Fetch-Site') or '').lower() == 'cross-site':
+        return False
+    origin = headers.get('Origin')
+    if origin is not None:
+        try:
+            parsed = urlparse(str(origin))
+            if parsed.scheme not in ('http', 'https') or parsed.netloc.lower() != host.lower():
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+def _academic_career_mutation_path(path):
+    return (path.startswith('/api/faculty-jobs') or path.startswith('/api/my-applications')
+            or path.startswith('/api/institution-aliases') or path.startswith('/api/schools'))
 
 
 def _translation_access_allowed(client_ip, supplied_token=''):
@@ -1754,11 +1929,15 @@ class Handler(BaseHTTPRequestHandler):
         }, 404, cache_control='no-store, private')
         return True
 
-    def send_json(self, data, code=200, cache_control=None):
+    def send_json(self, data, code=200, cache_control=None, cors_origin=None):
         body = json.dumps(data, ensure_ascii=False).encode('utf-8')
         try:
             self.send_response(code)
-            for k,v in cors_headers(self.headers.get('Origin')).items(): self.send_header(k,v)
+            headers = cors_headers(self.headers.get('Origin'))
+            if cors_origin:
+                headers['Access-Control-Allow-Origin'] = cors_origin
+                headers['Vary'] = 'Origin'
+            for k,v in headers.items(): self.send_header(k,v)
             if cache_control:
                 self.send_header('Cache-Control', cache_control)
             self.send_header('X-Content-Type-Options', 'nosniff')
@@ -1790,7 +1969,11 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass
 
-    def send_file(self, file_path):
+    def send_file(self, file_path, cache_control=None):
+        if os.path.basename(file_path).lower() == 'my_applications.html':
+            if not self._require_faculty_jobs_private():
+                return
+            cache_control = 'no-store, private'
         try:
             with open(file_path, 'rb') as f:
                 body = f.read()
@@ -1802,7 +1985,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Referrer-Policy', 'same-origin')
             # 缓存策略：HTML 每次向服务器校验(改完立即生效，不用强刷)；
             # vendor 第三方库文件不变，长缓存一年。
-            if os.sep + 'vendor' + os.sep in file_path:
+            if cache_control:
+                self.send_header('Cache-Control', cache_control)
+            elif os.sep + 'vendor' + os.sep in file_path:
                 self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
             elif file_path.endswith(('.html', '.htm')):
                 self.send_header('Cache-Control', 'no-cache')
@@ -1893,13 +2078,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _require_faculty_jobs_private(self):
         allowed = _faculty_jobs_private_access_allowed(
-            self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
+            self.client_address[0], self.headers.get('X-Research-Admin-Token', '')) and _faculty_jobs_direct_local_allowed(
+                self.client_address[0], self.headers)
         if not allowed:
             self.send_json({
-                'error': '学术职业个人资料和申请追踪默认仅允许服务本机访问',
+                'error': '教职个人资料、准备对照和管理仅允许本机 localhost / 127.0.0.1 / ::1 直接访问；外网仅展示公开数据',
                 'code': 'academic_career_local_only',
             }, 403, cache_control='no-store, private')
         return allowed
+
+    def _faculty_jobs_capabilities(self):
+        local = (_faculty_jobs_private_access_allowed(self.client_address[0])
+                 and _faculty_jobs_direct_local_allowed(self.client_address[0], self.headers))
+        return {'mode': 'local' if local else 'public', 'public_read': True,
+                'personal': local, 'manage': local, 'policy': 'direct_loopback_only'}
 
     def _require_translation_access(self):
         allowed = _translation_access_allowed(
@@ -1972,6 +2164,28 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if self._reject_disabled_gpu_module(path):
             return
+        effective_client_ip = self._client_ip()
+        if (_research_page_trackable(path) and
+                not _is_loopback_address(effective_client_ip)):
+            try:
+                user_agent = self.headers.get('User-Agent', '')
+                record_portfolio_visit(
+                    PORTFOLIO_ANALYTICS_DB,
+                    {
+                        'session_id': f'{effective_client_ip}|{user_agent}',
+                        'path': path,
+                        'referrer': self.headers.get('Referer', ''),
+                        'language': self.headers.get('Accept-Language', ''),
+                    },
+                    effective_client_ip,
+                    user_agent=user_agent,
+                    country_code=self.headers.get('CF-IPCountry', ''),
+                    cf_ray=self.headers.get('CF-Ray', ''),
+                    site='research',
+                    geo=_cloudflare_visitor_geo(self.headers),
+                )
+            except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+                log.warning('研究平台访问统计写入失败: %s', exc)
         try:
             # API routes
             if   path == '/api/data':       self._api_data()
@@ -1981,11 +2195,43 @@ class Handler(BaseHTTPRequestHandler):
                     self._client_ip(), self.headers.get('X-Research-Admin-Token', ''))
                 self.send_json({'status':'ok', 'time':datetime.now().isoformat(),
                                 'bound_host': HOST, 'client_can_write': can_write,
+                                'analytics_behavior_version': 1,
                                 'access_mode': 'manage' if can_write else 'read_only',
+                                'academic_career': self._faculty_jobs_capabilities(),
                                 'modules': {
                                     'paper_translation': {'enabled': PAPER_TRANSLATION_ENABLED},
                                     'audio_transcription': {'enabled': AUDIO_TRANSCRIPTION_ENABLED},
                                 }})
+            elif path == '/api/portfolio-capabilities':
+                # Public protocol version only; never include statistics or
+                # service state. Portfolio may read this across the two origins.
+                origin = self.headers.get('Origin', '')
+                self.send_json({'analytics_behavior_version': 1},
+                               cache_control='no-store',
+                               cors_origin=origin if _portfolio_collection_origin_allowed(origin) else None)
+            elif path == '/api/portfolio-analytics':
+                if not _portfolio_console_allowed(self.client_address[0], self.headers):
+                    self.send_json({
+                        'error': '网站流量与使用分析台仅允许服务器本机查看',
+                        'code': 'portfolio_analytics_local_only',
+                    }, 403, cache_control='no-store, private')
+                else:
+                    query = self._query_params()
+                    try:
+                        filters = validate_analytics_filters(
+                            query.get('days', '30'),
+                            query.get('site', 'all'),
+                            query.get('view', 'visitor'),
+                            query.get('tz'))
+                        self.send_json(
+                            build_portfolio_analytics(
+                                PORTFOLIO_ANALYTICS_DB, **filters),
+                            cache_control='no-store, private')
+                    except ValueError as exc:
+                        self.send_json({
+                            'error': str(exc),
+                            'code': 'invalid_portfolio_analytics_filter',
+                        }, 400, cache_control='no-store, private')
             elif path == '/api/jobs':
                 with _JOBS_LOCK:
                     jobs = dict(_JOBS)
@@ -1997,13 +2243,23 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(build_faculty_jobs_payload(
                         FACULTY_DB_PATH, query=query, include_private=include_private),
                         cache_control='no-store, private' if include_private else 'no-store')
+            elif path == '/api/faculty-jobs/capabilities':
+                self.send_json({'ok': True, **self._faculty_jobs_capabilities()}, cache_control='no-store, private')
+            elif path == '/api/faculty-jobs/search':
+                # Read-only. A search box must never migrate the database.
+                query = self._query_params()
+                self.send_json(search_faculty_jobs(
+                    FACULTY_DB_PATH, query=query.get('q', ''),
+                    scope=query.get('scope', 'business'),
+                    limit=query.get('limit', 25), offset=query.get('offset', 0)),
+                    cache_control='no-store')
             elif path == '/api/faculty-jobs/summary':
                 self.send_json(build_faculty_job_summary(FACULTY_DB_PATH, query=self._query_params()), cache_control='no-store')
             elif path == '/api/faculty-jobs/filters':
                 self.send_json(build_faculty_job_filters(FACULTY_DB_PATH, query=self._query_params()), cache_control='no-store')
             elif path == '/api/faculty-jobs/sources':
                 self.send_json(build_faculty_job_sources(FACULTY_DB_PATH), cache_control='no-store')
-            elif path == '/api/faculty-jobs/aacsb/summary':
+            elif path in ('/api/faculty-jobs/aacsb/summary', '/api/aacsb-directory/summary'):
                 self.send_json(build_aacsb_directory_summary(FACULTY_DB_PATH), cache_control='no-store')
             elif path == '/api/faculty-jobs/aacsb/filters':
                 self.send_json(build_aacsb_directory_filters(FACULTY_DB_PATH), cache_control='no-store')
@@ -2011,6 +2267,13 @@ class Handler(BaseHTTPRequestHandler):
                 query = self._query_params()
                 self.send_json(list_aacsb_directory(
                     FACULTY_DB_PATH, query=query, limit=query.get('limit', 50), offset=query.get('offset', 0)),
+                    cache_control='no-store')
+            elif path == '/api/academic-market/observatory':
+                # Read-only across both stores. The whole point of the
+                # page is that these figures have existed only inside a
+                # command-line report.
+                from services.academic_market_api import build_observatory
+                self.send_json(build_observatory(FACULTY_DB_PATH),
                     cache_control='no-store')
             elif path == '/api/faculty-jobs/runs':
                 self.send_json(build_faculty_job_runs(
@@ -2044,6 +2307,17 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/faculty-jobs/profile':
                 if self._require_faculty_jobs_private():
                     self.send_json(get_profile(), cache_control='no-store, private')
+            elif path == '/api/faculty-jobs/requirements-comparison':
+                from services.faculty_jobs_gap import requirements_comparison
+                self.send_json(requirements_comparison(FACULTY_DB_PATH), cache_control='no-store')
+            elif re.match(r'^/api/faculty-jobs/\d+/gap$', path):
+                if self._require_faculty_jobs_private():
+                    from services.faculty_jobs_gap import compare_candidate
+                    from services.faculty_job_fit_service import load_profile
+                    job_id = int(path.split('/')[-2])
+                    detail = build_faculty_job_detail(FACULTY_DB_PATH, job_id)
+                    self.send_json({'ok': True, 'gap': compare_candidate(detail['job'], load_profile())},
+                                   cache_control='no-store, private')
             elif re.match(r'^/api/faculty-jobs/\d+$', path):
                 job_id = int(path.rsplit('/', 1)[1])
                 query = self._query_params()
@@ -2195,6 +2469,9 @@ class Handler(BaseHTTPRequestHandler):
             elif path == '/api/abdc/astar/health': self.send_json(build_journal_health_payload())
             elif path == '/api/abdc/astar/debug': self.send_json(build_astar_debug_payload())
             elif path == '/api/china-rates/data': self.send_json(build_china_rates_payload(DB_PATH))
+            elif path == '/api/macro-data-quality':
+                country = self._query_params().get('country') or 'china'
+                self.send_json(build_macro_data_quality(DB_PATH, country))
             elif path == '/api/china-macro/data': self.send_json(build_china_macro_payload(DB_PATH))
             elif path == '/api/hong-kong-macro/data':
                 try:
@@ -2479,6 +2756,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'faculty_jobs.html'))
             elif path in ('/school-explorer', '/school-explorer/'):
                 self.send_file(os.path.join(STATIC_DIR, 'school_explorer.html'))
+            elif path in ('/academic-market', '/academic-market/'):
+                self.send_file(os.path.join(STATIC_DIR, 'academic_market.html'))
             elif path in ('/job-market-analytics', '/job-market-analytics/'):
                 self.send_file(os.path.join(STATIC_DIR, 'job_market_analytics.html'))
             elif path in ('/my-applications', '/my-applications/'):
@@ -2517,6 +2796,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(os.path.join(STATIC_DIR, 'city_economy.html'))
             elif path in ('/housing-scenario', '/housing-scenario/'):
                 self.send_file(os.path.join(STATIC_DIR, 'housing_scenario.html'))
+            elif path in ('/portfolio-analytics', '/portfolio-analytics/'):
+                if not _portfolio_console_allowed(self.client_address[0], self.headers):
+                    self.send_json({
+                        'error': '网站流量与使用分析台仅允许服务器本机查看',
+                        'code': 'portfolio_analytics_local_only',
+                    }, 403, cache_control='no-store, private')
+                else:
+                    self.send_file(os.path.join(PRIVATE_STATIC_DIR, 'portfolio_analytics.html'),
+                                   cache_control='no-store, private')
             else:
                 # 通用静态文件（/vendor/*.js 等），带目录穿越保护
                 self._serve_static(path)
@@ -2531,6 +2819,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         path = urlparse(self.path).path
         if self._reject_disabled_gpu_module(path):
+            return
+        if _academic_career_mutation_path(path) and not self._require_faculty_jobs_private():
             return
         try:
             content_length = int(self.headers.get('Content-Length') or 0)
@@ -2570,6 +2860,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if self._reject_disabled_gpu_module(path):
             return
+        if _academic_career_mutation_path(path) and not self._require_faculty_jobs_private():
+            return
         try:
             content_length = int(self.headers.get('Content-Length') or 0)
         except ValueError:
@@ -2581,10 +2873,67 @@ class Handler(BaseHTTPRequestHandler):
             request_limit = AUDIO_MAX_UPLOAD_BYTES
         elif path == '/api/ebook/jobs':
             request_limit = EBOOK_MAX_UPLOAD_BYTES
+        elif path in ('/api/portfolio-visit', '/api/portfolio-event'):
+            request_limit = 16 * 1024
         else:
             request_limit = MAX_POST_BYTES
         if content_length > request_limit:
             self.send_json({'error': 'request body too large', 'max_bytes': request_limit}, 413)
+            return
+        if path == '/api/portfolio-visit':
+            if not _portfolio_collection_origin_allowed(self.headers.get('Origin')):
+                self.send_json({
+                    'error': 'portfolio origin not allowed',
+                    'code': 'portfolio_origin_forbidden',
+                }, 403, cache_control='no-store')
+                return
+            try:
+                result = record_portfolio_visit(
+                    PORTFOLIO_ANALYTICS_DB,
+                    self._read_json_body(),
+                    self._client_ip(),
+                    user_agent=self.headers.get('User-Agent', ''),
+                    country_code=self.headers.get('CF-IPCountry', ''),
+                    cf_ray=self.headers.get('CF-Ray', ''),
+                    geo=_cloudflare_visitor_geo(self.headers),
+                )
+                self.send_json(result, 202, cache_control='no-store')
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                self.send_json({'error': str(exc)}, 400, cache_control='no-store')
+            return
+        if path == '/api/portfolio-event':
+            site = _portfolio_event_site(self.headers)
+            if site is None:
+                self.send_json({
+                    'error': 'portfolio origin not allowed',
+                    'code': 'portfolio_origin_forbidden',
+                }, 403, cache_control='no-store')
+                return
+            client_ip = self._client_ip()
+            body = self._read_json_body()
+            # Page views drop loopback requests because they answer "who found my
+            # public sites". Events answer "which module actually gets opened",
+            # and on this platform that is mostly the owner, so their own use is
+            # labelled rather than discarded. Driven browsers report themselves
+            # and are split off again, so agent runs do not read as usage.
+            automated = (is_automated_agent(self.headers.get('User-Agent', ''))
+                         or (isinstance(body, dict) and body.get('automated') is True))
+            if automated:
+                scope = 'automation'
+            else:
+                scope = 'local' if _is_loopback_address(client_ip) else 'remote'
+            try:
+                result = record_portfolio_event(
+                    PORTFOLIO_ANALYTICS_DB,
+                    body,
+                    client_ip,
+                    country_code=self.headers.get('CF-IPCountry', ''),
+                    site=site,
+                    scope=scope,
+                )
+                self.send_json(result, 202, cache_control='no-store')
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                self.send_json({'error': str(exc)}, 400, cache_control='no-store')
             return
         if not _write_request_allowed(
                 self._client_ip(), self.headers.get('X-Research-Admin-Token', '')):
@@ -2620,8 +2969,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'error': 'timeout and max_pages must be integers'}, 400)
                 return
             self.send_json(_run_update_job(
-                'faculty_jobs', lambda: update_faculty_jobs(
-                    FACULTY_DB_PATH, source_names=sources, timeout=timeout, max_pages=max_pages)))
+                'faculty_jobs', _guarded_faculty_write(
+                    'ui_source_update',
+                    lambda: update_faculty_jobs(
+                        FACULTY_DB_PATH, source_names=sources, timeout=timeout,
+                        max_pages=max_pages))))
         elif path == '/api/faculty-jobs/aacsb/update':
             body = self._read_json_body()
             try:
@@ -2646,22 +2998,22 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({'error': 'offset must be an integer'}, 400)
                     return
                 self.send_json(_run_update_job(
-                    'aacsb_official', lambda: scan_aacsb_official_websites(
+                    'aacsb_official', _guarded_faculty_write('ui_aacsb_scan', lambda: scan_aacsb_official_websites(
                         FACULTY_DB_PATH, max_schools=max_schools or 25, offset=offset,
                         include_checked=bool(body.get('include_checked', False)),
                         timeout=timeout, delay=delay,
                         max_jobs_per_school=max_jobs_per_school,
-                        site_max_pages=site_max_pages)))
+                        site_max_pages=site_max_pages))))
             else:
                 self.send_json(_run_update_job(
-                    'aacsb_official', lambda: update_aacsb_directory(
+                    'aacsb_official', _guarded_faculty_write('ui_aacsb_directory', lambda: update_aacsb_directory(
                         FACULTY_DB_PATH, max_pages=max_pages, max_records=max_records,
                         fetch_details=bool(body.get('fetch_details', True)),
                         refresh_details=bool(body.get('refresh_details', False)),
                         scan_websites=bool(body.get('scan_websites', False)), max_details=max_details,
                         max_schools=max_schools, timeout=timeout, delay=delay,
                         max_jobs_per_school=max_jobs_per_school,
-                        site_max_pages=site_max_pages)))
+                        site_max_pages=site_max_pages))))
         elif path == '/api/faculty-jobs/saved-searches':
             if self._require_faculty_jobs_private():
                 try:
@@ -2894,10 +3246,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'success': False, 'error': '未设置 DEEPSEEK_API_KEY 或 ANTHROPIC_API_KEY'}, 400)
             else:
                 limit = int(body.get('limit', 100))
+                # offpeak 默认不传：这是用户点出来的请求，宁可按标准价跑完，
+                # 也不要静默睡到优惠时段。批量清积压的调用方自己传 'wait'。
                 kw = dict(limit=limit, max_relevance=body.get('max_relevance'),
-                          core_journals_only=bool(body.get('core_journals_only')))
+                          core_journals_only=bool(body.get('core_journals_only')),
+                          offpeak=body.get('offpeak'))
                 threading.Thread(target=lambda: llm_classify_articles(**kw), daemon=True).start()
-                self.send_json({'status': 'started', 'message': f'LLM 重新分类已启动（最多 {limit} 篇）'})
+                self.send_json({'status': 'started',
+                                'message': f'LLM 重新分类已启动（最多 {limit} 篇）',
+                                'rate_window': offpeak_describe()})
         elif path == '/api/abdc/astar/save':
             self._api_astar_save()
         elif re.match(r'^/api/abdc/research/papers/\d+/state$', path):
@@ -3380,13 +3737,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({'error': 'not found'}, 404)
             return
         row = dict(r)
+        from services.astar_archive_year_service import attach_years
+        archive_conn = get_db()
+        try:
+            attach_years(archive_conn, [row])
+        finally:
+            archive_conn.close()
         try:
             authors = json.loads(row.get('authors_json') or '[]')
         except Exception:
             authors = []
         names = [a.get('name') for a in authors if isinstance(a, dict) and a.get('name')] or \
                 [a for a in authors if isinstance(a, str)]
-        year = row.get('publication_year') or (row.get('publication_date') or '')[:4] or 'n.d.'
+        year = row.get('archive_year') or row.get('publication_year') or (row.get('publication_date') or '')[:4] or 'n.d.'
         first_last = (names[0].split()[-1] if names else 'anon').lower()
         first_word = re.sub(r'[^a-z0-9]', '', (row.get('title') or 'untitled').lower().split()[0]) or 'x'
         key = f'{first_last}{year}{first_word}'
@@ -3501,17 +3864,32 @@ def astar_scheduler_thread(interval_hours=24):
     """A* 研究雷达持续更新：启动后等待 10 分钟，之后每 interval_hours 抓最近 14 天增量。
     顶刊发文较慢，每天一次足够（抓 14 天窗口留出漏跑余量，去重处理重复）。"""
     log.info(f'A* 雷达调度器启动，每 {interval_hours}h 增量抓取最近 14 天')
-    time.sleep(600)   # 启动后先让位给首页/财政模块，10 分钟后再开始
+    from services.astar_schedule import advance_slot, initial_delay
+    delay_seconds = initial_delay(os.environ.get('ASTAR_NEXT_DUE_LOCAL'), datetime.now(),
+                                  os.environ.get('ASTAR_INITIAL_DELAY_SECONDS', 600))
+    scheduled_slot = time.monotonic() + delay_seconds
+    time.sleep(delay_seconds)
+
+    def refresh_metadata():
+        result = update_astar_recent_articles(days=14)
+        deduplicate_articles()
+        return result
+
     while True:
         try:
-            r = update_astar_recent_articles(days=14)
-            deduplicate_articles()
+            r = _run_update_job('astar_metadata', refresh_metadata, blocking=True)
+            if r.get('status') == 'error':
+                raise RuntimeError(r['error'])
             log.info(f"A* 增量完成：新增 {r.get('articles_inserted')}，更新 {r.get('articles_updated')}")
             # 每日自动 LLM 精修(限额，几分钱/天)：对规则法判不准的新文章用 DeepSeek 重判。
             # LLM_AUTO=0 关闭；无 API key 时函数自己返回错误，不影响抓取。
             if os.environ.get('LLM_AUTO', '1') != '0':
                 try:
-                    lr = llm_classify_articles(limit=int(os.environ.get('LLM_AUTO_LIMIT', 150)))
+                    # 调度器每 24h 从服务启动时刻起算，会漂进 DeepSeek 标准时段(2 倍价)——
+                    # 实测有一次落在 08:54 UTC。没人等这个结果，所以默认睡到优惠时段再跑；
+                    # LLM_OFFPEAK=off 恢复旧行为，=stop 则撞上标准时段就收工。
+                    lr = llm_classify_articles(limit=int(os.environ.get('LLM_AUTO_LIMIT', 150)),
+                                               offpeak=os.environ.get('LLM_OFFPEAK', 'wait'))
                     if lr.get('success', True):
                         log.info(f"A* 自动 LLM 精修：处理 {lr.get('processed', lr)}")
                 except Exception as le:
@@ -3541,18 +3919,35 @@ def astar_scheduler_thread(interval_hours=24):
             # 语义向量增量(新文章编码追加，几百篇/天秒级)。EMB_AUTO=0 关闭。
             if os.environ.get('EMB_AUTO', '1') != '0':
                 try:
-                    from services.astar_semantic_service import (build_embeddings, EMB_PATH,
-                                                                 compute_semantic_relevance)
-                    if os.path.exists(EMB_PATH):      # 首次全量构建须手动跑脚本
-                        er = build_embeddings()
-                        log.info(f"A* 向量增量：新编码 {er.get('encoded')}")
-                        sr = compute_semantic_relevance(only_missing=True)
-                        log.info(f"A* 语义相关性：补打分 {sr.get('scored')}")
+                    from services.astar_semantic_service import build_embeddings, EMB_PATH
+                    if os.path.exists(EMB_PATH):      # Initial packs require reviewed staging.
+                        er = _run_update_job('astar_semantic', build_embeddings, blocking=True)
+                        if er.get('status') == 'error' or not er.get('success'):
+                            raise RuntimeError(er.get('error') or 'Safe semantic update did not pass')
+                        log.info("A* safe ONNX delta: new=%s refreshed=%s new-only scores=%s",
+                                 er.get('encoded'), er.get('refreshed'), er.get('scored_new'))
                 except Exception as ee:
                     log.warning(f'A* 向量增量/语义打分失败(忽略): {ee}')
+            # Keep entity associations current after all daily source/tag updates.
+            # The input cache must be bootstrapped from an accepted current index.
+            try:
+                from services import business_research_service as research_entities
+                from services.business_index_incremental import update_index
+
+                def refresh_entity_inputs():
+                    return update_index(research_entities, DB_PATH,
+                                        research_entities.DEFAULT_STATE_DB_PATH, apply=True)
+
+                ir = _run_update_job('astar_entity_index', refresh_entity_inputs, blocking=True)
+                if ir.get('status') == 'error' or not ir.get('success'):
+                    raise RuntimeError(ir.get('error') or 'Entity input update held for review')
+                log.info('A* entity delta: mode=%s affected=%s', ir.get('mode'), ir.get('affected_papers'))
+            except Exception as ie:
+                log.warning('A* entity delta held; served records preserved: %s', ie)
         except Exception as e:
             log.warning(f'A* 增量抓取失败（稍后重试）: {e}')
-        time.sleep(interval_hours * 3600)
+        scheduled_slot, wait_seconds = advance_slot(scheduled_slot, time.monotonic(), interval_hours * 3600)
+        time.sleep(wait_seconds)
 
 
 def backup_thread(interval_hours=168):
@@ -3634,12 +4029,15 @@ def faculty_jobs_scheduler_thread(interval_hours=24):
     time.sleep(900)   # let the existing server and user-facing pages settle first
     while True:
         try:
+            from services.faculty_jobs_maintenance import scheduled_career_update
             result = _run_update_job(
                 'faculty_jobs',
-                lambda: update_faculty_jobs(
-                    FACULTY_DB_PATH,
-                    timeout=FACULTY_JOBS_HTTP_TIMEOUT,
-                    max_pages=FACULTY_JOBS_MAX_PAGES),
+                _guarded_faculty_write(
+                    'scheduled_source_update',
+                    lambda: scheduled_career_update(
+                        FACULTY_DB_PATH,
+                        timeout=FACULTY_JOBS_HTTP_TIMEOUT,
+                        max_pages=FACULTY_JOBS_MAX_PAGES)),
                 blocking=True)
             log.info('Academic Career 更新完成：ok=%s sources=%s',
                      result.get('ok') if isinstance(result, dict) else None,
@@ -3658,10 +4056,10 @@ def business_research_index_thread(interval_hours=6):
     """
     while True:
         try:
-            result = rebuild_link_index(DB_PATH)
-            if result.get('rebuilt'):
-                log.info(f"Business Research 链接索引更新：papers={result.get('papers_indexed')} "
-                         f"full={result.get('full')}")
+            from services.business_research_service import _ensure_index
+            current = _ensure_index(DB_PATH)
+            if not current:
+                log.info('Business Research index refresh queued; current generation remains served')
         except Exception as e:
             log.warning(f'Business Research 链接索引更新失败（旧索引保留）: {e}')
         time.sleep(interval_hours * 3600)
@@ -3694,6 +4092,11 @@ if __name__ == '__main__':
         sys.exit(1)
     _probe.close()
 
+    from services.astar_schedule import apply_runtime_controls
+    _astar_controls = apply_runtime_controls(
+        Path(_ROOT) / 'data' / 'astar_runtime_controls.json', os.environ, datetime.now())
+    if _astar_controls:
+        log.info('A* persistent runtime controls loaded: %s', _astar_controls)
     init_db()
     if os.environ.get('PBOC_AUTO', '1') != '0':
         _run_update_job('pboc_scrape', scrape_and_update)   # 后台启动，串行+不卡 HTTP

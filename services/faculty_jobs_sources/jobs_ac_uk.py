@@ -41,6 +41,9 @@ class JobsAcUkAdapter(SourceAdapter):
     region = "Europe"
     base_url = "https://www.jobs.ac.uk/search/?keywords=lecturer%20business"
     priority = 14
+    # This board exposes a working page parameter, so a second page is
+    # genuinely reachable.
+    paginates = True
     max_items = 40
 
     def fetch(self):

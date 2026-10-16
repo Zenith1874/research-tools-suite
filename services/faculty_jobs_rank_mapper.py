@@ -36,7 +36,6 @@ def map_rank(country_code, title):
     """Return a transparent mapping without asserting rank equivalence."""
     raw = _clean(title)
     text = raw.casefold()
-    country = str(country_code or "").upper()
 
     if re.search(r"\b(postdoc|post-doctoral|postdoctoral|research fellow)\b", text):
         return RankMapping("Postdoc / Research Fellow", POSTDOC, 0.96,
@@ -69,15 +68,49 @@ def map_rank(country_code, title):
     if re.search(r"ma[iî]tre[s]? de conf[eé]rences|ma[iî]tre de conférences", text):
         return RankMapping("Maître de conférences", EARLY, 0.78,
                            "French original rank retained; approximate early-career market-stage mapping.")
+    # Multi-level advertisements must be recognized before any one component.
+    # Otherwise word order makes the same open-rank search look Assistant,
+    # Associate, or Full Professor at random.
+    explicit_open_rank = re.search(r"\b(?:open[- ]rank|any rank|all ranks)\b", text)
+    multi_professor_rank = (
+        re.search(
+            r"\bassistant(?:\s+professors?)?\s*(?:/|,|\bor\b|\band\b)\s*"
+            r"(?:associate|full)\s+professors?\b",
+            text,
+        )
+        or re.search(
+            r"\bassociate(?:\s+professors?)?\s*(?:/|,|\bor\b|\band\b)\s*"
+            r"(?:assistant|full)\s+professors?\b",
+            text,
+        )
+        or re.search(
+            r"\bassistant\s*[,/]\s*associate\s*(?:[,/]|\bor\b|\band\b)\s*"
+            r"full(?:\s+professors?)?\b",
+            text,
+        )
+        or re.search(r"\bassistant/associate/full\b", text)
+    )
+    if explicit_open_rank or multi_professor_rank:
+        return RankMapping("Open Rank", UNKNOWN, 0.88,
+                           "Explicit open-rank or multiple professor-level alternatives; career stage is not singular.")
+    if re.search(r"\blecturers?\b.{0,12}\bsenior lecturers?\b|"
+                 r"\bsenior lecturers?\b.{0,12}\blecturers?\b", text):
+        return RankMapping("Lecturer / Senior Lecturer", UNKNOWN, 0.86,
+                           "Multiple local lecturer levels are advertised; original ranks retained.")
     if re.search(r"\b(senior lecturer|reader)\b", text):
         return RankMapping("Senior Lecturer / Reader", MID, 0.82,
                            "Original lecturer/reader rank retained; approximate mid-career market-stage mapping.")
-    if re.search(r"\b(lecturer|assistant professor|assistant professorship|professeur adjoint|professeure adjointe)\b", text):
-        # In the UK and Ireland, Lecturer is not an American Assistant
-        # Professor.  The normalized value intentionally remains local.
-        if "lecturer" in text and country in {"GB", "IE"}:
-            return RankMapping("Lecturer", EARLY, 0.76,
-                               "UK/Irish Lecturer retained; approximate early-career market-stage mapping.")
+    if re.search(r"\blecturers?\b", text):
+        # Lecturer is a local rank everywhere, not merely in the UK/Ireland.
+        # Rewriting it as Assistant Professor asserted an equivalence the
+        # mapping explicitly promises not to make.
+        return RankMapping("Lecturer", EARLY, 0.80,
+                           "Lecturer wording retained; approximate early-career market-stage mapping.")
+    if re.search(
+        r"\b(?:assistant professor(?:s|ship)?|professeur adjoint|professeure adjointe)\b|"
+        r"\bassistant(?:\s+[a-z][a-z&/-]*){1,3}\s+professors?\b",
+        text,
+    ):
         return RankMapping("Assistant Professor", EARLY, 0.92,
                            "Explicit assistant-professor or equivalent wording.")
     if re.search(r"\b(associate professor|associate professorship|professeur agr[eé]g[eé]|professeure agr[eé]g[eé]e)\b", text):
@@ -86,10 +119,6 @@ def map_rank(country_code, title):
     if re.search(r"\b(full professor|professor|professe[u]?r titulaire|professeure titulaire)\b", text):
         return RankMapping("Professor", SENIOR, 0.90,
                            "Explicit professor wording without a lower-rank qualifier.")
-
-    if re.search(r"\b(open rank|any rank|all ranks|assistant/associate/full)\b", text):
-        return RankMapping("Open Rank", UNKNOWN, 0.84,
-                           "Open-rank wording; career stage cannot be determined from the title alone.")
 
     return RankMapping("Unknown", UNKNOWN, 0.0,
                        "No sufficiently explicit faculty rank or career-stage signal.")

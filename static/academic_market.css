@@ -1,0 +1,253 @@
+/* Observatory page. Extends faculty_jobs.css tokens rather than redefining a
+   palette: this is another view of the same product, not a separate one.
+
+   The one visual idea worth having here: a number and its coverage are the
+   same object. So a metric is never a bare figure -- it carries a denominator,
+   a bar, or a caveat line, and the caveat is styled as content rather than
+   as fine print nobody reads. */
+
+.am-layers {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 0 0 18px;
+}
+@media (min-width: 620px) {
+  .am-layers { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+}
+
+/* The supply chain, left to right. Each cell says what its layer answers and
+   what it does not, because the whole failure mode of this project is one
+   layer being read as the next. */
+.am-layer {
+  border: 1px solid var(--fc-border);
+  border-radius: 9px;
+  background: var(--fc-panel);
+  padding: 11px 13px;
+  position: relative;
+}
+.am-layer-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fc-blue);
+  font-weight: 600;
+}
+/* What the layer holds, right under its name. This is the line that tells a
+   reader whether there is any data here at all -- previously nothing did, and
+   the caveat below was being read as a status. */
+.am-layer-holds {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+  color: var(--fc-text);
+}
+.am-layer-holds.empty {
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--fc-muted);
+  line-height: 1.45;
+}
+/* An empty layer should look empty at a glance, not merely read as empty. */
+.am-layer.is-empty { background: var(--fc-panel-soft); border-style: dashed; }
+.am-layer.is-empty .am-layer-name { color: var(--fc-muted); }
+
+.am-layer-answers { font-size: 12.5px; margin: 5px 0 6px; line-height: 1.5; }
+.am-layer-not {
+  font-size: 11.5px;
+  color: var(--fc-red);
+  line-height: 1.45;
+  border-top: 1px dashed var(--fc-border);
+  padding-top: 5px;
+}
+.am-layer-not::before { content: "not "; font-weight: 600; }
+
+/* Three columns at most. These cards hold coverage bars and tables; a fourth
+   column squeezes a field name and its percentage onto separate lines, which
+   is exactly the pairing that has to stay readable. */
+.am-grid {
+  display: grid;
+  /* Single column: `minmax(0, 1fr)`, not a bare `1fr`. A bare `1fr` floors at
+     the item's min-content, so a card holding a table widened its own track to
+     483px inside a 351px area and the page scrolled sideways at 375px.
+
+     `minmax()` does NOT nest -- `minmax(340px, minmax(0, 1fr))` is invalid and
+     the parser drops the whole declaration, silently. That is what happened
+     here: every multi-column rule below was dead, the grid stayed at one
+     column, and `span 2` then created an implicit second column that squeezed
+     four cards to 37px. Where a track already has an explicit minimum the
+     min-content floor cannot bite, so plain `minmax(340px, 1fr)` is correct;
+     the protection that still matters is `min-width: 0` on .am-card. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  max-width: 1180px;
+}
+@media (min-width: 760px) {
+  .am-grid { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+}
+
+/* Cards holding a wide table ask for two tracks. Marked with a class rather
+   than `:first-child`: the positional rule meant reordering the cards moved
+   the wide layout onto whatever happened to land first.
+   `span 2` has to be guarded by the same condition that creates the second
+   track. A bare `span 2` on a one-column grid does not collapse -- it creates
+   an implicit second column and the card lays out at twice the container
+   width, which is what pushed the whole page sideways at 375px. */
+@media (min-width: 1081px) {
+  .am-grid > .am-card.am-wide { grid-column: span 2; }
+}
+
+/* Concentration bar. Sits inside a table cell, so it needs its own width
+   rather than the `grid-column: 1 / -1` the coverage rows use. Colour runs the
+   opposite way to coverage: here a full bar is the warning, because it means a
+   discipline disappears when one board has a bad day. */
+.am-risk-cell { width: 84px; min-width: 84px; padding-top: 9px; }
+.am-cov-track.am-risk { grid-column: auto; width: 100%; }
+
+.am-card {
+  min-width: 0;
+  border: 1px solid var(--fc-border);
+  border-radius: 11px;
+  background: var(--fc-panel);
+  padding: 16px 18px;
+}
+.am-card h2 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.am-card .am-sub {
+  font-size: 11.5px;
+  color: var(--fc-muted);
+  margin: 0 0 13px;
+  line-height: 1.5;
+}
+
+/* A figure with its unit and its denominator, never alone.
+   110px, not 120: at 375px the card's inner width is about 315, and a 120px
+   minimum leaves a third track half-formed. This fits two per row there and
+   four on a wide card. */
+.am-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.am-figure { min-width: 0; }
+.am-figure-value {
+  font-size: 21px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.am-figure-value small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fc-muted);
+}
+.am-figure-label {
+  font-size: 11px;
+  color: var(--fc-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Coverage rows: the field, the share, and what the field means. */
+.am-coverage { display: flex; flex-direction: column; gap: 7px; }
+.am-cov-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: baseline; }
+.am-cov-name { font-size: 12.5px; }
+.am-cov-pct {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fc-dim);
+  white-space: nowrap;
+}
+.am-cov-track {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--fc-panel-soft);
+  border: 1px solid var(--fc-border);
+  overflow: hidden;
+}
+.am-cov-fill { height: 100%; background: var(--fc-blue); }
+.am-cov-fill.low { background: var(--fc-amber); }
+.am-cov-fill.none { background: var(--fc-red); }
+.am-cov-note {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--fc-muted);
+  line-height: 1.45;
+}
+
+/* A caveat is content. Styled to be read, not to be skipped. */
+.am-caveat {
+  margin-top: 13px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--fc-amber);
+  background: var(--fc-panel-soft);
+  border-radius: 0 7px 7px 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fc-dim);
+}
+.am-caveat strong { color: var(--fc-text); }
+
+.am-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.am-table th {
+  text-align: left;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fc-muted);
+  font-weight: 600;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--fc-border);
+  white-space: nowrap;
+}
+.am-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--fc-panel-soft);
+  vertical-align: top;
+}
+.am-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.am-scroll { overflow-x: auto; }
+
+.am-chip {
+  display: inline-block;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--fc-blue-soft);
+  color: var(--fc-blue);
+  margin: 1px 3px 1px 0;
+  white-space: nowrap;
+}
+.am-chip.warn { background: #fdf3e3; color: var(--fc-amber); }
+.am-chip.stop { background: #fdeaea; color: var(--fc-red); }
+.am-chip.ok { background: #e6f5ef; color: var(--fc-green); }
+
+/* Sparkline for the daily series. Small on purpose: eleven reconstructed days
+   is not a trend, and drawing it large would suggest otherwise. */
+.am-spark { width: 100%; height: 46px; display: block; }
+.am-spark-note { font-size: 11px; color: var(--fc-muted); margin-top: 4px; line-height: 1.45; }
+
+.am-empty {
+  font-size: 12px;
+  color: var(--fc-muted);
+  padding: 10px 0;
+  line-height: 1.55;
+}
+
+.am-section-head {
+  margin: 22px 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fc-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--fc-border);
+  padding-bottom: 5px;
+}

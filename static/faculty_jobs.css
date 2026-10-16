@@ -14,6 +14,62 @@
   --fc-purple: #6941c6;
 }
 
+/* Academic personal and management controls stay hidden until local access is confirmed. */
+body:not([data-career-access="local"]) .fc-local-only { display: none !important; }
+
+/* Action-first home only; shared School Explorer and application styles stay intact. */
+.fc-action-home .fc-hero { position: relative; padding-top: 10px; padding-bottom: 10px; }
+.fc-action-home .fc-kicker { display: none; }
+.fc-action-home .fc-hero h1 { font-size: 24px; }
+.fc-action-home .fc-hero p:not(.fc-kicker) { margin: 6px 0 10px; font-size: 12px; }
+.fc-action-home .fc-hero-actions { position: absolute; top: 12px; right: 24px; gap: 6px; margin-top: 0; }
+.fc-action-home .fc-hero-actions .fc-button { padding: 5px 9px; min-height: 29px; font-size: 11px; }
+.fc-action-home .fc-main { gap: 13px; padding-top: 0; }
+.fc-action-center { padding: 8px 0 0; }
+.fc-action-home .fc-section { margin-top: 10px; }
+.fc-action-home .fc-action-results .fc-section-head { padding: 8px 15px; }
+.fc-action-home .fc-action-results .fc-section-body { padding: 10px 15px 15px; }
+.fc-quick-line { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 9px; }
+.fc-quick-line > .fc-small:first-child { width: 72px; flex-shrink: 0; }
+.fc-action-home #fc-current-selection { margin: 7px 0 10px; overflow-wrap: anywhere; }
+.fc-action-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.fc-action-card { text-align: left; display: grid; grid-template-columns: 1fr auto; gap: 5px; padding: 12px 15px; border: 1px solid var(--fc-border); border-radius: 8px; background: var(--fc-panel); color: var(--fc-text); cursor: pointer; font: inherit; }
+.fc-action-card > span { font-weight: 650; font-size: 14px; }
+.fc-action-card > strong { grid-row: span 2; font-size: 26px; font-variant-numeric: tabular-nums; }
+.fc-action-card > small { color: var(--fc-muted); font-size: 11px; }
+.fc-action-card[aria-pressed="true"] { border-color: var(--fc-blue); background: var(--fc-blue-soft); box-shadow: inset 0 0 0 1px var(--fc-blue); }
+.fc-action-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 9px 0; }
+.fc-action-home details.fc-section > summary { cursor: pointer; padding: 11px 15px; font-size: 12px; font-weight: 650; }
+.fc-action-home details.fc-section > summary .fc-small { margin-left: 9px; font-weight: 400; }
+.fc-action-home .fc-jobs-grid { grid-template-columns: minmax(0,1fr); }
+.fc-action-home .fc-job-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.fc-action-home .fc-job-top > .fc-inline-actions { flex-shrink: 0; }
+.fc-action-home .fc-job-card { background: #fff; padding: 13px 15px; }
+.fc-action-home .fc-job-card h3 { font-size: 15px; }
+.fc-action-home .fc-job-meta { font-size: 11px; }
+.fc-action-home .fc-job-card .fc-small { align-self: center; }
+.fc-axis-separator { padding-left: 10px; border-left: 1px solid var(--fc-border); margin-left: 5px; }
+.fc-warning { color: var(--fc-amber); }
+.fc-requirements { margin-bottom: 18px; }
+.fc-requirements h3 { margin-top: 0; }
+.fc-requirements-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-top: 12px; }
+.fc-requirement { border: 1px solid var(--fc-border); border-radius: 7px; padding: 12px; min-width: 0; }
+.fc-requirement h4 { margin: 0 0 9px; font-size: 13px; }
+.fc-requirement p { font-size: 12px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+.fc-requirement summary { cursor: pointer; font-size: 12px; color: var(--fc-blue); }
+.fc-requirement blockquote { margin: 9px 0; }
+.fc-hash { overflow-wrap: anywhere; }
+.fc-action-home :is(button,a,summary):focus-visible { outline: 3px solid #6599c7; outline-offset: 3px; }
+@media (max-width: 1000px) {
+  .fc-action-home .fc-hero-actions { position: static; margin-top: 9px; }
+}
+@media (max-width: 760px) {
+  .fc-action-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .fc-action-home .fc-job-top { flex-direction: column; }
+  .fc-requirements-grid { grid-template-columns: minmax(0,1fr); }
+  .fc-action-home details.fc-section > summary .fc-small { display: block; margin: 5px 0 0; }
+}
+
 * { box-sizing: border-box; }
 
 body.faculty-career-body {
@@ -155,3 +211,102 @@ body[data-access-mode="read-only"] .fc-private-lock { display: block; }
   .fc-job-card { padding: 13px; }
   .fc-dialog-head, .fc-dialog-body { padding-left: 14px; padding-right: 14px; }
 }
+
+/* Multi-select vocabulary filters.
+   A vocabulary filter answers "which of these" and several can be true at
+   once, so it is a checkbox list rather than a single-choice select. The
+   original <select> stays in the DOM, hidden, as the no-JS fallback. */
+.fc-multi { position: relative; display: inline-block; }
+.fc-multi-toggle { text-align: left; cursor: pointer; min-width: 11rem; }
+.fc-multi-toggle.is-active { border-color: #1d4ed8; font-weight: 600; }
+.fc-multi-panel {
+  position: absolute; z-index: 40; top: calc(100% + 4px); left: 0;
+  min-width: 15rem; max-height: 17rem; overflow-y: auto;
+  background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14); padding: 0.35rem;
+}
+.fc-multi-option {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.3rem 0.45rem; border-radius: 6px; font-size: 0.86rem;
+  cursor: pointer; white-space: nowrap;
+}
+.fc-multi-option:hover { background: #eff6ff; }
+.fc-multi-option input { margin: 0; }
+
+
+/* The panel used to overlay whatever sat below it, including the Apply
+   button, so a selection could be made but not submitted. It is capped in
+   height, scrolls internally, and carries its own dismiss control. */
+.fc-multi-panel { max-height: 15rem; }
+.fc-multi-done {
+  position: sticky; bottom: 0; display: block; width: 100%;
+  margin-top: .3rem; padding: .4rem; border: 0; border-radius: 6px;
+  background: #1d4ed8; color: #fff; font: inherit; font-size: .82rem;
+  cursor: pointer;
+}
+.fc-multi-done:hover { background: #1e40af; }
+.fc-multi-toggle:focus-visible,
+.fc-multi-option input:focus-visible,
+.fc-multi-done:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+@media (max-width: 420px) {
+  .fc-multi, .fc-multi-toggle { width: 100%; }
+  .fc-multi-panel { left: 0; right: 0; min-width: 0; }
+}
+
+
+/* Three scopes at once. A grid rather than a row of cards, so the strict
+   number sits visually inside the broad one instead of competing with it. */
+.fc-scope-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.fc-scope-cell {
+  border: 1px solid var(--fc-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--fc-panel);
+}
+.fc-scope-cell.current { border-color: var(--fc-blue); box-shadow: inset 0 0 0 1px var(--fc-blue); }
+.fc-scope-cell.filtered { border-style: dashed; }
+.fc-scope-head {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fc-muted);
+}
+.fc-scope-now {
+  font-size: 10px;
+  background: var(--fc-blue);
+  color: #fff;
+  border-radius: 999px;
+  padding: 1px 6px;
+  letter-spacing: 0.04em;
+}
+.fc-scope-value {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 4px;
+}
+.fc-scope-of { font-size: 13px; font-weight: 400; color: var(--fc-muted); }
+.fc-scope-note { font-size: 11px; line-height: 1.45; color: var(--fc-muted); }
+
+@media (max-width: 520px) {
+  .fc-scope-strip { grid-template-columns: 1fr 1fr; }
+  .fc-scope-cell.filtered { grid-column: 1 / -1; }
+}
+
+.fc-career-panel { margin-bottom: 16px; }
+.fc-scope-audit { margin: 0 0 16px; }
+.fc-scope-audit summary { cursor: pointer; margin-bottom: 10px; color: var(--fc-muted); }
+.fc-career-panel h2 { margin: 0 0 12px; }
+.fc-career-views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.fc-career-view { padding: 12px; text-align: left; cursor: pointer; color: var(--fc-text); background: var(--fc-panel); border: 1px solid var(--fc-border); border-radius: 10px; font: inherit; }
+.fc-career-view strong, .fc-career-view span { display: block; }
+.fc-career-view span { margin-top: 6px; font-size: 12px; color: var(--fc-muted); line-height: 1.5; }
+.fc-career-view[aria-pressed="true"] { border-color: var(--fc-blue); box-shadow: inset 0 0 0 1px var(--fc-blue); }
+.fc-career-view:focus-visible { outline: 3px solid var(--fc-blue); outline-offset: 3px; }
+.fc-career-view:disabled { cursor: wait; opacity: .7; }
+@media (max-width: 620px) { .fc-career-views { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

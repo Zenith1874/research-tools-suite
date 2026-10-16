@@ -59,7 +59,7 @@ class FredCsvParserTests(unittest.TestCase):
 
     def test_macro_series_cover_five_decision_groups(self):
         groups = {row[5] for row in SERIES}
-        self.assertEqual(groups, {'labor', 'inflation', 'growth', 'fiscal', 'financial'})
+        self.assertEqual(groups, {'labor', 'inflation', 'growth', 'fiscal', 'financial', 'housing', 'external'})
         codes = {row[0] for row in SERIES}
         for code in ('PAYEMS', 'CPIAUCSL', 'PCEPILFE', 'GDPC1', 'INDPRO',
                      'U6RATE', 'ICSA', 'FGRECPT', 'GFDEBTN', 'DFF', 'DGS3MO', 'DGS30',
@@ -96,7 +96,7 @@ class FredCsvParserTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             payload = build_us_macro_payload(str(Path(tmp) / 'macro.db'))
         self.assertEqual([group['code'] for group in payload['groups']],
-                         ['labor', 'inflation', 'growth', 'fiscal', 'financial'])
+                         ['labor', 'inflation', 'growth', 'fiscal', 'financial', 'housing', 'external'])
         self.assertEqual(payload['data_status'], 'missing')
         self.assertTrue(all(card['data_status'] == 'missing'
                             for card in payload['cards']))

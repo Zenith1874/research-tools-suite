@@ -111,8 +111,9 @@ def ensure_link_columns(conn):
 def refresh_astar_school_evidence(conn, astar_conn):
     """Link institutions to the A* corpus and record the footprint as evidence.
 
-    Re-runnable: the counts grow as the affiliation backfill proceeds, so this
-    replaces its own evidence rows rather than accumulating them.
+    Re-runnable: the counts grow as the affiliation backfill proceeds. The
+    prior observation rows are retained as historical evidence and only the
+    latest observation is current.
     """
     ensure_link_columns(conn)
     index = astar_institution_index(astar_conn)
@@ -129,8 +130,15 @@ def refresh_astar_school_evidence(conn, astar_conn):
         FROM business_schools bs JOIN institutions i ON i.id=bs.institution_id
         WHERE bs.is_current=1 AND i.official_name IS NOT NULL
     """).fetchall()
-    conn.execute("DELETE FROM school_evidence WHERE evidence_type IN (?,?)",
-                 (EVIDENCE_TYPE, EVIDENCE_TYPE_BELOW_THRESHOLD))
+    # Keep prior observations as historical evidence. The affiliation
+    # backfill is a moving snapshot, so deleting yesterday's count would make
+    # the research trail impossible to audit. Only the latest rows are marked
+    # current; the school service ignores superseded rows for classification.
+    conn.execute(
+        "UPDATE school_evidence SET is_current=0, valid_to=? "
+        "WHERE evidence_type IN (?,?) AND is_current=1",
+        (stamp, EVIDENCE_TYPE, EVIDENCE_TYPE_BELOW_THRESHOLD),
+    )
     for row in schools:
         match = index.get(normalize_institution(row["official_name"]))
         if not match:
@@ -146,8 +154,8 @@ def refresh_astar_school_evidence(conn, astar_conn):
         conn.execute("""
             INSERT INTO school_evidence
               (school_id,evidence_type,value,source_name,source_url,source_date,
-               verified_at,confidence,notes)
-            VALUES (?,?,?,?,?,?,?,?,?)
+               verified_at,confidence,notes,is_current,valid_from)
+            VALUES (?,?,?,?,?,?,?,?,?,1,?)
         """, (row["school_id"],
               EVIDENCE_TYPE if above else EVIDENCE_TYPE_BELOW_THRESHOLD,
               str(articles), SOURCE_NAME,
@@ -155,7 +163,8 @@ def refresh_astar_school_evidence(conn, astar_conn):
               ("High" if articles >= 4 * HIGH_RESEARCH_MIN_ARTICLES else "Medium")
               if above else "Low",
               note if above else note + f" Below the {HIGH_RESEARCH_MIN_ARTICLES}-article "
-              "threshold, so it is recorded but does not count as a research signal."))
+              "threshold, so it is recorded but does not count as a research signal.",
+              stamp))
         evidence_rows += 1
         if above:
             above_threshold += 1

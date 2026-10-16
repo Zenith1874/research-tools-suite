@@ -38,6 +38,16 @@ class PlausibleCityTests(unittest.TestCase):
         self.assertIsNone(_plausible_city("Work Locations: Number of offers: 1"))
         self.assertIsNone(_plausible_city("Apply by deadline"))
 
+    def test_organization_and_prose_fragments_are_rejected(self):
+        for value in (
+            "Haslam College of Business",
+            "College of Osteopathic Medicine",
+            "located within the Howard H. Baker",
+        ):
+            self.assertIsNone(_plausible_city(value), value)
+        # This is a real Pennsylvania locality, not an organization-of phrase.
+        self.assertEqual("University Park", _plausible_city("University Park"))
+
     def test_a_country_is_not_a_city(self):
         self.assertIsNone(_plausible_city("Location United States"))
         self.assertIsNone(_plausible_city("Canada"))
@@ -113,6 +123,17 @@ class EntityLocationTests(unittest.TestCase):
 
     def test_an_implausible_institution_city_is_not_adopted(self):
         self.conn.execute("UPDATE institutions SET city='Mekelweg 5', state_province=NULL WHERE id=1")
+        self.conn.commit()
+        stats = _backfill_job_location_from_entity(self.conn)
+        self.conn.commit()
+        self.assertEqual(0, stats["from_institution"])
+        self.assertIsNone(self.job()["city"])
+
+    def test_an_organization_label_is_not_adopted_as_a_city(self):
+        self.conn.execute(
+            "UPDATE institutions SET city='College of Osteopathic Medicine', "
+            "state_province=NULL WHERE id=1"
+        )
         self.conn.commit()
         stats = _backfill_job_location_from_entity(self.conn)
         self.conn.commit()
