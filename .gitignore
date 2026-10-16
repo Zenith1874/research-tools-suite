@@ -45,6 +45,15 @@ backups/
 data/astar_emb*.npy
 data/astar_emb_meta.json
 data/astar_texts.jsonl.gz
+# Semantic and entity refresh generations contain multi-GiB immutable
+# before-images/candidate packs.  They are local runtime recovery artifacts,
+# never source files; keeping them ignored also prevents desktop Git snapshots
+# from trying to repack them into .git/objects.
+data/astar_semantic_updates/
+data/business_research_index_generations/
+data/business_research_index_updates/
+data/astar_semantic_update.lock
+data/business_research_incremental.lock
 # 安居客商业挂牌数据仅限本机：不得进入公开仓库或 pboc_data.db 快照
 data/housing_listing.db*
 data/anjuke_raw/
@@ -62,6 +71,11 @@ data/faculty_jobs.db*
 data/faculty_jobs_cache/
 data/faculty_job_profile.json
 data/faculty_jobs_private/
+data/faculty_jobs/raw/
+# Machine-local pointer for guarded Faculty Jobs pre-write backups.
+data/faculty_jobs_backup_dir.txt
+# Downloaded IPEDS/SED release archives are reproducible local source captures.
+data/academic_market/releases/
 # 悦读FM 音频、封面、RSS 快照与本地元数据只保存在本机
 data/yuedu_fm/
 # 香港宏观官方源原始快照只保存在本机，保留摘要/哈希在数据库审计表
